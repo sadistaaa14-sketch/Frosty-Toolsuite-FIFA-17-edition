@@ -12,6 +12,7 @@ namespace Frosty.Core.Legacy
     {
         /* list of all legacy entries indexed by hash */
         private Dictionary<int, LegacyFileEntry> legacyEntries = new Dictionary<int, LegacyFileEntry>();
+        private HashSet<int> addedEntryHashes = new HashSet<int>();
 
         /* 
          * list of cached legacy chunks when running in cache mode (this ensures that the same chunk
@@ -174,6 +175,101 @@ namespace Frosty.Core.Legacy
             ms.Dispose();
         }
 
+        public byte[] GetAssetData(string key)
+        {
+            int hash = Fnv1.HashString(key);
+            if (!legacyEntries.ContainsKey(hash))
+                return null;
+
+            LegacyFileEntry lfe = legacyEntries[hash];
+            ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(lfe.ChunkId);
+
+            if (chunkEntry == null)
+                return null;
+
+            if (chunkEntry.ModifiedEntry != null && chunkEntry.ModifiedEntry.Data != null)
+                return chunkEntry.ModifiedEntry.Data;
+
+            using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(chunkEntry)))
+                return reader.ReadToEnd();
+        }
+
+        public void DuplicateAsset(string sourceKey, string newKey)
+        {
+            int sourceHash = Fnv1.HashString(sourceKey);
+            int newHash = Fnv1.HashString(newKey);
+
+            if (!legacyEntries.ContainsKey(sourceHash))
+                return;
+            if (legacyEntries.ContainsKey(newHash))
+                return;
+
+            LegacyFileEntry source = legacyEntries[sourceHash];
+
+            byte[] data = GetAssetData(sourceKey);
+            if (data == null)
+                return;
+
+            // create new entry
+            LegacyFileEntry newEntry = new LegacyFileEntry
+            {
+                Name = newKey,
+            };
+
+            // register new chunk
+            Guid guid = App.AssetManager.AddChunk(data, GenerateDeterministicGuid(newEntry));
+            ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(guid);
+            chunkEntry.ModifiedEntry.AddToChunkBundle = true;
+            chunkEntry.ModifiedEntry.UserData = "legacy;" + newKey;
+
+            newEntry.LinkAsset(chunkEntry);
+
+            // copy collector instance references from source
+            // so the handler knows which manifest chunks to update at apply time
+            foreach (LegacyFileEntry.ChunkCollectorInstance inst in source.CollectorInstances)
+            {
+                LegacyFileEntry.ChunkCollectorInstance newInst = new LegacyFileEntry.ChunkCollectorInstance
+
+                {
+                    Entry = inst.Entry,
+                    ModifiedEntry = new LegacyFileEntry.ChunkCollectorInstance
+                    {
+                        ChunkId = guid,
+                        Offset = 0,
+                        CompressedOffset = 0,
+                        Size = data.Length,
+                        CompressedSize = chunkEntry.ModifiedEntry.Data.Length
+                    }
+                };
+
+                newEntry.CollectorInstances.Add(newInst);
+                inst.Entry.LinkAsset(newEntry);
+                EbxAsset collectorAsset = App.AssetManager.GetEbx(inst.Entry);
+                dynamic root = collectorAsset.RootObject;
+                dynamic manifest = root.Manifest;
+
+                uint nameBytes = (uint)System.Text.Encoding.UTF8.GetByteCount(newKey) + 1;
+
+                uint dataSize = (uint)manifest.DataSize;
+                uint fixupSize = (uint)manifest.FixupSize;
+
+                manifest.DataSize = dataSize + 56u + nameBytes;
+                manifest.FixupSize = fixupSize + 4u;
+
+                App.AssetManager.ModifyEbx(inst.Entry.Name, collectorAsset);
+            }
+            legacyEntries.Add(newHash, newEntry);
+            addedEntryHashes.Add(newHash);
+        }
+
+        private void ClearAddedEntries()
+        {
+            foreach (int hash in addedEntryHashes)
+                legacyEntries.Remove(hash);
+            addedEntryHashes.Clear();
+        }
+
+
         /* Obtain data from cache or directly from chunk */
         private Stream GetChunkStream(LegacyFileEntry lfe)
         {
@@ -200,6 +296,8 @@ namespace Frosty.Core.Legacy
             {
                 case "SetCacheModeEnabled": SetCacheModeEnabled((bool)value[0]); break;
                 case "FlushCache": FlushCache(); break;
+                case "DuplicateAsset": DuplicateAsset((string)value[0], (string)value[1]); break;
+                case "ClearAddedEntries": ClearAddedEntries(); break;
             }
         }
 

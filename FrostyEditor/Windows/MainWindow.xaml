@@ -1110,6 +1110,8 @@
                                                                RenderOptions.BitmapScalingMode="Fant" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
+
+                                                
                                             </ContextMenu>
                                         </core:FrostyDataExplorer.AssetContextMenu>
                                     </core:FrostyDataExplorer>
@@ -1151,6 +1153,14 @@
                                                 </MenuItem>
                                                 <MenuItem Header="Import"
                                                           Click="contextMenuImportAsset_Click">
+                                                    <MenuItem.Icon>
+                                                        <Image Source="/FrostyEditor;component/Images/Import.png"
+                                                               RenderOptions.BitmapScalingMode="Fant" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+
+                                                <MenuItem Header="Duplicate"
+                                                          Click="contextMenuDuplicateAsset_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Import.png"
                                                                RenderOptions.BitmapScalingMode="Fant" />

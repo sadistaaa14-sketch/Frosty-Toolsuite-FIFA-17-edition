@@ -521,6 +521,7 @@ namespace FrostyEditor
 
             // clear all modifications
             App.AssetManager.Reset();
+            App.AssetManager.SendManagerCommand("legacy", "ClearAddedEntries");
             dataExplorer.RefreshAll();
             legacyExplorer.RefreshAll();
 
@@ -619,6 +620,7 @@ namespace FrostyEditor
 
                 // clear all modifications
                 App.AssetManager.Reset();
+                App.AssetManager.SendManagerCommand("legacy", "ClearAddedEntries");
                 App.WhitelistedBundles.Clear();
 
                 // load project
@@ -952,6 +954,36 @@ namespace FrostyEditor
                 legacyExplorer.RefreshItems();
             }
         }
+
+        private void contextMenuDuplicateAsset_Click(object sender, RoutedEventArgs e)
+        {
+            LegacyFileEntry selectedAsset = legacyExplorer.SelectedAsset as LegacyFileEntry;
+            if (selectedAsset == null)
+                return;
+
+            LegacyDuplicateDialog dialog = new LegacyDuplicateDialog(selectedAsset.Name)
+            {
+                Owner = this
+            };
+
+            if (dialog.ShowDialog() != true)
+                return;
+
+            string newKey = dialog.Result.Trim();
+            if (string.IsNullOrEmpty(newKey) || newKey == selectedAsset.Name)
+                return;
+
+            FrostyTaskWindow.Show("Duplicating Legacy Asset", "", (task) =>
+            {
+                App.AssetManager.SendManagerCommand("legacy", "DuplicateAsset", selectedAsset.Name, newKey);
+            });
+
+            App.Logger.Log("Duplicated {0} to {1}", selectedAsset.Name, newKey);
+            legacyExplorer.RefreshItems();
+        }
+
+
+
 
         private void contextMenuExportAsset_Click(object sender, RoutedEventArgs e)
         {

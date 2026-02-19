@@ -18,6 +18,7 @@ namespace Frosty.Core.Handlers
         private class ModLegacyFileEntry
         {
             public int Hash { get; set; }
+            public string Name { get; set; }
             public Guid ChunkId { get; set; }
             public long Offset { get; set; }
             public long CompressedOffset { get; set; }
@@ -56,14 +57,17 @@ namespace Frosty.Core.Handlers
 
         public void SaveToMod(FrostyModWriter writer)
         {
-            Dictionary<EbxAssetEntry, List<Tuple<int, LegacyFileEntry.ChunkCollectorInstance>>> manifests = new Dictionary<EbxAssetEntry, List<Tuple<int, LegacyFileEntry.ChunkCollectorInstance>>>();
+            Dictionary<EbxAssetEntry, List<Tuple<int, LegacyFileEntry.ChunkCollectorInstance, string>>> manifests =
+                new Dictionary<EbxAssetEntry, List<Tuple<int, LegacyFileEntry.ChunkCollectorInstance, string>>>();
+
             foreach (LegacyFileEntry lfe in App.AssetManager.EnumerateCustomAssets("legacy", modifiedOnly: true))
             {
                 foreach (LegacyFileEntry.ChunkCollectorInstance inst in lfe.CollectorInstances)
                 {
                     if (!manifests.ContainsKey(inst.Entry))
-                        manifests.Add(inst.Entry, new List<Tuple<int, LegacyFileEntry.ChunkCollectorInstance>>());
-                    manifests[inst.Entry].Add(new Tuple<int, LegacyFileEntry.ChunkCollectorInstance>(lfe.NameHash, inst.ModifiedEntry));
+                        manifests.Add(inst.Entry, new List<Tuple<int, LegacyFileEntry.ChunkCollectorInstance, string>>());
+                    manifests[inst.Entry].Add(new Tuple<int, LegacyFileEntry.ChunkCollectorInstance, string>(
+                        lfe.NameHash, inst.ModifiedEntry, lfe.Name));
                 }
             }
 
@@ -77,9 +81,10 @@ namespace Frosty.Core.Handlers
                 MemoryStream ms = new MemoryStream();
                 using (NativeWriter chunkWriter = new NativeWriter(ms))
                 {
-                    foreach (Tuple<int, LegacyFileEntry.ChunkCollectorInstance> inst in manifests[entry])
+                    foreach (Tuple<int, LegacyFileEntry.ChunkCollectorInstance, string> inst in manifests[entry])
                     {
                         chunkWriter.Write(inst.Item1);
+                        chunkWriter.WriteNullTerminatedString(inst.Item3);
                         chunkWriter.Write(inst.Item2.ChunkId);
                         chunkWriter.Write(inst.Item2.Offset);
                         chunkWriter.Write(inst.Item2.CompressedOffset);
@@ -87,7 +92,9 @@ namespace Frosty.Core.Handlers
                         chunkWriter.Write(inst.Item2.Size);
                     }
 
-                    writer.AddResource(new LegacyResource(collectorChunkEntry.Name, entry.Name, ms.ToArray(), collectorChunkEntry.EnumerateBundles(), writer.ResourceManifest));
+                    writer.AddResource(new LegacyResource(
+                        collectorChunkEntry.Name, entry.Name, ms.ToArray(),
+                        collectorChunkEntry.EnumerateBundles(), writer.ResourceManifest));
                 }
             }
         }
@@ -221,6 +228,7 @@ namespace Frosty.Core.Handlers
                 while (reader.Position < reader.Length)
                 {
                     int hash = reader.ReadInt();
+                    string name = reader.ReadNullTerminatedString();
 
                     int idx = entries.FindIndex((ModLegacyFileEntry a) => a.Hash == hash);
                     if (idx != -1)
@@ -229,6 +237,7 @@ namespace Frosty.Core.Handlers
                     ModLegacyFileEntry newEntry = new ModLegacyFileEntry
                     {
                         Hash = hash,
+                        Name = name,
                         ChunkId = reader.ReadGuid(),
                         Offset = reader.ReadLong(),
                         CompressedOffset = reader.ReadLong(),
@@ -247,49 +256,189 @@ namespace Frosty.Core.Handlers
         public void Modify(AssetEntry origEntry, AssetManager am, RuntimeResources runtimeResources, object data, out byte[] outData)
         {
             ChunkAssetEntry chunkEntry = origEntry as ChunkAssetEntry;
-            List<ModLegacyFileEntry> entries = (List<ModLegacyFileEntry>)data;
+            List<ModLegacyFileEntry> modEntries = (List<ModLegacyFileEntry>)data;
+            App.Logger.Log("LegacyHandler.Modify called for chunk {0}", chunkEntry.Id);
+            App.Logger.Log("Mod entries count: {0}", modEntries.Count);
+
+            foreach (ModLegacyFileEntry modEntry in modEntries)
+                App.Logger.Log("  name={0} hash={1}", modEntry.Name, modEntry.Hash);
+
+            // build lookup by hash for quick matching
+            Dictionary<int, ModLegacyFileEntry> modLookup = new Dictionary<int, ModLegacyFileEntry>();
+            foreach (ModLegacyFileEntry e in modEntries)
+                modLookup[e.Hash] = e;
+
             using (NativeReader reader = new NativeReader(am.GetChunk(am.GetChunkEntry(chunkEntry.Id))))
             {
+                // --- read header (48 bytes) ---
+                uint numEntries = reader.ReadUInt();
+                uint headerSize = reader.ReadUInt();   // always 48
+                uint unk0 = reader.ReadUInt();
+                uint block1Count = reader.ReadUInt();
+                uint stringSectionOff = reader.ReadUInt();
+                uint block1Unk = reader.ReadUInt();
+                uint block2Count = reader.ReadUInt();
+                uint stringsStartOff = reader.ReadUInt();
+                uint block2Unk = reader.ReadUInt();
+                byte[] headerTail = reader.ReadBytes(12);
+                App.Logger.Log("LegacyHandler.Modify: numEntries={0} headerSize={1} stringSectionOff={2} stringsStartOff={3}",
+    numEntries, headerSize, stringSectionOff, stringsStartOff);
+
+                // 32-byte prefix between entry table end and strings section
+                reader.Position = stringSectionOff;
+                byte[] stringPrefix = reader.ReadBytes(32);
+
+                // 48-byte subheader before actual strings
+                byte[] stringsSubheader = reader.ReadBytes(48);
+
+                // --- read all entry records ---
+                reader.Position = headerSize;
+                var parsedEntries = new List<(long strOff, long compOff, long compSize, long offset, long size, Guid guid)>();
+                for (int i = 0; i < numEntries; i++)
+                {
+                    long strOff = reader.ReadLong();
+                    long compOff = reader.ReadLong();
+                    long compSize = reader.ReadLong();
+                    long off = reader.ReadLong();
+                    long sz = reader.ReadLong();
+                    Guid guid = reader.ReadGuid();
+                    parsedEntries.Add((strOff, compOff, compSize, off, sz, guid));
+                }
+
+                // --- read all entry names ---
+                var entryNames = new List<string>();
+                foreach (var e in parsedEntries)
+                {
+                    reader.Position = e.strOff;
+                    entryNames.Add(reader.ReadNullTerminatedString());
+                }
+
+                // find end of last referenced string
+                long maxStrOff = 0;
+                foreach (var e in parsedEntries)
+                    if (e.strOff > maxStrOff) maxStrOff = e.strOff;
+                reader.Position = maxStrOff;
+                reader.ReadNullTerminatedString();
+                long lastStrEnd = reader.Position;
+
+                // calculate index table position and read unreferenced strings
+                int origIndexTableSize = 12 + ((int)numEntries + 2) * 4;
+                long origTotalSize = reader.Length;
+                long indexTableOff = origTotalSize - origIndexTableSize;
+                App.Logger.Log("LegacyHandler.Modify: origIndexTableSize={0} origTotalSize={1} indexTableOff={2}",
+    origIndexTableSize, origTotalSize, indexTableOff);
+
+                byte[] unreferencedStrings = reader.ReadBytes((int)(indexTableOff - lastStrEnd));
+
+                // read index table header (12 bytes, preserved verbatim)
+                reader.Position = indexTableOff;
+                byte[] indexTableHeader = reader.ReadBytes(12);
+
+                // --- build new entry list ---
+                var newEntries = new List<(string name, long compOff, long compSize, long offset, long size, Guid guid)>();
+                HashSet<int> matched = new HashSet<int>();
+
+                // patch existing entries
+                for (int i = 0; i < parsedEntries.Count; i++)
+                {
+                    var e = parsedEntries[i];
+                    string name = entryNames[i];
+                    int hash = Fnv1.HashString(name);
+
+                    if (modLookup.TryGetValue(hash, out ModLegacyFileEntry mod))
+                    {
+                        matched.Add(hash);
+                        newEntries.Add((name, mod.CompressedOffset, mod.CompressedSize, mod.Offset, mod.Size, mod.ChunkId));
+                    }
+                    else
+                    {
+                        newEntries.Add((name, e.compOff, e.compSize, e.offset, e.size, e.guid));
+                    }
+                }
+
+                // add new entries (duplicates - hashes not found in original)
+                foreach (ModLegacyFileEntry mod in modEntries)
+                {
+                    if (!matched.Contains(mod.Hash))
+                        newEntries.Add((mod.Name, mod.CompressedOffset, mod.CompressedSize, mod.Offset, mod.Size, mod.ChunkId));
+                }
+
+                // sort alphabetically — game uses binary search by name
+                newEntries.Sort((a, b) => string.Compare(
+                    a.name.ToLowerInvariant(),
+                    b.name.ToLowerInvariant(),
+                    StringComparison.Ordinal));
+
+                // --- recalculate layout ---
+                uint newNumEntries = (uint)newEntries.Count;
+                uint newStringSectionOff = headerSize + newNumEntries * 56;
+                uint newStringsStartOff = newStringSectionOff + 32;
+                uint newActualStringsOff = newStringsStartOff + 48;
+
+                // build string blob and record str offsets
+                var strOffsets = new List<long>();
+                byte[] stringBlob;
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    foreach (var e in newEntries)
+                    {
+                        strOffsets.Add(newActualStringsOff + ms.Length);
+                        byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(e.name + "\0");
+                        ms.Write(nameBytes, 0, nameBytes.Length);
+                    }
+                    if (unreferencedStrings.Length > 0)
+                        ms.Write(unreferencedStrings, 0, unreferencedStrings.Length);
+                    stringBlob = ms.ToArray();
+                }
+
+                // rebuild index table
+                byte[] newIndexTable;
+                using (NativeWriter idxWriter = new NativeWriter(new MemoryStream()))
+                {
+                    idxWriter.Write(indexTableHeader);
+                    for (int i = 0; i < newEntries.Count; i++)
+                        idxWriter.Write((uint)(headerSize + i * 56));
+                    idxWriter.Write(newStringSectionOff);
+                    idxWriter.Write(newStringSectionOff + 16);
+                    newIndexTable = idxWriter.ToByteArray();
+                }
+
+               
+
+                // --- write output ---
                 using (NativeWriter writer = new NativeWriter(new MemoryStream()))
                 {
-                    int numEntries = reader.ReadInt();
-                    writer.Write(numEntries);
-                    long dataOffset = reader.ReadLong();
-                    writer.Write(dataOffset);
-                    writer.Write(reader.ReadBytes((int)(dataOffset - 12)));
+                    // header
+                    writer.Write(newNumEntries);
+                    writer.Write(headerSize);
+                    writer.Write(unk0);
+                    writer.Write(block1Count);
+                    writer.Write(newStringSectionOff);
+                    writer.Write(block1Unk);
+                    writer.Write(block2Count);
+                    writer.Write(newStringsStartOff);
+                    writer.Write(block2Unk);
+                    writer.Write(headerTail);
 
-                    for (int i = 0; i < numEntries; i++)
+                    // entry table
+                    for (int i = 0; i < newEntries.Count; i++)
                     {
-                        long strOffset = reader.ReadLong();
-                        long curPos = reader.Position;
-                        reader.Position = strOffset;
-                        string str = reader.ReadNullTerminatedString();
-                        int hash = Fnv1.HashString(str);
-                        reader.Position = curPos;
-
-                        int idx = entries.FindIndex((ModLegacyFileEntry a) => a.Hash == hash);
-                        if (idx != -1)
-                        {
-                            ModLegacyFileEntry inst = entries[idx];
-                            writer.Write(strOffset);
-                            writer.Write(inst.CompressedOffset);
-                            writer.Write(inst.CompressedSize);
-                            writer.Write(inst.Offset);
-                            writer.Write(inst.Size);
-                            writer.Write(inst.ChunkId);
-                            reader.Position += 0x30;
-                        }
-                        else
-                        {
-                            writer.Write(strOffset);
-                            writer.Write(reader.ReadBytes(0x30));
-                        }
+                        var e = newEntries[i];
+                        writer.Write(strOffsets[i]);
+                        writer.Write(e.compOff);
+                        writer.Write(e.compSize);
+                        writer.Write(e.offset);
+                        writer.Write(e.size);
+                        writer.Write(e.guid);
                     }
 
-                    writer.Write(reader.ReadToEnd());
+                    // string section
+                    writer.Write(stringPrefix);
+                    writer.Write(stringsSubheader);
+                    writer.Write(stringBlob);
+                    writer.Write(newIndexTable);
 
                     outData = Utils.CompressFile(writer.ToByteArray());
-
                     chunkEntry.Sha1 = Utils.GenerateSha1(outData);
                     chunkEntry.Size = outData.Length;
                     chunkEntry.IsTocChunk = true;
