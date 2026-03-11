@@ -1667,7 +1667,19 @@ namespace MeshSetPlugin
 
             meshSet.FullName = resEntry.Name;
 
+            // disable normal smoothing since smoothing data is stale after import
+			if (ProfilesLibrary.IsLoaded(ProfileVersion.Fifa17, ProfileVersion.Fifa18, ProfileVersion.Madden19))
+			{
+                if (asset.RootObject.GetType().Name == "SkinnedMeshAsset")
+                {
+                    ((dynamic)asset.RootObject).NormalSmoothingEnable = false;
+                    App.AssetManager.ModifyEbx(entry.Name, asset);
+                }
+				
+			}
+
             // modify resource
+
             App.AssetManager.ModifyRes(resRid, meshSet);
             entry.LinkAsset(resEntry);
         }
@@ -1978,46 +1990,13 @@ namespace MeshSetPlugin
 
         private LinearTransform FbxTransformToLinearTransform(FbxNode inFbxNode)
         {
+            // Use EvaluateGlobalTransform() instead of Lcl* properties directly,
+            // because composite mesh bone nodes can have uninitialised native Lcl
+            // backing data, causing NullReferenceException in the property getter.
+            // Composite bones are direct children of an identity ROOT, so global == local.
+            Matrix fbMatrix = new FbxMatrix(inFbxNode.EvaluateGlobalTransform()).ToSharpDX();
+
             LinearTransform trns = new LinearTransform();
-            float pi = (float)(Math.PI / 180.0);
-
-            // Setup the rotation matrix
-            Vector3 fbxRotation = new Vector3(inFbxNode.LclRotation.X * pi, inFbxNode.LclRotation.Y * pi, inFbxNode.LclRotation.Z * pi);
-
-            Matrix rotMatrix = Matrix.Identity;
-
-            rotMatrix *= Matrix.RotationX(fbxRotation.X);
-            rotMatrix *= Matrix.RotationY(fbxRotation.Y);
-            rotMatrix *= Matrix.RotationZ(fbxRotation.Z);
-
-            // Now create the LinearTransform matrix
-            Vector3 nodeScale = inFbxNode.LclScaling;
-            Matrix fbMatrix = new Matrix();
-            fbMatrix.M11 = rotMatrix.M11 * nodeScale.X;
-            fbMatrix.M12 = rotMatrix.M12 * nodeScale.Y;
-            fbMatrix.M13 = rotMatrix.M13 * nodeScale.Z;
-
-            fbMatrix.M21 = rotMatrix.M21 * nodeScale.X;
-            fbMatrix.M22 = rotMatrix.M22 * nodeScale.Y;
-            fbMatrix.M23 = rotMatrix.M23 * nodeScale.Z;
-
-            fbMatrix.M31 = rotMatrix.M31 * nodeScale.X;
-            fbMatrix.M32 = rotMatrix.M32 * nodeScale.Y;
-            fbMatrix.M33 = rotMatrix.M33 * nodeScale.Z;
-
-            fbMatrix.M41 = inFbxNode.LclTranslation.X;
-            fbMatrix.M42 = inFbxNode.LclTranslation.Y;
-            fbMatrix.M43 = inFbxNode.LclTranslation.Z;
-
-            fbMatrix.M14 = 0f;
-            fbMatrix.M24 = 0f;
-            fbMatrix.M34 = 0f;
-            fbMatrix.M44 = 1f;
-
-            // Converting from the SharpDX Matrix
-            trns.trans.x = inFbxNode.LclTranslation.X;
-            trns.trans.y = inFbxNode.LclTranslation.Y;
-            trns.trans.z = inFbxNode.LclTranslation.Z;
 
             trns.right.x = fbMatrix.M11;
             trns.right.y = fbMatrix.M12;
@@ -2030,6 +2009,10 @@ namespace MeshSetPlugin
             trns.forward.x = fbMatrix.M31;
             trns.forward.y = fbMatrix.M32;
             trns.forward.z = fbMatrix.M33;
+
+            trns.trans.x = fbMatrix.M41;
+            trns.trans.y = fbMatrix.M42;
+            trns.trans.z = fbMatrix.M43;
 
             return trns;
         }
@@ -2085,6 +2068,9 @@ namespace MeshSetPlugin
 
             foreach (FbxNode node in nodes)
             {
+                if (node == null)
+                    continue;
+
                 FbxNodeAttribute attr = node.GetNodeAttribute(FbxNodeAttribute.EType.eMesh);
                 FbxMesh fmesh = new FbxMesh(attr);
                 FbxSkin fskin = (fmesh.GetDeformerCount(FbxDeformer.EDeformerType.eSkin) != 0)
@@ -2101,6 +2087,8 @@ namespace MeshSetPlugin
                         continue;
 
                     FbxNode bone = cluster.GetLink();
+                    if (bone == null || bone.Name == null)
+                        continue;
                     ushort idx = ushort.Parse(bone.Name.Substring(bone.Name.LastIndexOf('_') + 1));
                     boneList.Add(idx);
 
@@ -2202,6 +2190,8 @@ namespace MeshSetPlugin
                     }
 
                     // Madden19/FIFA17/FIFA18/Madden20
+                    // Madden19/FIFA18/Madden20
+                    
                     if (meshSet.Type != MeshType.MeshType_Composite && (ProfilesLibrary.DataVersion == (int)ProfileVersion.Madden19 || ProfilesLibrary.DataVersion == (int)ProfileVersion.Fifa17 || ProfilesLibrary.DataVersion == (int)ProfileVersion.Fifa18 || ProfilesLibrary.DataVersion == (int)ProfileVersion.Madden20))
                     {
                         // @todo: if works, then merge with below
@@ -2286,8 +2276,57 @@ namespace MeshSetPlugin
             string[] boneNamesArray = boneNames.ToArray();
             Array.Sort(boneListArray, boneNamesArray);
 
-            meshSection.SetBones(boneListArray);
-            meshLod.AddBones(boneListArray, boneNamesArray);
+            // FIFA17: vertex data uses direct skeleton indices (full bone list for mapping),
+			// but the .res section/LOD bone lists should only contain actually-used bones.
+			// Collect used bones from skin clusters for the .res metadata.
+			if (ProfilesLibrary.DataVersion == (int)ProfileVersion.Fifa17 && skeleton != null)
+			{
+				List<ushort> usedBoneList = new List<ushort>();
+				List<string> usedBoneNames = new List<string>();
+				foreach (FbxNode sectionNode in sectionNodes)
+				{
+					if (sectionNode == null) continue;
+					FbxNodeAttribute attr = sectionNode.GetNodeAttribute(FbxNodeAttribute.EType.eMesh);
+					FbxMesh fmesh = new FbxMesh(attr);
+					FbxSkin fskin = (fmesh.GetDeformerCount(FbxDeformer.EDeformerType.eSkin) != 0)
+						? new FbxSkin(fmesh.GetDeformer(0, FbxDeformer.EDeformerType.eSkin))
+						: null;
+					if (fskin != null)
+					{
+						foreach (FbxCluster cluster in fskin.Clusters)
+						{
+							if (cluster.ControlPointIndicesCount == 0) continue;
+							FbxNode bone = cluster.GetLink();
+							ushort idx = (ushort)skeleton.BoneNames.IndexOf(bone.Name);
+							if (!usedBoneList.Contains(idx))
+							{
+								usedBoneList.Add(idx);
+								usedBoneNames.Add(skeleton.BoneNames[idx]);
+							}
+						}
+					}
+				}
+				// For large skeletons (heads/bodies), use per-section used bones
+				// For small skeletons (trophies/props), keep all bones per section
+				if (usedBoneList.Count > 1 && skeleton.BoneNames.Count > 50)
+				{
+					ushort[] usedArray = usedBoneList.ToArray();
+					string[] usedNamesArray = usedBoneNames.ToArray();
+					Array.Sort(usedArray, usedNamesArray);
+					meshSection.SetBones(usedArray);
+					meshLod.AddBones(usedArray, usedNamesArray);
+				}
+				else
+				{
+					meshSection.SetBones(boneListArray);
+					meshLod.AddBones(boneListArray, boneNamesArray);
+				}
+			}
+			else
+			{
+				meshSection.SetBones(boneListArray);
+				meshLod.AddBones(boneListArray, boneNamesArray);
+			}
 
             boneList.Clear();
             boneList.AddRange(boneListArray);
@@ -4446,7 +4485,7 @@ namespace MeshSetPlugin
                             {
                                 App.AssetManager.RevertAsset(localEntry);
                             }
-                            logger.LogError(exp.Message);
+                            logger.LogError(exp.ToString());
                         }
                     });
 

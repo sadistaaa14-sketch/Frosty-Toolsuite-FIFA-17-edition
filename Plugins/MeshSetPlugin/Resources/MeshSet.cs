@@ -424,6 +424,11 @@ namespace MeshSetPlugin.Resources
         public bool HasUnknown2 => m_hasUnknown2;
         public bool HasUnknown3 => m_hasUnknown3;
 
+        // [FIFA17_FIX] Public accessors for smoothing data blocks
+        public byte[] UnknownBlock1 => m_unknownBlock1;
+        public byte[] UnknownBlock2 => m_unknownBlock2;
+        public byte[] UnknownBlock3 => m_unknownBlock3;
+
         private long m_offset1;
         private long m_offset2;
         private string m_materialName;
@@ -454,8 +459,21 @@ namespace MeshSetPlugin.Resources
         private AxisAlignedBox m_boundingBox;
         private int m_sectionIndex;
 
+        // [FIFA17_FIX] Storage for per-vertex smoothing/adjacency data blocks
+        private byte[] m_unknownBlock1 = null;
+        private byte[] m_unknownBlock2 = null;
+        private byte[] m_unknownBlock3 = null;
+
         internal MeshSetSection()
         {
+        }
+
+        // [FIFA17_FIX] Method to set smoothing data blocks (called from MeshSet.Read)
+        internal void SetUnknownBlocks(byte[] block1, byte[] block2, byte[] block3)
+        {
+            m_unknownBlock1 = block1;
+            m_unknownBlock2 = block2;
+            m_unknownBlock3 = block3;
         }
 
         public MeshSetSection(NativeReader reader, AssetManager am, int index)
@@ -656,39 +674,9 @@ namespace MeshSetPlugin.Resources
             m_boneList.Clear();
             foreach (ushort boneId in bones)
             {
-                //if ((boneId & 0x8000) == 0)
                 m_boneList.Add(boneId);
             }
         }
-
-        //public void SetVertexElements(List<GeometryDeclarationDesc.Element> inVertexElements)
-        //{
-        //    for (int declId = 0; declId < DeclCount; declId++)
-        //    {
-        //        vertexStride = 0;
-        //        geometryDeclarationDesc[declId].Elements = new GeometryDeclarationDesc.Element[GeometryDeclarationDesc.MaxElements];
-
-        //        for (int elemId = 0; elemId < GeometryDeclarationDesc.MaxElements; elemId++)
-        //        {
-        //            geometryDeclarationDesc[declId].Elements[elemId].Offset = 0xFF;
-        //            if (elemId < inVertexElements.Count)
-        //            {
-        //                GeometryDeclarationDesc.Element elem = inVertexElements[elemId];
-        //                elem.Offset = (byte)vertexStride;
-        //                geometryDeclarationDesc[declId].Elements[elemId] = elem;
-        //                geometryDeclarationDesc[declId].ElementCount++;
-        //                vertexStride += (byte)elem.Size;
-        //            }
-        //        }
-
-        //        geometryDeclarationDesc[declId].Streams = new GeometryDeclarationDesc.Stream[GeometryDeclarationDesc.MaxStreams];
-        //        geometryDeclarationDesc[declId].Streams[0].VertexStride = vertexStride;
-        //        geometryDeclarationDesc[declId].StreamCount = 1;
-
-        //        if(declId == 1)
-        //            geometryDeclarationDesc[declId].StreamCount = 2;
-        //    }
-        //}
 
         internal void PreProcess(MeshContainer meshContainer)
         {
@@ -696,6 +684,20 @@ namespace MeshSetPlugin.Resources
             if (m_boneList.Count > 0)
             {
                 meshContainer.AddRelocPtr("BONELIST", m_boneList);
+            }
+
+            // [FIFA17_FIX] Register reloc pointers for smoothing data blocks
+            if (m_hasUnknown && m_unknownBlock1 != null)
+            {
+                meshContainer.AddRelocPtr("UNKBLOCK1", m_unknownBlock1);
+            }
+            if (m_hasUnknown2 && m_unknownBlock2 != null)
+            {
+                meshContainer.AddRelocPtr("UNKBLOCK2", m_unknownBlock2);
+            }
+            if (m_hasUnknown3 && m_unknownBlock3 != null)
+            {
+                meshContainer.AddRelocPtr("UNKBLOCK3", m_unknownBlock3);
             }
         }
 
@@ -791,11 +793,24 @@ namespace MeshSetPlugin.Resources
                 writer.Write((ulong)0);
             }
 
-            // Fifa 17/18
+            // [FIFA17_FIX] Write the 3 smoothing data offset fields (was // @todo)
             if (ProfilesLibrary.IsLoaded(ProfileVersion.Fifa17, ProfileVersion.Fifa18,
                     ProfileVersion.Madden19))
             {
-                // @todo
+                if (m_hasUnknown && m_unknownBlock1 != null)
+                    meshContainer.WriteRelocPtr("UNKBLOCK1", m_unknownBlock1, writer);
+                else
+                    writer.Write((ulong)0);
+
+                if (m_hasUnknown2 && m_unknownBlock2 != null)
+                    meshContainer.WriteRelocPtr("UNKBLOCK2", m_unknownBlock2, writer);
+                else
+                    writer.Write((ulong)0);
+
+                if (m_hasUnknown3 && m_unknownBlock3 != null)
+                    meshContainer.WriteRelocPtr("UNKBLOCK3", m_unknownBlock3, writer);
+                else
+                    writer.Write((ulong)0);
             }
 
             // geometry declarations
@@ -971,7 +986,6 @@ namespace MeshSetPlugin.Resources
         private int m_sectionCount;
         private List<List<byte>> m_subsetCategories = new List<List<byte>>();
 
-        //private uint boneCount;
         private List<uint> m_boneIndexArray = new List<uint>();
         private List<uint> m_boneShortNameArray = new List<uint>();
 
@@ -1242,8 +1256,6 @@ namespace MeshSetPlugin.Resources
                 m_partIndices = inPartIndices;
                 if (m_partIndices.Count < m_sectionCount)
                 {
-                    // we need to add the depth and shadow sections as well
-                    // i know its ugly but idc
                     HashSet<int> b = new HashSet<int>();
                     foreach (List<int> index in m_partIndices)
                     {
@@ -1554,7 +1566,6 @@ namespace MeshSetPlugin.Resources
             {
                 m_name = value.ToLower();
 
-
                 int id = m_fullname.LastIndexOf('/');
                 m_fullname = ((id != -1) ? m_fullname.Substring(0, id + 1) : "") + m_name;
 
@@ -1683,7 +1694,7 @@ namespace MeshSetPlugin.Resources
             ushort sectionCount = reader.ReadUShort();
 
             // part/bone data not stored per lod
-            if (m_meshType != MeshType.MeshType_Rigid && HasNewPartBoneLayout)
+            if (m_meshType != MeshType.MeshType_Rigid && HasNewPartBoneLayout && reader.Position < lodOffsets[0])
             {
                 if (m_meshType == MeshType.MeshType_Skinned)
                 {
@@ -1791,10 +1802,12 @@ namespace MeshSetPlugin.Resources
             reader.Position = nameOffset;
             m_name = reader.ReadNullTerminatedString();
 
-            // Fifa 17/18/19 unknown blocks
+            // [FIFA17_FIX] Read and STORE the per-vertex smoothing data blocks
+            // Previously this data was read and discarded
             if (ProfilesLibrary.IsLoaded(ProfileVersion.Fifa17, ProfileVersion.Fifa18,
                 ProfileVersion.Madden19, ProfileVersion.Fifa19))
             {
+                // Block 1: per-vertex uint32 (smoothing group indices)
                 reader.Pad(16);
                 foreach (MeshSetLod lod in m_lods)
                 {
@@ -1802,37 +1815,55 @@ namespace MeshSetPlugin.Resources
                     {
                         if (section.HasUnknown)
                         {
-                            reader.Position += section.VertexCount * sizeof(uint);
+                            int blockSize = (int)(section.VertexCount * sizeof(uint));
+                            byte[] block1 = reader.ReadBytes(blockSize);
+                            // Store temporarily - will combine with block2/3 below
+                            section.SetUnknownBlocks(block1, null, null);
                         }
                     }
                 }
+
+                // Block 2: per-vertex uint16 (neighbor counts) - need to sum for block 3 sizes
                 reader.Pad(16);
-                List<int> sectionCounts = new List<int>();
+                List<int> sectionBlock3Sizes = new List<int>();
                 foreach (MeshSetLod lod in m_lods)
                 {
                     foreach (MeshSetSection section in lod.Sections)
                     {
                         if (section.HasUnknown2)
                         {
+                            int blockSize = (int)(section.VertexCount * sizeof(ushort));
+                            long blockStart = reader.Position;
                             int totalCount = 0;
                             for (int i = 0; i < section.VertexCount; i++)
                             {
                                 totalCount += reader.ReadUShort();
                             }
+                            // Re-read as raw bytes
+                            long blockEnd = reader.Position;
+                            reader.Position = blockStart;
+                            byte[] block2 = reader.ReadBytes(blockSize);
+                            reader.Position = blockEnd;
 
-                            sectionCounts.Add(totalCount);
+                            sectionBlock3Sizes.Add(totalCount);
+                            section.SetUnknownBlocks(section.UnknownBlock1, block2, null);
                         }
                     }
                 }
+
+                // Block 3: indexed uint16 (neighbor vertex references)
                 reader.Pad(16);
+                int block3Idx = 0;
                 foreach (MeshSetLod lod in m_lods)
                 {
                     foreach (MeshSetSection section in lod.Sections)
                     {
                         if (section.HasUnknown3)
                         {
-                            reader.Position += sectionCounts[0] * sizeof(ushort);
-                            sectionCounts.RemoveAt(0);
+                            int totalCount = sectionBlock3Sizes[block3Idx++];
+                            int blockSize = totalCount * sizeof(ushort);
+                            byte[] block3 = reader.ReadBytes(blockSize);
+                            section.SetUnknownBlocks(section.UnknownBlock1, section.UnknownBlock2, block3);
                         }
                     }
                 }
@@ -2017,7 +2048,7 @@ namespace MeshSetPlugin.Resources
             writer.Write(sectionCount);
 
             // part/bone data not stored per lod
-            if (m_meshType != MeshType.MeshType_Rigid && HasNewPartBoneLayout)
+            if (m_meshType != MeshType.MeshType_Rigid && HasNewPartBoneLayout && (m_boneCount != 0 || m_bonePartCount != 0))
             {
                 if (m_meshType == MeshType.MeshType_Skinned)
                 {
@@ -2094,9 +2125,7 @@ namespace MeshSetPlugin.Resources
                 writer.Write(m_unknownbfv);
             }
 
-#if FROSTY_DEVELOPER
             Debug.Assert(writer.Position == HeaderSize);
-#endif
 
             // lods
             int lodIdx = 0;
@@ -2138,7 +2167,46 @@ namespace MeshSetPlugin.Resources
             // strings
             meshContainer.WriteStrings(writer);
 
-            // Fifa 17/18 unkown block
+            // [FIFA17_FIX] Write per-vertex smoothing data blocks
+            writer.WritePadding(16);
+            // Block 1: all sections' per-vertex uint32 data
+            foreach (var lod in m_lods)
+            {
+                foreach (var section in lod.Sections)
+                {
+                    if (section.UnknownBlock1 != null)
+                    {
+                        meshContainer.AddOffset("UNKBLOCK1", section.UnknownBlock1, writer);
+                        writer.Write(section.UnknownBlock1);
+                    }
+                }
+            }
+            // Block 2: all sections' per-vertex uint16 count data
+            writer.WritePadding(16);
+            foreach (var lod in m_lods)
+            {
+                foreach (var section in lod.Sections)
+                {
+                    if (section.UnknownBlock2 != null)
+                    {
+                        meshContainer.AddOffset("UNKBLOCK2", section.UnknownBlock2, writer);
+                        writer.Write(section.UnknownBlock2);
+                    }
+                }
+            }
+            // Block 3: all sections' indexed uint16 neighbor data
+            writer.WritePadding(16);
+            foreach (var lod in m_lods)
+            {
+                foreach (var section in lod.Sections)
+                {
+                    if (section.UnknownBlock3 != null)
+                    {
+                        meshContainer.AddOffset("UNKBLOCK3", section.UnknownBlock3, writer);
+                        writer.Write(section.UnknownBlock3);
+                    }
+                }
+            }
 
             writer.WritePadding(16);
 
