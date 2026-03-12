@@ -468,6 +468,56 @@ namespace MeshSetPlugin.Resources
         {
         }
 
+        /// <summary>
+        /// Creates a new MeshSetSection by cloning geometry declaration, vertex format,
+        /// and other structural fields from a template section. Used when importing
+        /// composite meshes with a different section count than the original.
+        /// </summary>
+        internal static MeshSetSection CreateFromTemplate(MeshSetSection template, string materialName, int materialId, int sectionIndex)
+        {
+            MeshSetSection section = new MeshSetSection();
+            section.m_sectionIndex = sectionIndex;
+            section.m_materialName = materialName;
+            section.m_materialId = materialId;
+            section.m_lightMapUvMappingIndex = template.m_lightMapUvMappingIndex;
+            section.m_vertexStride = template.m_vertexStride;
+            section.m_primitiveType = template.m_primitiveType;
+            section.m_bonesPerVertex = template.m_bonesPerVertex;
+
+            // deep copy geometry declarations (both slots, even if DeclCount < 2)
+            for (int d = 0; d < 2; d++)
+            {
+                section.m_geometryDeclarationDesc[d].Elements = new GeometryDeclarationDesc.Element[GeometryDeclarationDesc.MaxElements];
+                section.m_geometryDeclarationDesc[d].Streams = new GeometryDeclarationDesc.Stream[GeometryDeclarationDesc.MaxStreams];
+                if (d < template.DeclCount && template.m_geometryDeclarationDesc[d].Elements != null)
+                {
+                    for (int i = 0; i < GeometryDeclarationDesc.MaxElements; i++)
+                        section.m_geometryDeclarationDesc[d].Elements[i] = template.m_geometryDeclarationDesc[d].Elements[i];
+                    for (int i = 0; i < GeometryDeclarationDesc.MaxStreams; i++)
+                        section.m_geometryDeclarationDesc[d].Streams[i] = template.m_geometryDeclarationDesc[d].Streams[i];
+                    section.m_geometryDeclarationDesc[d].ElementCount = template.m_geometryDeclarationDesc[d].ElementCount;
+                    section.m_geometryDeclarationDesc[d].StreamCount = template.m_geometryDeclarationDesc[d].StreamCount;
+                }
+            }
+
+            // copy texcoord ratios
+            section.m_texCoordRatios = new List<float>(template.m_texCoordRatios);
+
+            // copy unknown data block (format-specific padding/flags)
+            section.m_unknownData = (byte[])template.m_unknownData.Clone();
+
+            // new sections have no smoothing data
+            section.m_hasUnknown = false;
+            section.m_hasUnknown2 = false;
+            section.m_hasUnknown3 = false;
+
+            // runtime ptrs default to 0
+            section.m_offset1 = 0;
+            section.m_offset2 = 0;
+
+            return section;
+        }
+
         // [FIFA17_FIX] Method to set smoothing data blocks (called from MeshSet.Read)
         internal void SetUnknownBlocks(byte[] block1, byte[] block2, byte[] block3)
         {
@@ -676,6 +726,16 @@ namespace MeshSetPlugin.Resources
             {
                 m_boneList.Add(boneId);
             }
+        }
+
+        /// <summary>
+        /// Updates the material name and ID for this section. Used when rebuilding
+        /// sections during composite mesh import with different material layout.
+        /// </summary>
+        internal void SetMaterialName(string name, int materialId)
+        {
+            m_materialName = name;
+            m_materialId = materialId;
         }
 
         internal void PreProcess(MeshContainer meshContainer)
@@ -1249,8 +1309,10 @@ namespace MeshSetPlugin.Resources
 
         public void SetParts(List<LinearTransform> inPartTransforms, List<AxisAlignedBox> inPartBBoxes, List<List<int>> inPartIndices = null)
         {
-            m_partTransforms = inPartTransforms;
-            m_partBoundingBoxes = inPartBBoxes;
+            // Clone lists to avoid mutating shared references (e.g. when called from MeshSet.Read
+            // with MeshSet's global lists, padding below would corrupt the global transforms list)
+            m_partTransforms = new List<LinearTransform>(inPartTransforms);
+            m_partBoundingBoxes = new List<AxisAlignedBox>(inPartBBoxes);
             if (inPartIndices != null)
             {
                 m_partIndices = inPartIndices;
@@ -2347,12 +2409,14 @@ namespace MeshSetPlugin.Resources
         {
             m_partTransforms.Clear();
             m_partBoundingBoxes.Clear();
+            m_bonePartCount = 0;
         }
 
         public void SetParts(List<AxisAlignedBox> inPartBoundingBoxes, List<LinearTransform> inPartTransforms)
         {
             m_partBoundingBoxes = inPartBoundingBoxes;
             m_partTransforms = inPartTransforms;
+            m_bonePartCount = (uint)Math.Max(m_partBoundingBoxes.Count, m_partTransforms.Count);
         }
     }
     #endregion

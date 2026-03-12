@@ -49,7 +49,14 @@ namespace MeshSetPlugin.Render
                     if (section.VertexCount == 0)
                         continue;
 
+                    // Guard against MaterialId out of range (e.g. after composite section rebuild)
+                    if (section.MaterialId >= materials.Count)
+                        continue;
+
                     MeshMaterial material = materials[section.MaterialId];
+                    if (material == null)
+                        continue;
+
                     EbxAssetEntry shaderAsset = App.AssetManager.GetEbxEntry(material.Shader.External.FileGuid);
                     if (shaderAsset == null)
                         continue;
@@ -320,7 +327,6 @@ namespace MeshSetPlugin.Render
             FallbackVertex[] vertices = new FallbackVertex[meshSection.VertexCount];
             int totalStride = 0;
             bool bitangentSign = false;
-            //bool bRecalculateNormals = ProfilesLibrary.DataVersion == (int)ProfileVersion.Madden20;
 
             // re-organize vertices into the fallback shader layout
             foreach (GeometryDeclarationDesc.Stream stream in meshSection.GeometryDeclDesc[0].Streams)
@@ -337,8 +343,6 @@ namespace MeshSetPlugin.Render
                     {
                         if (element.Usage == VertexElementUsage.Unknown)
                             continue;
-
-                        //reader.Position = section.VertexOffset + v * section.VertexStride + element.Offset;
 
                         if (currentStride >= totalStride && currentStride < (totalStride + stream.VertexStride))
                         {
@@ -404,9 +408,6 @@ namespace MeshSetPlugin.Render
                                     if (element.Format == VertexElementFormat.Half4)
                                         vertex.Tangent.W = HalfUtils.Unpack(reader.ReadUShort());
                                 }
-
-                                //if (vertex.BitangentSign == 0.0f)
-                                //    vertex.BitangentSign = Vector3.Dot(Vector3.Cross(vertex.Normal, vertex.Tangent), vertex.Bitangent) < 0.0f ? -1.0f : 1.0f;
                             }
                             else if (element.Usage == VertexElementUsage.BinormalSign)
                             {
@@ -446,65 +447,41 @@ namespace MeshSetPlugin.Render
                             else if (element.Usage == VertexElementUsage.TexCoord0)
                             {
                                 if (element.Format == VertexElementFormat.Float2)
-                                {
                                     vertex.TexCoord0 = new Vector2(reader.ReadFloat(), reader.ReadFloat());
-                                }
                                 else if (element.Format == VertexElementFormat.Half2)
-                                {
                                     vertex.TexCoord0 = new Vector2(HalfUtils.Unpack(reader.ReadUShort()), HalfUtils.Unpack(reader.ReadUShort()));
-                                }
                             }
                             else if (element.Usage == VertexElementUsage.TexCoord1)
                             {
                                 if (element.Format == VertexElementFormat.Float2)
-                                {
                                     vertex.TexCoord1 = new Vector2(reader.ReadFloat(), reader.ReadFloat());
-                                }
                                 else if (element.Format == VertexElementFormat.Half2)
-                                {
                                     vertex.TexCoord1 = new Vector2(HalfUtils.Unpack(reader.ReadUShort()), HalfUtils.Unpack(reader.ReadUShort()));
-                                }
                             }
                             else if (element.Usage == VertexElementUsage.TexCoord2)
                             {
                                 if (element.Format == VertexElementFormat.Float2)
-                                {
                                     vertex.TexCoord2 = new Vector2(reader.ReadFloat(), reader.ReadFloat());
-                                }
                                 else if (element.Format == VertexElementFormat.Half2)
-                                {
                                     vertex.TexCoord2 = new Vector2(HalfUtils.Unpack(reader.ReadUShort()), HalfUtils.Unpack(reader.ReadUShort()));
-                                }
                             }
                             else if (element.Usage == VertexElementUsage.Color0)
                             {
                                 if (element.Format == VertexElementFormat.UByte4N)
-                                {
                                     vertex.Color0 = new Vector4(reader.ReadByte() / 255.0f, reader.ReadByte() / 255.0f, reader.ReadByte() / 255.0f, reader.ReadByte() / 255.0f);
-                                }
                                 else if (element.Format == VertexElementFormat.Float4)
-                                {
                                     vertex.Color0 = new Vector4(reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat());
-                                }
                                 else if (element.Format == VertexElementFormat.Half4)
-                                {
                                     vertex.Color0 = new Vector4(HalfUtils.Unpack(reader.ReadUShort()), HalfUtils.Unpack(reader.ReadUShort()), HalfUtils.Unpack(reader.ReadUShort()), HalfUtils.Unpack(reader.ReadUShort()));
-                                }
                             }
                             else if (element.Usage == VertexElementUsage.Color1)
                             {
                                 if (element.Format == VertexElementFormat.UByte4N)
-                                {
                                     vertex.Color1 = new Vector4(reader.ReadByte() / 255.0f, reader.ReadByte() / 255.0f, reader.ReadByte() / 255.0f, reader.ReadByte() / 255.0f);
-                                }
                                 else if (element.Format == VertexElementFormat.Float4)
-                                {
                                     vertex.Color1 = new Vector4(reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat());
-                                }
                                 else if (element.Format == VertexElementFormat.Half4)
-                                {
                                     vertex.Color1 = new Vector4(HalfUtils.Unpack(reader.ReadUShort()), HalfUtils.Unpack(reader.ReadUShort()), HalfUtils.Unpack(reader.ReadUShort()), HalfUtils.Unpack(reader.ReadUShort()));
-                                }
                             }
                             else if (element.Usage == VertexElementUsage.BoneIndices)
                             {
@@ -565,7 +542,7 @@ namespace MeshSetPlugin.Render
                     {
                         vertex.BoneWeights3 = 1.0f;
                     }
-                    else if (meshLod.Type == MeshType.MeshType_Rigid /*|| meshLod.Type == MeshType.MeshType_Composite*/)
+                    else if (meshLod.Type == MeshType.MeshType_Rigid)
                     {
                         vertex.BoneIndices0 = 0;
                         vertex.BoneIndices1 = 0;
@@ -594,64 +571,6 @@ namespace MeshSetPlugin.Render
 
                 totalStride += stream.VertexStride;
             }
-
-            //if (bRecalculateNormals)
-            //{
-            //    reader.Position = indexBufferOffset + (section.StartIndex * ((indexBufferFormat == SharpDX.DXGI.Format.R16_UInt) ? 2 : 4));
-            //    uint[] indices = new uint[meshSection.PrimitiveCount * 3];
-            //    for (int i = 0; i < indices.Length; i++)
-            //        indices[i] = (this.indexBufferFormat == SharpDX.DXGI.Format.R16_UInt) ? reader.ReadUShort() : reader.ReadUInt();
-
-            //    Vector3[] norm = new Vector3[vertices.Length];
-            //    Vector3[] tan1 = new Vector3[vertices.Length];
-            //    Vector3[] tan2 = new Vector3[vertices.Length];
-
-            //    for (int i = 0; i < section.PrimitiveCount * 3; i += 3)
-            //    {
-            //        FallbackVertex v1 = vertices[(int)indices[i + 0]];
-            //        FallbackVertex v2 = vertices[(int)indices[i + 1]];
-            //        FallbackVertex v3 = vertices[(int)indices[i + 2]];
-
-            //        Vector3 pos1 = v1.Position;
-            //        Vector3 pos2 = v2.Position;
-            //        Vector3 pos3 = v3.Position;
-
-            //        Vector3 edge1 = (pos2 - pos1);
-            //        Vector3 edge2 = (pos3 - pos1);
-
-            //        Vector3 tangentX = edge1;
-            //        Vector3 tangentZ = Vector3.Cross(edge1, edge2);
-
-            //        tangentX.Normalize();
-            //        tangentZ.Normalize();
-
-            //        Vector3 tangentY = Vector3.Cross(tangentX, tangentZ);
-            //        tangentY.Normalize();
-
-            //        v1.Tangent = new Vector4(tangentX, 0.0f);
-            //        v2.Tangent = new Vector4(tangentX, 0.0f);
-            //        v3.Tangent = new Vector4(tangentX, 0.0f);
-
-            //        v1.Bitangent = new Vector4(tangentY, 0.0f);
-            //        v2.Bitangent = new Vector4(tangentY, 0.0f);
-            //        v3.Bitangent = new Vector4(tangentY, 0.0f);
-
-            //        v1.Normal = new Vector4(tangentZ, 0.0f);
-            //        v2.Normal = new Vector4(tangentZ, 0.0f);
-            //        v3.Normal = new Vector4(tangentZ, 0.0f);
-
-            //        float bitangent = Vector3.Dot(Vector3.Cross(tangentZ, tangentX), tangentY) < 0.0f ? -1.0f : 1.0f;
-            //        v1.Bitangent *= bitangent;
-            //        v2.Bitangent *= bitangent;
-            //        v3.Bitangent *= bitangent;
-
-            //        vertices[(int)indices[i + 0]] = v1;
-            //        vertices[(int)indices[i + 1]] = v2;
-            //        vertices[(int)indices[i + 2]] = v3;
-
-            //        //bitangentSign = true;
-            //    }
-            //}
 
             if (bitangentSign)
             {
