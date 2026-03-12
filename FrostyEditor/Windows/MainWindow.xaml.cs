@@ -477,6 +477,11 @@ namespace FrostyEditor
                         }
                     }
 
+                    catch (Exception ex)
+                    {
+                        App.Logger.Log("LAUNCH ERROR: " + ex.ToString());
+                    }
+
                 }, showCancelButton: true, cancelCallback: (task) => cancelToken.Cancel());
             }
             catch (OperationCanceledException)

@@ -1,4 +1,4 @@
-﻿using Frosty.Hash;
+﻿﻿using Frosty.Hash;
 using FrostySdk.Interfaces;
 using FrostySdk.IO;
 using FrostySdk.Managers;

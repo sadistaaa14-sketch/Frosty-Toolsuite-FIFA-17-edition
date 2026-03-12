@@ -257,11 +257,6 @@ namespace Frosty.Core.Handlers
         {
             ChunkAssetEntry chunkEntry = origEntry as ChunkAssetEntry;
             List<ModLegacyFileEntry> modEntries = (List<ModLegacyFileEntry>)data;
-            App.Logger.Log("LegacyHandler.Modify called for chunk {0}", chunkEntry.Id);
-            App.Logger.Log("Mod entries count: {0}", modEntries.Count);
-
-            foreach (ModLegacyFileEntry modEntry in modEntries)
-                App.Logger.Log("  name={0} hash={1}", modEntry.Name, modEntry.Hash);
 
             // build lookup by hash for quick matching
             Dictionary<int, ModLegacyFileEntry> modLookup = new Dictionary<int, ModLegacyFileEntry>();
@@ -281,15 +276,10 @@ namespace Frosty.Core.Handlers
                 uint stringsStartOff = reader.ReadUInt();
                 uint block2Unk = reader.ReadUInt();
                 byte[] headerTail = reader.ReadBytes(12);
-                App.Logger.Log("LegacyHandler.Modify: numEntries={0} headerSize={1} stringSectionOff={2} stringsStartOff={3}",
-    numEntries, headerSize, stringSectionOff, stringsStartOff);
 
-                // 32-byte prefix between entry table end and strings section
+                // --- read string section prefix (dynamic size) ---
                 reader.Position = stringSectionOff;
-                byte[] stringPrefix = reader.ReadBytes(32);
-
-                // 48-byte subheader before actual strings
-                byte[] stringsSubheader = reader.ReadBytes(48);
+                byte[] stringPrefix = reader.ReadBytes((int)(stringsStartOff - stringSectionOff));
 
                 // --- read all entry records ---
                 reader.Position = headerSize;
@@ -304,6 +294,13 @@ namespace Frosty.Core.Handlers
                     Guid guid = reader.ReadGuid();
                     parsedEntries.Add((strOff, compOff, compSize, off, sz, guid));
                 }
+
+                // --- read strings subheader (dynamic size based on first entry) ---
+                int subheaderSize = (parsedEntries.Count > 0)
+                    ? (int)(parsedEntries[0].strOff - stringsStartOff)
+                    : 0;
+                reader.Position = stringsStartOff;
+                byte[] stringsSubheader = reader.ReadBytes(subheaderSize);
 
                 // --- read all entry names ---
                 var entryNames = new List<string>();
@@ -325,8 +322,6 @@ namespace Frosty.Core.Handlers
                 int origIndexTableSize = 12 + ((int)numEntries + 2) * 4;
                 long origTotalSize = reader.Length;
                 long indexTableOff = origTotalSize - origIndexTableSize;
-                App.Logger.Log("LegacyHandler.Modify: origIndexTableSize={0} origTotalSize={1} indexTableOff={2}",
-    origIndexTableSize, origTotalSize, indexTableOff);
 
                 byte[] unreferencedStrings = reader.ReadBytes((int)(indexTableOff - lastStrEnd));
 
@@ -369,11 +364,12 @@ namespace Frosty.Core.Handlers
                     b.name.ToLowerInvariant(),
                     StringComparison.Ordinal));
 
-                // --- recalculate layout ---
+                // --- recalculate layout (dynamic sizes) ---
                 uint newNumEntries = (uint)newEntries.Count;
                 uint newStringSectionOff = headerSize + newNumEntries * 56;
-                uint newStringsStartOff = newStringSectionOff + 32;
-                uint newActualStringsOff = newStringsStartOff + 48;
+                uint prefixSize = stringsStartOff - stringSectionOff;
+                uint newStringsStartOff = newStringSectionOff + prefixSize;
+                uint newActualStringsOff = newStringsStartOff + (uint)subheaderSize;
 
                 // build string blob and record str offsets
                 var strOffsets = new List<long>();
@@ -402,8 +398,6 @@ namespace Frosty.Core.Handlers
                     idxWriter.Write(newStringSectionOff + 16);
                     newIndexTable = idxWriter.ToByteArray();
                 }
-
-               
 
                 // --- write output ---
                 using (NativeWriter writer = new NativeWriter(new MemoryStream()))
