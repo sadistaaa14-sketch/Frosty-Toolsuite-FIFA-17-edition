@@ -3,9 +3,9 @@
     <Configurations>Developer - Debug;Release - Alpha;Release - Beta;Release - Final</Configurations>
     <Platforms>x64</Platforms>
     <TargetFrameworks>net48</TargetFrameworks>
-    <AssemblyTitle>BlankPlugin</AssemblyTitle>
-    <Product>BlankPlugin</Product>
-    <Copyright>Copyright ©  2020</Copyright>
+    <AssemblyTitle>BundleRefTablePlugin</AssemblyTitle>
+    <Product>BundleRefTablePlugin</Product>
+    <Copyright>Copyright 2025</Copyright>
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <UseWPF>true</UseWPF>
@@ -17,31 +17,28 @@
     <OutputPath>bin\Developer\Debug\</OutputPath>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
   </PropertyGroup>
-  
+
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release - Alpha|x64' ">
     <OutputPath>bin\Release\Alpha\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <Optimize>true</Optimize>
   </PropertyGroup>
-  
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release - Beta|x64'">
     <OutputPath>bin\Release\Beta\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <Optimize>true</Optimize>
   </PropertyGroup>
-  
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release - Final|x64'">
     <OutputPath>bin\Release\Final\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <Optimize>true</Optimize>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Reference Include="PresentationCore" />
-    <Reference Include="PresentationFramework" />
-    <Reference Include="System.Xaml" />
-    <Reference Include="WindowsBase" />
-  </ItemGroup>
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="xcopy /Y &quot;$(TargetPath)&quot; &quot;$(SolutionDir)$(OutDir)Plugins\&quot;" />
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\..\FrostyControls\FrostyControls.csproj">
@@ -50,38 +47,12 @@
     <ProjectReference Include="..\..\FrostyHash\FrostyHash.vcxproj">
       <Private>false</Private>
     </ProjectReference>
+    <ProjectReference Include="..\..\FrostyModSupport\FrostyModSupport.csproj" />
     <ProjectReference Include="..\..\FrostyPlugin\FrostyCore.csproj">
       <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\..\FrostySdk\FrostySdk.csproj">
       <Private>false</Private>
     </ProjectReference>
-    <ProjectReference Include="..\AtlasTexturePlugin\AtlasTexturePlugin.csproj" />
-    <ProjectReference Include="..\BundleRefTablePlugin\BundleRefTablePlugin.csproj" />
-    <ProjectReference Include="..\MeshSetPlugin\MeshSetPlugin.csproj" />
-    <ProjectReference Include="..\SvgImagePlugin\SvgImagePlugin.csproj" />
   </ItemGroup>
-
-  <ItemGroup>
-    <Compile Update="Windows\AddAssetWindow.xaml.cs">
-      <DependentUpon>AddAssetWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Update="Windows\DuplicateStarheadWindow.xaml.cs">
-      <DependentUpon>DuplicateStarheadWindow.xaml</DependentUpon>
-    </Compile>
-  </ItemGroup>
-
-  <ItemGroup>
-    <Page Update="Windows\AddAssetWindow.xaml">
-      <SubType>Designer</SubType>
-    </Page>
-    <Page Update="Windows\DuplicateStarheadWindow.xaml">
-      <SubType>Designer</SubType>
-    </Page>
-  </ItemGroup>
-
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Exec Command="xcopy /Y &quot;$(TargetPath)&quot; &quot;$(SolutionDir)$(OutDir)Plugins\&quot;" />
-  </Target>
-
 </Project>

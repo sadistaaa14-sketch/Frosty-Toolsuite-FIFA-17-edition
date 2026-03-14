@@ -1,4 +1,4 @@
-﻿using DuplicationPlugin;
+using DuplicationPlugin;
 using Frosty.Core.Attributes;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -25,6 +25,7 @@ using static DuplicationPlugin.DuplicationTool;
 
 [assembly: PluginDisplayName("Asset Duplication")]
 [assembly: PluginAuthor("Cade")]
-[assembly: PluginVersion("1.0.0.0")]
+[assembly: PluginVersion("1.0.1.0")]
 
 [assembly: RegisterDataExplorerContextMenu(typeof(DuplicateContextMenuItem))]
+[assembly: RegisterMenuExtension(typeof(DuplicateStarheadMenuExtension))]
