@@ -75,6 +75,12 @@
     <Compile Update="Windows\DuplicateTrophyWindow.xaml.cs">
       <DependentUpon>DuplicateTrophyWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Update="Windows\DuplicateGenericHeadWindow.xaml.cs">
+      <DependentUpon>DuplicateGenericHeadWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateGenericHairWindow.xaml.cs">
+      <DependentUpon>DuplicateGenericHairWindow.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>
@@ -88,6 +94,12 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Update="Windows\DuplicateTrophyWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateGenericHeadWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateGenericHairWindow.xaml">
       <SubType>Designer</SubType>
     </Page>
   </ItemGroup>

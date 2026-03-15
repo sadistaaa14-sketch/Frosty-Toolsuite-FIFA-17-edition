@@ -31,3 +31,5 @@ using static DuplicationPlugin.DuplicationTool;
 [assembly: RegisterMenuExtension(typeof(DuplicateStarheadMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateKitMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateTrophyMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(DuplicateGenericHeadMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(DuplicateGenericHairMenuExtension))]

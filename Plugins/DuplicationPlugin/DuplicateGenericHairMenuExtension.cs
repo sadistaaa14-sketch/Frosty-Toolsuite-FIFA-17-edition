@@ -1,0 +1,540 @@
+using BundleRefTablePlugin;
+using DuplicationPlugin.Windows;
+using Frosty.Controls;
+using Frosty.Core;
+using Frosty.Core.Viewport;
+using Frosty.Core.Windows;
+using FrostySdk;
+using FrostySdk.Ebx;
+using FrostySdk.IO;
+using FrostySdk.Managers;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Windows.Media;
+
+namespace DuplicationPlugin
+{
+    public class DuplicateGenericHairMenuExtension : MenuExtension
+    {
+        private readonly Dictionary<string, DuplicationTool.DuplicateAssetExtension> extensions
+            = new Dictionary<string, DuplicationTool.DuplicateAssetExtension>();
+
+        private static readonly HashSet<string> BRT_TYPES = new HashSet<string>
+        {
+            "ObjectBlueprint",
+            "ClothObjectBlueprint",
+            "TextureAsset",
+            "PSDWrapListAsset"
+        };
+
+        public DuplicateGenericHairMenuExtension()
+        {
+            foreach (var type in Assembly.GetExecutingAssembly().GetTypes())
+            {
+                if (type.IsSubclassOf(typeof(DuplicationTool.DuplicateAssetExtension)))
+                {
+                    var ext = (DuplicationTool.DuplicateAssetExtension)Activator.CreateInstance(type);
+                    if (ext.AssetType != null)
+                        extensions[ext.AssetType] = ext;
+                }
+            }
+            extensions["null"] = new DuplicationTool.DuplicateAssetExtension();
+        }
+
+        public override string TopLevelMenuName => "Tools";
+        public override string SubLevelMenuName => null;
+        public override string MenuItemName => "Duplicate Generic Hair";
+        public override ImageSource Icon => null;
+
+        public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
+        {
+            EbxAssetEntry entry = App.SelectedAsset as EbxAssetEntry;
+            if (entry == null)
+            {
+                FrostyMessageBox.Show(
+                    "No asset selected. Select any asset inside the generic hair folder you want to duplicate.",
+                    "Generic Hair Duplicator");
+                return;
+            }
+
+            string sourceFolder = entry.Path.Replace('\\', '/');
+            if (string.IsNullOrEmpty(sourceFolder))
+            {
+                FrostyMessageBox.Show("Selected asset has no folder path.", "Generic Hair Duplicator");
+                return;
+            }
+
+            // Strip BRT suffix if user selected from BRT subfolder
+            if (sourceFolder.EndsWith("_launch_generic_head_brt", StringComparison.OrdinalIgnoreCase))
+                sourceFolder = sourceFolder.Substring(0, sourceFolder.Length - "_launch_generic_head_brt".Length);
+            else if (sourceFolder.EndsWith("_generichead_brt", StringComparison.OrdinalIgnoreCase))
+                sourceFolder = sourceFolder.Substring(0, sourceFolder.Length - "_generichead_brt".Length);
+
+            string sourceName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);
+            string oldId = ExtractId(sourceName);
+            if (string.IsNullOrEmpty(oldId))
+            {
+                FrostyMessageBox.Show(
+                    "Could not extract a numeric ID from folder name '" + sourceName + "'.\n" +
+                    "Expected format: hairgen_10",
+                    "Generic Hair Duplicator");
+                return;
+            }
+
+            DuplicateGenericHairWindow win = new DuplicateGenericHairWindow(sourceFolder);
+            if (win.ShowDialog() != true)
+                return;
+
+            string newName = win.NewHairName;
+            string destPath = win.DestinationPath;
+
+            FrostyTaskWindow.Show("Duplicating Generic Hair", "", (task) =>
+            {
+                try
+                {
+                    if (!MeshVariationDb.IsLoaded)
+                        MeshVariationDb.LoadVariations(task);
+
+                    DuplicateGenericHair(task, sourceFolder, newName, destPath);
+                }
+                catch (Exception ex)
+                {
+                    App.Logger.Log("Error duplicating generic hair: " + ex.ToString());
+                }
+            });
+
+            App.EditorWindow.DataExplorer.RefreshAll();
+        });
+
+        public static string ExtractId(string folderName)
+        {
+            int last = folderName.LastIndexOf('_');
+            if (last < 0) return null;
+            string candidate = folderName.Substring(last + 1);
+            int dummy;
+            return int.TryParse(candidate, out dummy) ? candidate : null;
+        }
+
+        private EbxAssetEntry DuplicateWithExtension(EbxAssetEntry entry, string newName)
+        {
+            try
+            {
+                string key = "null";
+                foreach (string typekey in extensions.Keys)
+                {
+                    if (typekey != "null" && TypeLibrary.IsSubClassOf(entry.Type, typekey))
+                    {
+                        key = typekey;
+                        break;
+                    }
+                }
+                return extensions[key].DuplicateAsset(entry, newName, false, null);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.Log("Failed to duplicate " + entry.Name + ": " + ex.Message);
+                return null;
+            }
+        }
+
+        private static PointerRef MakeRef(EbxAsset targetAsset)
+        {
+            EbxImportReference r = new EbxImportReference();
+            r.FileGuid = targetAsset.FileGuid;
+            r.ClassGuid = targetAsset.RootInstanceGuid;
+            return new PointerRef(r);
+        }
+
+        private static PointerRef MakeRef(EbxAsset targetAsset, Guid classGuid)
+        {
+            EbxImportReference r = new EbxImportReference();
+            r.FileGuid = targetAsset.FileGuid;
+            r.ClassGuid = classGuid;
+            return new PointerRef(r);
+        }
+
+        private void DuplicateGenericHair(FrostyTaskWindow task, string sourceFolder,
+            string newHairName, string destPath)
+        {
+            string sourceName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);
+            string newFolder = destPath.TrimEnd('/') + "/" + newHairName;
+
+            string oldId = ExtractId(sourceName);
+            string newId = ExtractId(newHairName);
+
+            if (string.IsNullOrEmpty(oldId) || string.IsNullOrEmpty(newId))
+            {
+                App.Logger.Log("Could not extract IDs. Aborting.");
+                return;
+            }
+
+            App.Logger.Log("Source: " + sourceName + " (ID " + oldId + ")");
+            App.Logger.Log("Target: " + newHairName + " (ID " + newId + ")");
+
+            // ── Phase 1: Enumerate ──────────────────────────────────────────────
+            task.Update("Finding source assets...");
+
+            // Hair uses the same BRT folders as generic heads
+            string sourceBrtFolder1 = sourceFolder + "_generichead_brt";
+            string sourceBrtFolder2 = sourceFolder + "_launch_generic_head_brt";
+
+            List<EbxAssetEntry> mainAssets = new List<EbxAssetEntry>();
+            List<EbxAssetEntry> brtAssets = new List<EbxAssetEntry>();
+            string sourceBrtFolder = null;
+
+            foreach (EbxAssetEntry e in App.AssetManager.EnumerateEbx())
+            {
+                string path = e.Path.Replace('\\', '/');
+                if (path.Equals(sourceFolder, StringComparison.OrdinalIgnoreCase))
+                    mainAssets.Add(e);
+                else if (path.Equals(sourceBrtFolder1, StringComparison.OrdinalIgnoreCase))
+                {
+                    brtAssets.Add(e);
+                    sourceBrtFolder = sourceBrtFolder1;
+                }
+                else if (path.Equals(sourceBrtFolder2, StringComparison.OrdinalIgnoreCase))
+                {
+                    brtAssets.Add(e);
+                    sourceBrtFolder = sourceBrtFolder2;
+                }
+            }
+
+            string brtSuffix = "_generichead_brt";
+            if (sourceBrtFolder != null && sourceBrtFolder.Equals(sourceBrtFolder2, StringComparison.OrdinalIgnoreCase))
+                brtSuffix = "_launch_generic_head_brt";
+            string newBrtFolder = newFolder + brtSuffix;
+
+            App.Logger.Log("Found " + mainAssets.Count + " main assets, " + brtAssets.Count + " BRT assets");
+
+            if (mainAssets.Count == 0)
+            {
+                App.Logger.Log("No assets found in: " + sourceFolder);
+                return;
+            }
+
+            // ── Phase 2: Duplicate ──────────────────────────────────────────────
+            Dictionary<Guid, EbxAssetEntry> oldToNew = new Dictionary<Guid, EbxAssetEntry>();
+            Dictionary<string, string> oldToNewNames = new Dictionary<string, string>();
+            List<EbxAssetEntry> allNew = new List<EbxAssetEntry>();
+
+            int current = 0;
+            int total = mainAssets.Count + brtAssets.Count;
+
+            foreach (EbxAssetEntry src in mainAssets)
+            {
+                current++;
+                string newFilename = src.Filename.Replace(oldId, newId);
+                string newAssetName = newFolder + "/" + newFilename;
+                task.Update("Duplicating " + src.Filename + " (" + current + "/" + total + ")...");
+
+                EbxAssetEntry newEntry = DuplicateWithExtension(src, newAssetName);
+                if (newEntry != null)
+                {
+                    oldToNew[src.Guid] = newEntry;
+                    oldToNewNames[src.Name] = newEntry.Name;
+                    allNew.Add(newEntry);
+                    App.Logger.Log("  Duplicated: " + src.Name + " -> " + newEntry.Name);
+                }
+            }
+
+            foreach (EbxAssetEntry src in brtAssets)
+            {
+                current++;
+                string newFilename = src.Filename.Replace(oldId, newId);
+                string newAssetName = newBrtFolder + "/" + newFilename;
+                task.Update("Duplicating " + src.Filename + " (" + current + "/" + total + ")...");
+
+                EbxAssetEntry newEntry = DuplicateWithExtension(src, newAssetName);
+                if (newEntry != null)
+                {
+                    oldToNew[src.Guid] = newEntry;
+                    oldToNewNames[src.Name] = newEntry.Name;
+                    allNew.Add(newEntry);
+                    App.Logger.Log("  Duplicated: " + src.Name + " -> " + newEntry.Name);
+                }
+            }
+
+            // ── Phase 3: Fix references ─────────────────────────────────────────
+            task.Update("Fixing cross-references...");
+            FixCrossReferences(oldToNew, allNew);
+
+            // ── Phase 4: BRT injection ──────────────────────────────────────────
+            if (!Config.Get<bool>("SkipBrtAdd", false))
+            {
+                task.Update("Updating BRT entries...");
+                InjectBrtEntries(mainAssets, oldToNewNames);
+            }
+
+            App.Logger.Log("Generic hair duplication complete (" + allNew.Count + " assets)");
+        }
+
+        // ─── BRT Injection ──────────────────────────────────────────────────────
+
+        private void InjectBrtEntries(List<EbxAssetEntry> sourceAssets,
+            Dictionary<string, string> oldToNewNames)
+        {
+            Dictionary<string, string> brtPairs = new Dictionary<string, string>();
+            foreach (EbxAssetEntry src in sourceAssets)
+            {
+                if (BRT_TYPES.Contains(src.Type) && oldToNewNames.ContainsKey(src.Name))
+                {
+                    brtPairs[src.Name.ToLower()] = oldToNewNames[src.Name].ToLower();
+                }
+            }
+
+            if (brtPairs.Count == 0)
+            {
+                App.Logger.Log("  No BRT-eligible assets to inject.");
+                return;
+            }
+
+            App.Logger.Log("  BRT-eligible assets: " + brtPairs.Count);
+
+            List<ResAssetEntry> allBrts = App.AssetManager.EnumerateRes((uint)ResourceType.BundleRefTableResource).ToList();
+            App.Logger.Log("  Found " + allBrts.Count + " BRT res entries total");
+
+            foreach (ResAssetEntry brtRes in allBrts)
+            {
+                BundleRefTableResource brt = App.AssetManager.GetResAs<BundleRefTableResource>(brtRes);
+                if (brt == null)
+                    continue;
+
+                bool brtModified = false;
+
+                foreach (KeyValuePair<string, string> kvp in brtPairs)
+                {
+                    if (brt.ContainsAsset(kvp.Key))
+                    {
+                        if (brt.DupeAsset(kvp.Value, kvp.Key))
+                        {
+                            brtModified = true;
+                            App.Logger.Log("  BRT " + brtRes.Filename + ": " + kvp.Value);
+                        }
+                    }
+                }
+
+                if (brtModified)
+                {
+                    App.AssetManager.ModifyRes(brtRes.ResRid, brt);
+                    App.Logger.Log("  Saved BRT: " + brtRes.Name);
+
+                    // ── DEBUG: export modified BRT to disk ──
+                    try
+                    {
+                        string debugDir = System.IO.Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+                            "BRT_Debug");
+                        System.IO.Directory.CreateDirectory(debugDir);
+
+                        string safeName = brtRes.Filename.Replace('/', '_').Replace('\\', '_');
+
+                        brt.ApplyModifiedResource(brt.SaveModifiedResource());
+
+                        string debugPath = System.IO.Path.Combine(debugDir, safeName + "_modified.bin");
+                        byte[] meta = brt.ResourceMeta;
+                        byte[] body = brt.SaveBytes();
+                        if (meta != null && meta.Length > 0)
+                        {
+                            byte[] bytes = new byte[meta.Length + body.Length];
+                            Array.Copy(meta, 0, bytes, 0, meta.Length);
+                            Array.Copy(body, 0, bytes, meta.Length, body.Length);
+                            System.IO.File.WriteAllBytes(debugPath, bytes);
+                            App.Logger.Log("  DEBUG: exported " + bytes.Length + " bytes -> " + debugPath);
+                        }
+                        else
+                        {
+                            System.IO.File.WriteAllBytes(debugPath, body);
+                            App.Logger.Log("  DEBUG: exported " + body.Length + " bytes (no meta) -> " + debugPath);
+                        }
+
+                        string txtPath = System.IO.Path.Combine(debugDir, safeName + "_mapping.txt");
+                        var lines = new List<string>();
+                        lines.Add("BRT: " + brtRes.Name);
+                        lines.Add("Assets: " + brt.assets.Count + "  Lookups: " + brt.assetLookups.Count);
+                        lines.Add("");
+                        foreach (var kvp2 in brtPairs)
+                        {
+                            lines.Add(kvp2.Key + " -> " + kvp2.Value);
+                        }
+                        lines.Add("");
+                        lines.Add("--- Last 10 assets ---");
+                        int start = Math.Max(0, brt.assets.Count - 10);
+                        for (int a = start; a < brt.assets.Count; a++)
+                        {
+                            lines.Add("[" + a + "] " + brt.assets[a].Path + "/" + brt.assets[a].Name);
+                        }
+                        System.IO.File.WriteAllLines(txtPath, lines);
+                        App.Logger.Log("  DEBUG: mapping -> " + txtPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Logger.Log("  DEBUG export failed: " + ex.Message);
+                    }
+                }
+            }
+        }
+
+        // ─── Cross-Reference Fixup (same as starhead) ──────────────────────────
+
+        private void FixCrossReferences(Dictionary<Guid, EbxAssetEntry> oldToNew,
+            List<EbxAssetEntry> newAssets)
+        {
+            foreach (EbxAssetEntry newEntry in newAssets)
+            {
+                try
+                {
+                    if (newEntry.Type == "TextureAsset"
+                        || newEntry.Type == "SkinnedMeshAsset"
+                        || newEntry.Type == "ClothAsset"
+                        || newEntry.Type == "PSDWrapListAsset")
+                        continue;
+
+                    if (newEntry.Type == "MeshVariationDatabase")
+                        FixMVDB(newEntry, oldToNew);
+                    else if (newEntry.Type == "ObjectBlueprint" || newEntry.Type == "ClothObjectBlueprint")
+                        FixBlueprint(newEntry, oldToNew);
+                }
+                catch (Exception ex)
+                {
+                    App.Logger.Log("Failed to fix refs in " + newEntry.Name + ": " + ex.Message);
+                }
+            }
+        }
+
+        private void FixBlueprint(EbxAssetEntry newEntry,
+            Dictionary<Guid, EbxAssetEntry> oldToNew)
+        {
+            EbxAsset ebx = App.AssetManager.GetEbx(newEntry);
+            dynamic root = ebx.RootObject;
+            dynamic entity = root.Object.Internal;
+            bool modified = false;
+
+            // Fix Mesh reference
+            if (entity.Mesh.Type == PointerRefType.External)
+            {
+                Guid oldGuid = entity.Mesh.External.FileGuid;
+                if (oldToNew.ContainsKey(oldGuid))
+                {
+                    EbxAsset newMesh = App.AssetManager.GetEbx(oldToNew[oldGuid]);
+                    entity.Mesh = MakeRef(newMesh);
+                    modified = true;
+                    App.Logger.Log("  " + newEntry.Filename + ": Mesh -> " + oldToNew[oldGuid].Name);
+                }
+            }
+
+            // ClothObjectBlueprint: also fix Cloth and ExtraLodMeshes
+            if (newEntry.Type == "ClothObjectBlueprint")
+            {
+                try
+                {
+                    if (entity.Cloth.Type == PointerRefType.External)
+                    {
+                        Guid oldGuid = entity.Cloth.External.FileGuid;
+                        if (oldToNew.ContainsKey(oldGuid))
+                        {
+                            EbxAsset newCloth = App.AssetManager.GetEbx(oldToNew[oldGuid]);
+                            entity.Cloth = MakeRef(newCloth);
+                            modified = true;
+                            App.Logger.Log("  " + newEntry.Filename + ": Cloth -> " + oldToNew[oldGuid].Name);
+                        }
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    dynamic extraLods = entity.ExtraLodMeshes;
+                    for (int i = 0; i < extraLods.Count; i++)
+                    {
+                        PointerRef lodRef = extraLods[i];
+                        if (lodRef.Type == PointerRefType.External)
+                        {
+                            Guid oldGuid = lodRef.External.FileGuid;
+                            if (oldToNew.ContainsKey(oldGuid))
+                            {
+                                EbxAsset newLod = App.AssetManager.GetEbx(oldToNew[oldGuid]);
+                                extraLods[i] = MakeRef(newLod);
+                                modified = true;
+                                App.Logger.Log("  " + newEntry.Filename + ": ExtraLodMeshes[" + i + "] -> " + oldToNew[oldGuid].Name);
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (modified)
+            {
+                ebx.Update();
+                App.AssetManager.ModifyEbx(newEntry.Name, ebx);
+            }
+        }
+
+        private void FixMVDB(EbxAssetEntry mvdbEntry,
+            Dictionary<Guid, EbxAssetEntry> oldToNew)
+        {
+            EbxAsset mvdbAsset = App.AssetManager.GetEbx(mvdbEntry);
+            dynamic mvdbRoot = mvdbAsset.RootObject;
+            bool modified = false;
+
+            foreach (dynamic entry in mvdbRoot.Entries)
+            {
+                if (entry.Mesh.Type != PointerRefType.External)
+                    continue;
+
+                Guid oldMeshGuid = entry.Mesh.External.FileGuid;
+                if (!oldToNew.ContainsKey(oldMeshGuid))
+                    continue;
+
+                EbxAssetEntry newMeshEntry = oldToNew[oldMeshGuid];
+                EbxAsset newMeshAsset = App.AssetManager.GetEbx(newMeshEntry);
+
+                entry.Mesh = MakeRef(newMeshAsset);
+                modified = true;
+                App.Logger.Log("  MVDB: Mesh -> " + newMeshEntry.Name);
+
+                foreach (dynamic mat in entry.Materials)
+                {
+                    if (mat.Material.Type == PointerRefType.External)
+                    {
+                        Guid matFileGuid = mat.Material.External.FileGuid;
+                        if (oldToNew.ContainsKey(matFileGuid))
+                        {
+                            Guid classGuid = mat.Material.External.ClassGuid;
+                            mat.Material = MakeRef(newMeshAsset, classGuid);
+                            modified = true;
+                        }
+                    }
+
+                    foreach (dynamic texParam in mat.TextureParameters)
+                    {
+                        if (texParam.Value.Type != PointerRefType.External)
+                            continue;
+
+                        Guid oldTexGuid = texParam.Value.External.FileGuid;
+                        if (!oldToNew.ContainsKey(oldTexGuid))
+                            continue;
+
+                        EbxAssetEntry newTexEntry = oldToNew[oldTexGuid];
+                        EbxAsset newTexAsset = App.AssetManager.GetEbx(newTexEntry);
+                        texParam.Value = MakeRef(newTexAsset);
+                        modified = true;
+
+                        string paramName = "";
+                        try { paramName = texParam.ParameterName; } catch { }
+                        App.Logger.Log("  MVDB: " + paramName + " -> " + newTexEntry.Name);
+                    }
+                }
+            }
+
+            if (modified)
+            {
+                mvdbAsset.Update();
+                App.AssetManager.ModifyEbx(mvdbEntry.Name, mvdbAsset);
+                App.Logger.Log("  Saved MVDB: " + mvdbEntry.Name);
+            }
+        }
+    }
+}
