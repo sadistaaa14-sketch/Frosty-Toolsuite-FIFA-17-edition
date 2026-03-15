@@ -81,6 +81,15 @@
     <Compile Update="Windows\DuplicateGenericHairWindow.xaml.cs">
       <DependentUpon>DuplicateGenericHairWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Update="Windows\DuplicateLeagueLogoWindow.xaml.cs">
+      <DependentUpon>DuplicateLeagueLogoWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateManagerWindow.xaml.cs">
+      <DependentUpon>DuplicateManagerWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateBallWindow.xaml.cs">
+      <DependentUpon>DuplicateBallWindow.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>
@@ -100,6 +109,15 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Update="Windows\DuplicateGenericHairWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateLeagueLogoWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateManagerWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateBallWindow.xaml">
       <SubType>Designer</SubType>
     </Page>
   </ItemGroup>
