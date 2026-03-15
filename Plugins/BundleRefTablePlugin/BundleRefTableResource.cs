@@ -151,6 +151,7 @@ namespace BundleRefTablePlugin
             // New entries from AddDupeEntry modifications
             // We need strings for new asset names and paths
             List<string> newStrings = new List<string>();
+            HashSet<string> newStringSet = new HashSet<string>();
             Dictionary<string, int> newStringOffsets = new Dictionary<string, int>();
 
             int newAssetStartIndex = (int)assetCount; // original asset count
@@ -158,10 +159,16 @@ namespace BundleRefTablePlugin
             {
                 string name = assets[i].Name;
                 string path = assets[i].Path;
-                if (!HasString(rawData, name, strStart, brtNameStart) && !newStringOffsets.ContainsKey(name))
+                if (!HasString(rawData, name, strStart, brtNameStart) && !newStringSet.Contains(name))
+                {
                     newStrings.Add(name);
-                if (!HasString(rawData, path, strStart, brtNameStart) && !newStringOffsets.ContainsKey(path))
+                    newStringSet.Add(name);
+                }
+                if (!HasString(rawData, path, strStart, brtNameStart) && !newStringSet.Contains(path))
+                {
                     newStrings.Add(path);
+                    newStringSet.Add(path);
+                }
             }
 
             // Calculate inserted bytes

@@ -36,3 +36,5 @@ using static DuplicationPlugin.DuplicationTool;
 [assembly: RegisterMenuExtension(typeof(DuplicateLeagueLogoMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateManagerMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateBallMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(DuplicateShoeMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(DuplicateAccessoryMenuExtension))]

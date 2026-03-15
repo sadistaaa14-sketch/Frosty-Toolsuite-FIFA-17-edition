@@ -90,6 +90,12 @@
     <Compile Update="Windows\DuplicateBallWindow.xaml.cs">
       <DependentUpon>DuplicateBallWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Update="Windows\DuplicateShoeWindow.xaml.cs">
+      <DependentUpon>DuplicateShoeWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateAccessoryWindow.xaml.cs">
+      <DependentUpon>DuplicateAccessoryWindow.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>
@@ -118,6 +124,12 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Update="Windows\DuplicateBallWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateShoeWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateAccessoryWindow.xaml">
       <SubType>Designer</SubType>
     </Page>
   </ItemGroup>
