@@ -29,3 +29,4 @@ using static DuplicationPlugin.DuplicationTool;
 
 [assembly: RegisterDataExplorerContextMenu(typeof(DuplicateContextMenuItem))]
 [assembly: RegisterMenuExtension(typeof(DuplicateStarheadMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(DuplicateKitMenuExtension))]
