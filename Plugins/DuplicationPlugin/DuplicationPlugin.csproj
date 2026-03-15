@@ -69,6 +69,12 @@
     <Compile Update="Windows\DuplicateStarheadWindow.xaml.cs">
       <DependentUpon>DuplicateStarheadWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Update="Windows\DuplicateKitWindow.xaml.cs">
+      <DependentUpon>DuplicateKitWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateTrophyWindow.xaml.cs">
+      <DependentUpon>DuplicateTrophyWindow.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>
@@ -76,6 +82,12 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Update="Windows\DuplicateStarheadWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateKitWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateTrophyWindow.xaml">
       <SubType>Designer</SubType>
     </Page>
   </ItemGroup>
