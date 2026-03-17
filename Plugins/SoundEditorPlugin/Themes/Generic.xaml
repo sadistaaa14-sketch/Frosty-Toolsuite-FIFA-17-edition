@@ -133,10 +133,11 @@
         </Setter>
     </Style>
 
-    <!-- FrostySoundWaveEditor -->
+    <!-- Derived editors inherit base style -->
     <Style TargetType="{x:Type local:FrostySoundWaveEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
     <Style TargetType="{x:Type local:FrostyNewWaveEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
     <Style TargetType="{x:Type local:FrostyHarmonySampleBankEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
+    <Style TargetType="{x:Type local:FrostyLocalizedWaveEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
     <Style TargetType="{x:Type local:FrostyOctaneSoundEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
     <Style TargetType="{x:Type local:FrostyImpulseResponseEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
 

@@ -1,4 +1,4 @@
-﻿using Frosty.Core;
+using Frosty.Core;
 using Frosty.Core.Controls;
 using FrostySdk;
 using FrostySdk.Interfaces;
@@ -59,6 +59,13 @@ namespace SoundEditorPlugin
         public override FrostyAssetEditor GetEditor(ILogger logger)
         {
             return new FrostyHarmonySampleBankEditor(logger);
+        }
+    }
+    public class LocalizedWaveAssetDefinition : SoundAssetDefinition
+    {
+        public override FrostyAssetEditor GetEditor(ILogger logger)
+        {
+            return new FrostyLocalizedWaveEditor(logger);
         }
     }
     public class OctaneAssetDefinition : SoundAssetDefinition

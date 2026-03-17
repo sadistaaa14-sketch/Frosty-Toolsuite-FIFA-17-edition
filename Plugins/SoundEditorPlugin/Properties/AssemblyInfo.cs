@@ -1,4 +1,4 @@
-﻿using Frosty.Core.Attributes;
+using Frosty.Core.Attributes;
 using SoundEditorPlugin;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -32,6 +32,7 @@ using System.Windows;
 [assembly: RegisterAssetDefinition("SoundWaveAsset", typeof(SoundWaveAssetDefinition))]
 [assembly: RegisterAssetDefinition("NewWaveAsset", typeof(NewWaveAssetDefinition))]
 [assembly: RegisterAssetDefinition("HarmonySampleBankAsset", typeof(HarmonySampleBankAssetDefinition))]
+[assembly: RegisterAssetDefinition("LocalizedWaveAsset", typeof(LocalizedWaveAssetDefinition))]
 [assembly: RegisterAssetDefinition("OctaneAsset", typeof(OctaneAssetDefinition))]
 [assembly: RegisterAssetDefinition("ImpulseResponseAsset", typeof(ImpulseResponseAssetDefinition))]
 

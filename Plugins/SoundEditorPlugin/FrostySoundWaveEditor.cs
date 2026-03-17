@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using FrostySdk.Interfaces;
 using System.Windows;
@@ -31,101 +31,6 @@ namespace SoundEditorPlugin
             : base(inLogger)
         {
         }
-
-        //public override List<ToolbarItem> RegisterToolbarItems()
-        //{
-        //    return new List<ToolbarItem>()
-        //    {
-        //        // dev import, only handles first variations
-        //        new ToolbarItem("Import", "Import", "", new RelayCommand((o) =>
-        //        {
-        //            FrostyOpenFileDialog ofd = new FrostyOpenFileDialog("Import Sound", "*.mp3|*.mp3", "Sound");
-        //            if (!ofd.ShowDialog())
-        //                return;
-
-        //            using (var reader = new MediaFoundationReader(ofd.FileName))
-        //            {
-        //                int totalSamples = 0;
-        //                using (var writer = new NativeWriter(new MemoryStream()))
-        //                {
-        //                    writer.Write(0x4800000c, Endian.Big);
-        //                    writer.Write((byte)0x12);
-        //                    writer.Write((byte)((reader.WaveFormat.Channels - 1) << 2));
-        //                    writer.Write((ushort)(reader.WaveFormat.SampleRate), Endian.Big);
-
-        //                    long pos=writer.Position;
-        //                    writer.Write(0x40000000, Endian.Big);
-
-        //                    while (reader.Position < reader.Length)
-        //                    {
-        //                        int bufLength = 0x2600 * 2 * reader.WaveFormat.Channels;
-        //                        if (totalSamples + 0x2600 > 0x00ffffff)
-        //                            break;
-
-        //                        byte[] buf = new byte[bufLength];
-
-        //                        int actualRead = reader.Read(buf, 0, bufLength);
-        //                        if (actualRead == 0)
-        //                            break;
-
-        //                        writer.Write((actualRead + 8) | 0x44000000, Endian.Big);
-        //                        writer.Write(((actualRead / reader.WaveFormat.Channels) / 2), Endian.Big);
-
-        //                        for (int i = 0; i < actualRead/2; i++)
-        //                        {
-        //                            short s = BitConverter.ToInt16(buf, i * 2);
-        //                            writer.Write(s, Endian.Big);
-        //                        }
-
-        //                        totalSamples += ((actualRead / reader.WaveFormat.Channels) / 2);
-        //                    }
-
-        //                    writer.Write(0x45000004, Endian.Big);
-        //                    writer.Position=pos;
-        //                    writer.Write(totalSamples | 0x40000000, Endian.Big);
-
-        //                    byte[] resultBuf = writer.ToByteArray();;
-
-        //                    dynamic soundWave = RootObject;
-        //                    dynamic soundDataChunk = soundWave.Chunks[0];
-        //                    ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(soundDataChunk.ChunkId);
-
-        //                    bool modify = true;
-        //                    if (modify)
-        //                    {
-        //                        App.AssetManager.ModifyChunk(chunkEntry.Id, writer.ToByteArray());
-        //                        soundDataChunk.ChunkSize = (uint)resultBuf.Length;
-        //                    }
-        //                    else
-        //                    {
-        //                        Guid chunkId = App.AssetManager.AddChunk(resultBuf);
-
-        //                        ChunkAssetEntry newEntry = App.AssetManager.GetChunkEntry(chunkId);
-        //                        newEntry.AddToBundles(chunkEntry.Bundles);
-
-        //                        soundDataChunk = TypeLibrary.CreateObject("SoundDataChunk");
-        //                        soundDataChunk.ChunkId = chunkId;
-
-        //                        soundWave.Chunks.Add(soundDataChunk);
-
-        //                        dynamic segment = TypeLibrary.CreateObject("SoundWaveVariationSegment");
-        //                        segment.SeekTableOffset = 4294967295;
-        //                        soundWave.Segments.Add(segment);
-
-        //                        dynamic variation = TypeLibrary.CreateObject("SoundWaveRuntimeVariation");
-        //                        variation.FirstSegmentIndex = (ushort)(soundWave.Segments.Count - 1);
-        //                        variation.SegmentCount = (byte)1;
-        //                        variation.ChunkIndex = (byte)(soundWave.Chunks.Count - 1);
-        //                        variation.Weight = (byte)100;
-        //                        soundWave.RuntimeVariations.Add(variation);
-        //                    }
-
-        //                    InvokeOnAssetModified();
-        //                }
-        //            }
-        //        }))
-        //    };
-        //}
 
         protected override List<SoundDataTrack> InitialLoad(FrostyTaskWindow task)
         {
@@ -325,19 +230,75 @@ namespace SoundEditorPlugin
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    //  FrostyNewWaveEditor — handles NewWaveAsset + LocalizedWaveAsset
+    //  LocalizedWaveAsset is auto-detected (has Chunks but no RuntimeVariations)
+    // ═══════════════════════════════════════════════════════════════
+
     public class FrostyNewWaveEditor : FrostySoundDataEditor
     {
-        public FrostyNewWaveEditor()
-            : base(null)
+        // ── LocalizedWave state ──
+        private bool _isLocalizedWave;
+        private List<int> _lwTrackChunkIndices;
+        private List<int> _lwTrackStartOffsets;
+        private List<int> _lwTrackEndOffsets;
+        private bool _lwUsedResOffsets;
+        private ResAssetEntry _lwResEntry;
+        private int _lwResTableJFileOffset = -1;
+        private int _lwResTableJCopyFileOffset = -1;
+        private int[] _lwCommentaryIds; // Table A: commentary IDs per variation (plain integers)
+
+        private const uint HASH_CHUNK_OFFSETS = 0xE8E591DD;
+        private const uint HASH_CHUNK_SIZE    = 0xDC19107B;
+        private const uint HASH_TABLE_A       = 0x6AC4E4EA;
+
+        public FrostyNewWaveEditor() : base(null) { }
+        public FrostyNewWaveEditor(ILogger inLogger) : base(inLogger) { }
+
+        public override void OnApplyTemplate()
         {
+            base.OnApplyTemplate();
+            // On-demand waveform rendering for LocalizedWaveAsset tracks
+            tracksListBox.SelectionChanged += (s, e) =>
+            {
+                if (!_isLocalizedWave) return;
+                if (tracksListBox.SelectedItem is SoundDataTrack track &&
+                    track.WaveForm == null && track.Samples != null && track.Samples.Length > 0)
+                    LwRenderSingleWaveform(track);
+            };
         }
 
-        public FrostyNewWaveEditor(ILogger inLogger)
-            : base(inLogger)
+        // ── Dispatchers: detect asset type and route to correct path ──
+
+        protected override List<SoundDataTrack> InitialLoad(FrostyTaskWindow task)
         {
+            dynamic rootObj = RootObject;
+            bool hasRuntimeVariations = false;
+            try { hasRuntimeVariations = rootObj.RuntimeVariations != null && rootObj.RuntimeVariations.Count > 0; } catch { }
+            bool hasChunks = false;
+            try { hasChunks = rootObj.Chunks != null && rootObj.Chunks.Count > 0; } catch { }
+
+            if (hasChunks && !hasRuntimeVariations)
+            {
+                _isLocalizedWave = true;
+                App.Logger.Log("NewWaveEditor: detected LocalizedWaveAsset, using RES/SNR approach.");
+                return InitialLoadLocalized(task);
+            }
+            _isLocalizedWave = false;
+            return InitialLoadNewWave(task);
         }
 
         protected override void ImportSound(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
+        {
+            if (_isLocalizedWave) { ImportSoundLocalized(ofd, task); return; }
+            ImportSoundNewWave(ofd, task);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  Original NewWaveAsset code (unchanged logic)
+        // ═══════════════════════════════════════════════════════════
+
+        private void ImportSoundNewWave(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
         {
             MemoryStream ms = new MemoryStream();
             byte[] resultBuf;
@@ -346,33 +307,16 @@ namespace SoundEditorPlugin
                 using (var reader = new AudioFileReader(ofd.FileName))
                 {
                     if (reader.WaveFormat.Channels == 1)
-                    {
-                        var stereo = new MonoToStereoSampleProvider(reader) { LeftVolume = 1.0f, RightVolume = 1.0f };
-                        WaveFileWriter.WriteWavFileToStream(ms, new SampleToWaveProvider16(stereo));
-                    }
-                    else
-                    {
-                        WaveFileWriter.WriteWavFileToStream(ms, reader);
-                    }
+                    { var stereo = new MonoToStereoSampleProvider(reader) { LeftVolume = 1.0f, RightVolume = 1.0f }; WaveFileWriter.WriteWavFileToStream(ms, new SampleToWaveProvider16(stereo)); }
+                    else { WaveFileWriter.WriteWavFileToStream(ms, reader); }
                 }
                 resultBuf = CreatePcm16BigSound(ms);
             }
             else if (ofd.FileName.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
-            {
-                using (var reader = new MediaFoundationReader(ofd.FileName))
-                {
-                    WaveFileWriter.WriteWavFileToStream(ms, reader);
-                }
-                resultBuf = CreatePcm16BigSound(ms);
-            }
+            { using (var reader = new MediaFoundationReader(ofd.FileName)) { WaveFileWriter.WriteWavFileToStream(ms, reader); } resultBuf = CreatePcm16BigSound(ms); }
             else if (ofd.FileName.EndsWith(".ealayer3"))
-            {
-                resultBuf = File.ReadAllBytes(ofd.FileName);
-            }
-            else
-            {
-                throw new FileFormatException();
-            }
+            { resultBuf = File.ReadAllBytes(ofd.FileName); }
+            else { throw new FileFormatException(); }
 
             int index = 0;
             Dispatcher?.Invoke(() => { index = tracksListBox.SelectedIndex; });
@@ -395,14 +339,12 @@ namespace SoundEditorPlugin
                 InvokeOnAssetModified();
                 EbxAssetEntry assetEntry = AssetEntry as EbxAssetEntry;
                 assetEntry.LinkAsset(chunkEntry);
-
                 TracksList.Clear();
-                foreach (var track in tracks)
-                    TracksList.Add(track);
+                foreach (var track in tracks) TracksList.Add(track);
             });
         }
 
-        protected override List<SoundDataTrack> InitialLoad(FrostyTaskWindow task)
+        private List<SoundDataTrack> InitialLoadNewWave(FrostyTaskWindow task)
         {
             List<SoundDataTrack> retVal = new List<SoundDataTrack>();
             dynamic newWave = RootObject;
@@ -411,26 +353,20 @@ namespace SoundEditorPlugin
             foreach (dynamic soundDataChunk in newWave.Chunks)
             {
                 SoundDataTrack track = new SoundDataTrack {Name = "Track #" + ((index++) + 1)};
-
                 ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(soundDataChunk.ChunkId);
-
                 if (chunkEntry == null)
-                {
-                    App.Logger.LogWarning($"SoundChunk {soundDataChunk.ChunkId} doesn't exist. This could be because its a LocalizedChunk that is not loaded by your game.");
-                }
+                { App.Logger.LogWarning($"SoundChunk {soundDataChunk.ChunkId} doesn't exist. This could be because its a LocalizedChunk that is not loaded by your game."); }
                 else
                 {
                     using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(chunkEntry)))
                     {
                         List<short> decodedSoundBuf = new List<short>();
                         reader.Position = 0;
-
                         uint headerSize = reader.ReadUInt(Endian.Big) & 0x00ffffff;
                         byte codec = reader.ReadByte();
                         int channels = (reader.ReadByte() >> 2) + 1;
                         ushort sampleRate = reader.ReadUShort(Endian.Big);
                         uint sampleCount = reader.ReadUInt(Endian.Big) & 0x00ffffff;
-
                         switch (codec)
                         {
                             case 0x12: track.Codec = "Pcm16Big"; break;
@@ -441,190 +377,310 @@ namespace SoundEditorPlugin
                             case 0x19: track.Codec = "EaSpeex"; break;
                             default: track.Codec = "Unknown (" + codec.ToString("x2") + ")"; break;
                         }
-
                         reader.Position = 0;
                         byte[] soundBuf = reader.ReadToEnd();
                         double duration = 0.0;
-
-                        if (codec == 0x12)
-                        {
-                            short[] data = Pcm16b.Decode(soundBuf);
-                            decodedSoundBuf.AddRange(data);
-                            duration += (data.Length / channels) / (double)sampleRate;
-                        }
-                        else if (codec == 0x14)
-                        {
-                            short[] data = XAS.Decode(soundBuf);
-                            decodedSoundBuf.AddRange(data);
-                            duration += (data.Length / channels) / (double)sampleRate;
-                        }
+                        if (codec == 0x12) { short[] data = Pcm16b.Decode(soundBuf); decodedSoundBuf.AddRange(data); duration += (data.Length / channels) / (double)sampleRate; }
+                        else if (codec == 0x14) { short[] data = XAS.Decode(soundBuf); decodedSoundBuf.AddRange(data); duration += (data.Length / channels) / (double)sampleRate; }
                         else if (codec == 0x15 || codec == 0x16 || codec == 0x1c)
-                        {
-                            sampleCount = 0;
-                            EALayer3.Decode(soundBuf, soundBuf.Length, (short[] data, int count, EALayer3.StreamInfo info) =>
-                            {
-                                if (info.streamIndex == -1)
-                                    return;
-                                sampleCount += (uint)data.Length;
-                                decodedSoundBuf.AddRange(data);
-                            });
-                            duration += (sampleCount / channels) / (double)sampleRate;
-                        }
+                        { sampleCount = 0; EALayer3.Decode(soundBuf, soundBuf.Length, (short[] data, int count, EALayer3.StreamInfo info) => { if (info.streamIndex == -1) return; sampleCount += (uint)data.Length; decodedSoundBuf.AddRange(data); }); duration += (sampleCount / channels) / (double)sampleRate; }
                         else if (codec == 0x19)
-                        {
-                            int vgmChannels, vgmSampleRate;
-                            short[] data = DecodeWithVgmstream(soundBuf, out vgmChannels, out vgmSampleRate);
-                            if (data != null && data.Length > 0)
-                            {
-                                decodedSoundBuf.AddRange(data);
-                                channels = vgmChannels;
-                                sampleRate = (ushort)vgmSampleRate;
-                                duration += (data.Length / channels) / (double)sampleRate;
-                            }
-                        }
+                        { int vgmChannels, vgmSampleRate; short[] data = DecodeWithVgmstream(soundBuf, out vgmChannels, out vgmSampleRate); if (data != null && data.Length > 0) { decodedSoundBuf.AddRange(data); channels = vgmChannels; sampleRate = (ushort)vgmSampleRate; duration += (data.Length / channels) / (double)sampleRate; } }
 
-                        track.SampleRate = sampleRate;
-                        track.ChannelCount = channels;
-                        track.Duration += duration;
-                        track.Samples = decodedSoundBuf.ToArray();
-
-                        var maxPeakProvider = new MaxPeakProvider();
-                        var rmsPeakProvider = new RmsPeakProvider(200); // e.g. 200
-                        var samplingPeakProvider = new SamplingPeakProvider(200); // e.g. 200
-                        var averagePeakProvider = new AveragePeakProvider(4); // e.g. 4
+                        track.SampleRate = sampleRate; track.ChannelCount = channels; track.Duration += duration; track.Samples = decodedSoundBuf.ToArray();
 
                         var topSpacerColor = System.Drawing.Color.FromArgb(64, 83, 22, 3);
-                        var soundCloudOrangeTransparentBlocks = new SoundCloudBlockWaveFormSettings(System.Drawing.Color.FromArgb(196, 197, 53, 0), topSpacerColor, System.Drawing.Color.FromArgb(196, 79, 26, 0),
-                                                                                                    System.Drawing.Color.FromArgb(64, 79, 79, 79))
-                        {
-                            Name = "SoundCloud Orange Transparent Blocks",
-                            PixelsPerPeak = 2,
-                            SpacerPixels = 1,
-                            TopSpacerGradientStartColor = topSpacerColor,
-                            BackgroundColor = System.Drawing.Color.Transparent,
-                            Width = 800,
-                            TopHeight = 50,
-                            BottomHeight = 30,
-                        };
-
+                        var wfSettings = new SoundCloudBlockWaveFormSettings(System.Drawing.Color.FromArgb(196, 197, 53, 0), topSpacerColor, System.Drawing.Color.FromArgb(196, 79, 26, 0), System.Drawing.Color.FromArgb(64, 79, 79, 79))
+                        { Name = "SoundCloud Orange Transparent Blocks", PixelsPerPeak = 2, SpacerPixels = 1, TopSpacerGradientStartColor = topSpacerColor, BackgroundColor = System.Drawing.Color.Transparent, Width = 800, TopHeight = 50, BottomHeight = 30 };
                         try
                         {
                             var renderer = new WaveFormRenderer();
-                            var image = renderer.Render(decodedSoundBuf.ToArray(), maxPeakProvider, soundCloudOrangeTransparentBlocks);
-
+                            var image = renderer.Render(decodedSoundBuf.ToArray(), new MaxPeakProvider(), wfSettings);
                             using (var ms = new MemoryStream())
                             {
-                                image.Save(ms, ImageFormat.Png);
-                                ms.Seek(0, SeekOrigin.Begin);
-
-                                var bitmapImage = new BitmapImage();
-                                bitmapImage.BeginInit();
-                                bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                                bitmapImage.StreamSource = ms;
-                                bitmapImage.EndInit();
-
+                                image.Save(ms, ImageFormat.Png); ms.Seek(0, SeekOrigin.Begin);
+                                var bitmapImage = new BitmapImage(); bitmapImage.BeginInit(); bitmapImage.CacheOption = BitmapCacheOption.OnLoad; bitmapImage.StreamSource = ms; bitmapImage.EndInit();
                                 var target = new RenderTargetBitmap(bitmapImage.PixelWidth, bitmapImage.PixelHeight, bitmapImage.DpiX, bitmapImage.DpiY, PixelFormats.Pbgra32);
-                                var visual = new DrawingVisual();
-
-                                using (var r = visual.RenderOpen())
-                                {
-                                    r.DrawImage(bitmapImage, new Rect(0, 0, bitmapImage.Width, bitmapImage.Height));
-                                }
-
-                                target.Render(visual);
-                                target.Freeze();
-                                track.WaveForm = target;
+                                var visual = new DrawingVisual(); using (var r = visual.RenderOpen()) { r.DrawImage(bitmapImage, new Rect(0, 0, bitmapImage.Width, bitmapImage.Height)); }
+                                target.Render(visual); target.Freeze(); track.WaveForm = target;
                             }
                         }
-                        catch (Exception e)
-                        {
-                        }
-
+                        catch (Exception) { }
                         track.SegmentCount = 1;
                     }
                 }
-
                 retVal.Add(track);
             }
-
             return retVal;
         }
 
-        internal static short[] DecodeWithVgmstream(byte[] soundBuf, out int channels, out int sampleRate)
-        {
-            channels = 0;
-            sampleRate = 0;
+        // ═══════════════════════════════════════════════════════════
+        //  LocalizedWaveAsset support
+        //  Audio offsets from RES Table J, commentary IDs from Table A
+        // ═══════════════════════════════════════════════════════════
 
-            string tempDir = Path.GetTempPath();
-            string tempInput = Path.Combine(tempDir, "frosty_vgmstream_temp.sps");
-            string tempOutput = Path.Combine(tempDir, "frosty_vgmstream_temp.wav");
+        private struct LwClipLocation { public int ChunkIndex, StartOffset, EndOffset; }
+
+        private List<SoundDataTrack> InitialLoadLocalized(FrostyTaskWindow task)
+        {
+            List<SoundDataTrack> retVal = new List<SoundDataTrack>();
+            _lwTrackChunkIndices = new List<int>(); _lwTrackStartOffsets = new List<int>(); _lwTrackEndOffsets = new List<int>();
+            _lwUsedResOffsets = false; _lwResEntry = null; _lwResTableJFileOffset = -1; _lwResTableJCopyFileOffset = -1; _lwCommentaryIds = null;
 
             try
             {
-                File.WriteAllBytes(tempInput, soundBuf);
-
-                string assemblyDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-                string vgmstreamPath = Path.Combine(assemblyDir, "..", "thirdparty", "vgmstream-cli.exe");
-
-                if (!File.Exists(vgmstreamPath))
+                dynamic localizedWave = RootObject;
+                List<byte[]> chunkDataList = new List<byte[]>();
+                foreach (dynamic sdc in localizedWave.Chunks)
                 {
-                    App.Logger.LogWarning("vgmstream-cli.exe not found at: " + vgmstreamPath);
-                    return null;
+                    ChunkAssetEntry ce = App.AssetManager.GetChunkEntry(sdc.ChunkId);
+                    if (ce != null) { using (NativeReader r = new NativeReader(App.AssetManager.GetChunk(ce))) chunkDataList.Add(r.ReadToEnd()); }
+                    else { App.Logger.LogWarning("LocalizedWave chunk not found."); chunkDataList.Add(null); }
                 }
 
-                if (File.Exists(tempOutput))
-                    File.Delete(tempOutput);
+                List<LwClipLocation> clips = LwTryParseResOffsets(chunkDataList);
+                if (clips == null || clips.Count == 0) { App.Logger.Log("LocalizedWave: RES not available, using SNR scan."); clips = LwScanChunksForSnr(chunkDataList); }
+                if (clips.Count == 0) { for (int c = 0; c < chunkDataList.Count; c++) if (chunkDataList[c] != null && chunkDataList[c].Length > 12) clips.Add(new LwClipLocation { ChunkIndex = c, StartOffset = 0, EndOffset = chunkDataList[c].Length }); }
 
-                ProcessStartInfo psi = new ProcessStartInfo
-                {
-                    FileName = vgmstreamPath,
-                    Arguments = string.Format("-o \"{0}\" \"{1}\"", tempOutput, tempInput),
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
+                int totalClips = clips.Count;
+                int maxDisplay = 200;
+                int decodeCount = Math.Min(totalClips, maxDisplay);
+                App.Logger.Log("LocalizedWave: {0} total clips, displaying first {1} [{2}]", totalClips, decodeCount, _lwUsedResOffsets ? "RES Table J" : "SNR scan");
 
-                using (Process proc = Process.Start(psi))
+                for (int s = 0; s < decodeCount; s++)
                 {
-                    proc.WaitForExit(30000);
-                    if (proc.ExitCode != 0)
+                    if (s % 50 == 0 || s == decodeCount - 1) task.Update(status: "Loading Track " + (s + 1) + " / " + decodeCount, progress: ((s + 1) / (double)decodeCount) * 90.0d);
+                    LwClipLocation loc = clips[s]; byte[] chunkData = chunkDataList[loc.ChunkIndex]; if (chunkData == null) continue;
+                    int size = loc.EndOffset - loc.StartOffset; if (size <= 12) continue;
+                    byte[] soundBuf = new byte[size]; Array.Copy(chunkData, loc.StartOffset, soundBuf, 0, size);
+                    SoundDataTrack track = LwDecodeClipBuffer(soundBuf, s);
+                    if (track != null)
                     {
-                        App.Logger.LogWarning("vgmstream-cli.exe failed with exit code: " + proc.ExitCode);
-                        return null;
+                        if (_lwCommentaryIds != null && s < _lwCommentaryIds.Length)
+                            track.Name = "Track #" + (s + 1) + " [CID: " + _lwCommentaryIds[s] + "]";
+                        retVal.Add(track); _lwTrackChunkIndices.Add(loc.ChunkIndex); _lwTrackStartOffsets.Add(loc.StartOffset); _lwTrackEndOffsets.Add(loc.EndOffset);
+                    }
+                }
+                App.Logger.Log("LocalizedWave: loaded {0} tracks (waveforms render on demand).", retVal.Count);
+            }
+            catch (Exception ex) { App.Logger.LogError("LocalizedWaveAsset load failed: " + ex.ToString()); }
+            return retVal;
+        }
+
+        private List<LwClipLocation> LwTryParseResOffsets(List<byte[]> chunkDataList)
+        {
+            byte[] resData = LwTryReadResData(); if (resData == null || resData.Length < 0x60) return null;
+            try
+            {
+                int sble = 0x00; // GetRes() strips the 16-byte GUID prefix
+                if (resData[sble] != 0x53 || resData[sble + 1] != 0x42 || resData[sble + 2] != 0x6C || resData[sble + 3] != 0x65) return null;
+                int datasetCount = BitConverter.ToUInt16(resData, sble + 0x0A);
+                int tableJOffset = -1, tableAOffset = -1, variationCount = -1, tableAVarCount = -1; uint chunkSizeFromRes = 0;
+
+                for (int di = 0; di < datasetCount; di++)
+                {
+                    int dsOff = (int)BitConverter.ToUInt32(resData, sble + 0x50 + di * 8);
+                    int absOff = sble + dsOff; if (absOff + 0x48 > resData.Length) continue;
+                    if (resData[absOff] != 0x54 || resData[absOff + 1] != 0x45 || resData[absOff + 2] != 0x53 || resData[absOff + 3] != 0x44) continue;
+                    int varCount = (int)BitConverter.ToUInt32(resData, absOff + 0x38);
+                    int blockCount = BitConverter.ToUInt16(resData, absOff + 0x3C);
+                    int blockStart = absOff + 0x48;
+                    for (int bi = 0; bi < blockCount; bi++)
+                    {
+                        int boff = blockStart + bi * 24; if (boff + 24 > resData.Length) break;
+                        uint btype = BitConverter.ToUInt32(resData, boff);
+                        App.Logger.Log("  TESD#{0} Block{1}: hash=0x{2:X8} data[2]=0x{3:X} data[3]=0x{4:X} data[4]=0x{5:X}",
+                            di, bi, btype, BitConverter.ToUInt32(resData, boff + 8), BitConverter.ToUInt32(resData, boff + 12), BitConverter.ToUInt32(resData, boff + 16));
+                        if (btype == HASH_CHUNK_OFFSETS) { uint dp = BitConverter.ToUInt32(resData, boff + 16); tableJOffset = sble + (int)dp; variationCount = varCount; _lwResTableJCopyFileOffset = tableJOffset + varCount * 4; App.Logger.Log("LocalizedWave RES: Table J at 0x{0:X}, {1} variations", tableJOffset, varCount); }
+                        else if (btype == HASH_CHUNK_SIZE) { chunkSizeFromRes = BitConverter.ToUInt32(resData, boff + 8); }
+                        else if (btype == HASH_TABLE_A) { uint dp = BitConverter.ToUInt32(resData, boff + 16); if (dp > 0) { tableAOffset = sble + (int)dp; tableAVarCount = varCount; App.Logger.Log("LocalizedWave RES: Table A at 0x{0:X}, varCount={1}", tableAOffset, tableAVarCount); } }
                     }
                 }
 
-                if (!File.Exists(tempOutput))
-                    return null;
+                if (tableJOffset < 0 || variationCount <= 0) { App.Logger.LogWarning("LocalizedWave RES: Table J not found (scanned {0} datasets)", datasetCount); return null; }
+                App.Logger.Log("LocalizedWave RES: scan complete. tableJ=0x{0:X} tableA=0x{1:X} chunkSize=0x{2:X}", tableJOffset, tableAOffset, chunkSizeFromRes);
+                if (tableJOffset + variationCount * 4 > resData.Length) return null;
+                uint chunkSize = chunkSizeFromRes; if (chunkSize == 0 && chunkDataList.Count > 0 && chunkDataList[0] != null) chunkSize = (uint)chunkDataList[0].Length;
 
-                using (var wavReader = new WaveFileReader(tempOutput))
+                // Read Table A (commentary IDs — plain integers, NOT hashed)
+                _lwCommentaryIds = null;
+                if (tableAOffset >= 0 && tableAVarCount > 0)
                 {
-                    channels = wavReader.WaveFormat.Channels;
-                    sampleRate = wavReader.WaveFormat.SampleRate;
+                    int tableADataStart = tableAOffset + 8; // skip 8-byte sub-header
+                    if (tableADataStart + tableAVarCount * 2 <= resData.Length)
+                    {
+                        _lwCommentaryIds = new int[tableAVarCount];
+                        for (int i = 0; i < tableAVarCount; i++) _lwCommentaryIds[i] = BitConverter.ToUInt16(resData, tableADataStart + i * 2);
+                        App.Logger.Log("LocalizedWave RES: read {0} commentary IDs", tableAVarCount);
 
-                    byte[] buffer = new byte[wavReader.Length];
-                    int bytesRead = wavReader.Read(buffer, 0, buffer.Length);
+                        // Log multi-variation commentary IDs so user can find all clips for a player
+                        Dictionary<int, List<int>> cidToVars = new Dictionary<int, List<int>>();
+                        for (int i = 0; i < tableAVarCount; i++) { int cid = _lwCommentaryIds[i]; if (!cidToVars.ContainsKey(cid)) cidToVars[cid] = new List<int>(); cidToVars[cid].Add(i); }
+                        int multiCount = 0;
+                        foreach (var kvp in cidToVars) if (kvp.Value.Count > 1) { multiCount++; App.Logger.Log("  CID {0}: variations {1}", kvp.Key, string.Join(", ", kvp.Value)); }
+                        App.Logger.Log("LocalizedWave RES: {0} unique CIDs, {1} with multiple variations", cidToVars.Count, multiCount);
+                    }
+                }
+                else
+                {
+                    App.Logger.LogWarning("LocalizedWave RES: Table A NOT found (tableAOffset={0}, tableAVarCount={1})", tableAOffset, tableAVarCount);
+                }
 
-                    short[] samples = new short[bytesRead / 2];
-                    Buffer.BlockCopy(buffer, 0, samples, 0, bytesRead);
-                    return samples;
+                // Read Table J (chunk byte offsets)
+                List<LwClipLocation> clips = new List<LwClipLocation>();
+                uint[] offsets = new uint[variationCount];
+                for (int i = 0; i < variationCount; i++) offsets[i] = BitConverter.ToUInt32(resData, tableJOffset + i * 4);
+                for (int i = 0; i < variationCount; i++)
+                { int start = (int)offsets[i]; int end = (i + 1 < variationCount) ? (int)offsets[i + 1] : (int)chunkSize; if (end <= start || start < 0) continue;
+                  clips.Add(new LwClipLocation { ChunkIndex = 0, StartOffset = start, EndOffset = end }); }
+                _lwUsedResOffsets = true; _lwResTableJFileOffset = tableJOffset; return clips;
+            }
+            catch (Exception ex) { App.Logger.LogWarning("LocalizedWave RES parse failed: " + ex.Message); return null; }
+        }
+
+        private byte[] LwTryReadResData()
+        {
+            try
+            {
+                string assetName = null;
+                Dispatcher?.Invoke(() => { assetName = (AssetEntry as EbxAssetEntry)?.Name; });
+                if (string.IsNullOrEmpty(assetName)) return null;
+                ResAssetEntry resEntry = App.AssetManager.GetResEntry(assetName); if (resEntry == null) return null;
+                using (NativeReader reader = new NativeReader(App.AssetManager.GetRes(resEntry)))
+                { byte[] d = reader.ReadToEnd(); if (d != null && d.Length > 0) { _lwResEntry = resEntry; App.Logger.Log("LocalizedWave: found RES ({0} bytes)", d.Length); return d; } }
+            }
+            catch (Exception ex) { App.Logger.LogWarning("LocalizedWave RES lookup failed: " + ex.Message); }
+            return null;
+        }
+
+        private List<LwClipLocation> LwScanChunksForSnr(List<byte[]> chunkDataList)
+        {
+            List<LwClipLocation> results = new List<LwClipLocation>();
+            for (int c = 0; c < chunkDataList.Count; c++)
+            {
+                byte[] cd = chunkDataList[c]; if (cd == null || cd.Length < 16) continue;
+                for (int pos = 0; pos <= cd.Length - 16; pos++)
+                {
+                    if (cd[pos] != 0x48 || cd[pos + 1] != 0x00 || cd[pos + 2] != 0x00) continue;
+                    int hp = cd[pos + 3]; if (hp != 0x0C && hp != 0x14) continue;
+                    if (pos + 4 >= cd.Length) continue; byte codec = cd[pos + 4];
+                    if (codec != 0x12 && codec != 0x14 && codec != 0x15 && codec != 0x16 && codec != 0x19 && codec != 0x1c) continue;
+                    if (pos + 7 >= cd.Length) continue; ushort sr = (ushort)((cd[pos + 6] << 8) | cd[pos + 7]);
+                    if (sr != 8000 && sr != 11025 && sr != 12000 && sr != 16000 && sr != 22050 && sr != 24000 && sr != 32000 && sr != 44100 && sr != 48000) continue;
+                    int dbp = pos + 4 + hp; if (dbp >= cd.Length || cd[dbp] != 0x44) continue;
+                    int endOff = cd.Length; for (int ep = dbp; ep <= cd.Length - 4; ep++) { if (cd[ep] == 0x45 && cd[ep + 1] == 0x00 && cd[ep + 2] == 0x00) { endOff = ep + 4 + cd[ep + 3]; break; } }
+                    endOff = Math.Min(endOff, cd.Length); results.Add(new LwClipLocation { ChunkIndex = c, StartOffset = pos, EndOffset = endOff }); pos = Math.Max(pos, endOff - 1);
                 }
             }
-            catch (Exception ex)
+            return results;
+        }
+
+        private static SoundDataTrack LwDecodeClipBuffer(byte[] soundBuf, int trackIndex)
+        {
+            if (soundBuf == null || soundBuf.Length < 12) return null;
+            byte codec; int channels; ushort sampleRate;
+            using (NativeReader hdr = new NativeReader(new MemoryStream(soundBuf))) { hdr.ReadUInt(Endian.Big); codec = hdr.ReadByte(); channels = (hdr.ReadByte() >> 2) + 1; sampleRate = hdr.ReadUShort(Endian.Big); }
+            SoundDataTrack track = new SoundDataTrack { Name = "Track #" + (trackIndex + 1) };
+            switch (codec) { case 0x12: track.Codec = "Pcm16Big"; break; case 0x14: track.Codec = "XAS"; break; case 0x15: track.Codec = "EALayer3 v5"; break; case 0x16: track.Codec = "EALayer3 v6"; break; case 0x19: track.Codec = "EaSpeex"; break; case 0x1c: track.Codec = "EaOpus"; break; default: track.Codec = "Unknown (" + codec.ToString("x2") + ")"; break; }
+            List<short> decoded = new List<short>(); double duration = 0.0;
+            if (codec == 0x12) { short[] pcm = Pcm16b.Decode(soundBuf); decoded.AddRange(pcm); duration = (pcm.Length / channels) / (double)sampleRate; }
+            else if (codec == 0x14) { short[] xas = XAS.Decode(soundBuf); decoded.AddRange(xas); duration = (xas.Length / channels) / (double)sampleRate; }
+            else if (codec == 0x15 || codec == 0x16) { bool ok = false; try { uint sc = 0; EALayer3.Decode(soundBuf, soundBuf.Length, (short[] d, int count, EALayer3.StreamInfo info) => { if (info.streamIndex != -1) { sc += (uint)d.Length; decoded.AddRange(d); } }); duration = (sc / channels) / (double)sampleRate; ok = decoded.Count > 0; } catch { decoded.Clear(); } if (!ok) { int vCh, vSr; short[] vd = DecodeWithVgmstream(soundBuf, out vCh, out vSr); if (vd != null && vd.Length > 0) { decoded.AddRange(vd); channels = vCh; sampleRate = (ushort)vSr; duration = (vd.Length / channels) / (double)sampleRate; } } }
+            else if (codec == 0x19 || codec == 0x1c) { int vCh, vSr; short[] vd = DecodeWithVgmstream(soundBuf, out vCh, out vSr); if (vd != null && vd.Length > 0) { decoded.AddRange(vd); channels = vCh; sampleRate = (ushort)vSr; duration = (vd.Length / channels) / (double)sampleRate; } }
+            if (decoded.Count == 0) return null;
+            track.SampleRate = sampleRate; track.ChannelCount = channels; track.Duration = duration; track.Samples = decoded.ToArray(); track.SegmentCount = 1; return track;
+        }
+
+        private static void LwRenderSingleWaveform(SoundDataTrack track)
+        {
+            if (track.Samples == null || track.Samples.Length == 0) return;
+            try
             {
-                App.Logger.LogWarning("vgmstream decode failed: " + ex.Message);
-                return null;
+                var topSpacer = System.Drawing.Color.FromArgb(64, 83, 22, 3);
+                var settings = new SoundCloudBlockWaveFormSettings(System.Drawing.Color.FromArgb(196, 197, 53, 0), topSpacer, System.Drawing.Color.FromArgb(196, 79, 26, 0), System.Drawing.Color.FromArgb(64, 79, 79, 79))
+                { Name = "SoundCloud Orange Transparent Blocks", PixelsPerPeak = 2, SpacerPixels = 1, TopSpacerGradientStartColor = topSpacer, BackgroundColor = System.Drawing.Color.Transparent, Width = 800, TopHeight = 50, BottomHeight = 30 };
+                var image = new WaveFormRenderer().Render(track.Samples, new MaxPeakProvider(), settings);
+                using (var ms = new MemoryStream()) { image.Save(ms, ImageFormat.Png); ms.Seek(0, SeekOrigin.Begin); var bmp = new BitmapImage(); bmp.BeginInit(); bmp.CacheOption = BitmapCacheOption.OnLoad; bmp.StreamSource = ms; bmp.EndInit(); var target = new RenderTargetBitmap(bmp.PixelWidth, bmp.PixelHeight, bmp.DpiX, bmp.DpiY, PixelFormats.Pbgra32); var visual = new DrawingVisual(); using (var dc = visual.RenderOpen()) dc.DrawImage(bmp, new Rect(0, 0, bmp.Width, bmp.Height)); target.Render(visual); target.Freeze(); track.WaveForm = target; }
             }
-            finally
+            catch (Exception) { }
+        }
+
+        private void ImportSoundLocalized(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
+        {
+            byte[] resultBuf = LwConvertAudioFile(ofd);
+            int selectedIndex = 0; Dispatcher?.Invoke(() => { selectedIndex = tracksListBox.SelectedIndex; });
+            if (_lwTrackChunkIndices == null || selectedIndex < 0 || selectedIndex >= _lwTrackChunkIndices.Count) { App.Logger.LogWarning("Invalid track selection."); return; }
+            int chunkIdx = _lwTrackChunkIndices[selectedIndex]; int trackStart = _lwTrackStartOffsets[selectedIndex]; int trackEnd = _lwTrackEndOffsets[selectedIndex];
+            dynamic localizedWave = RootObject; dynamic chunkDyn = localizedWave.Chunks[chunkIdx];
+            ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(chunkDyn.ChunkId); if (chunkEntry == null) { App.Logger.LogWarning("Chunk not available."); return; }
+            byte[] chunkData; using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(chunkEntry))) chunkData = reader.ReadToEnd();
+            trackEnd = Math.Min(trackEnd, chunkData.Length); int sizeDiff = resultBuf.Length - (trackEnd - trackStart);
+            byte[] newChunk = new byte[chunkData.Length + sizeDiff];
+            Array.Copy(chunkData, 0, newChunk, 0, trackStart); Array.Copy(resultBuf, 0, newChunk, trackStart, resultBuf.Length); Array.Copy(chunkData, trackEnd, newChunk, trackStart + resultBuf.Length, chunkData.Length - trackEnd);
+            App.AssetManager.ModifyChunk(chunkEntry.Id, newChunk); chunkDyn.ChunkSize = (uint)newChunk.Length;
+            if (_lwUsedResOffsets && _lwResEntry != null && _lwResTableJFileOffset >= 0 && sizeDiff != 0) LwPatchResTableJ(selectedIndex, sizeDiff, (uint)newChunk.Length);
+            audioPlayer.Dispose(); audioPlayer = new AudioPlayer();
+            List<SoundDataTrack> tracks = InitialLoad(task);
+            Dispatcher?.Invoke(() => { AssetModified = true; InvokeOnAssetModified(); EbxAssetEntry ae = AssetEntry as EbxAssetEntry; ae.LinkAsset(chunkEntry); if (_lwResEntry != null) ae.LinkAsset(_lwResEntry); TracksList.Clear(); foreach (var t in tracks) TracksList.Add(t); });
+        }
+
+        private void LwPatchResTableJ(int modifiedIndex, int sizeDiff, uint newChunkSize)
+        {
+            try
             {
-                try { if (File.Exists(tempInput)) File.Delete(tempInput); } catch { }
-                try { if (File.Exists(tempOutput)) File.Delete(tempOutput); } catch { }
+                byte[] resData; using (NativeReader reader = new NativeReader(App.AssetManager.GetRes(_lwResEntry))) resData = reader.ReadToEnd();
+                int count = _lwTrackStartOffsets.Count;
+                for (int i = modifiedIndex + 1; i < count; i++) { int pos = _lwResTableJFileOffset + i * 4; uint v = BitConverter.ToUInt32(resData, pos); BitConverter.GetBytes((uint)((int)v + sizeDiff)).CopyTo(resData, pos); }
+                if (_lwResTableJCopyFileOffset >= 0 && _lwResTableJCopyFileOffset + count * 4 <= resData.Length)
+                    for (int i = modifiedIndex + 1; i < count; i++) { int pos = _lwResTableJCopyFileOffset + i * 4; uint v = BitConverter.ToUInt32(resData, pos); BitConverter.GetBytes((uint)((int)v + sizeDiff)).CopyTo(resData, pos); }
+                int sble = 0x00; int dsc = BitConverter.ToUInt16(resData, sble + 0x0A);
+                for (int di = 0; di < dsc; di++) { int dsOff = (int)BitConverter.ToUInt32(resData, sble + 0x50 + di * 8); int absOff = sble + dsOff; if (absOff + 0x48 > resData.Length) continue; if (resData[absOff] != 0x54 || resData[absOff + 1] != 0x45) continue; int bc = BitConverter.ToUInt16(resData, absOff + 0x3C); for (int bi = 0; bi < bc; bi++) { int boff = absOff + 0x48 + bi * 24; if (boff + 24 > resData.Length) break; if (BitConverter.ToUInt32(resData, boff) == HASH_CHUNK_SIZE) { BitConverter.GetBytes(newChunkSize).CopyTo(resData, boff + 8); break; } } }
+                App.AssetManager.ModifyRes(_lwResEntry.ResRid, resData);
+                App.Logger.Log("LocalizedWave: patched RES (sizeDiff={0}, newChunkSize=0x{1:X})", sizeDiff, newChunkSize);
             }
+            catch (Exception ex) { App.Logger.LogWarning("LocalizedWave RES patch failed: " + ex.Message); }
+        }
+
+        private byte[] LwConvertAudioFile(FrostyOpenFileDialog ofd)
+        {
+            MemoryStream ms = new MemoryStream();
+            if (ofd.FileName.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
+            { using (var r = new AudioFileReader(ofd.FileName)) { if (r.WaveFormat.Channels == 1) { var st = new MonoToStereoSampleProvider(r) { LeftVolume = 1.0f, RightVolume = 1.0f }; WaveFileWriter.WriteWavFileToStream(ms, new SampleToWaveProvider16(st)); } else WaveFileWriter.WriteWavFileToStream(ms, r); } return CreatePcm16BigSound(ms); }
+            else if (ofd.FileName.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
+            { using (var r = new MediaFoundationReader(ofd.FileName)) WaveFileWriter.WriteWavFileToStream(ms, r); return CreatePcm16BigSound(ms); }
+            else if (ofd.FileName.EndsWith(".ealayer3")) return File.ReadAllBytes(ofd.FileName);
+            else throw new FileFormatException();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  vgmstream decode (shared utility)
+        // ═══════════════════════════════════════════════════════════
+
+        internal static short[] DecodeWithVgmstream(byte[] soundBuf, out int channels, out int sampleRate)
+        {
+            channels = 0; sampleRate = 0;
+            string tempDir = Path.GetTempPath();
+            string tempInput = Path.Combine(tempDir, "frosty_vgmstream_temp.sps");
+            string tempOutput = Path.Combine(tempDir, "frosty_vgmstream_temp.wav");
+            try
+            {
+                File.WriteAllBytes(tempInput, soundBuf);
+                string assemblyDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+                string vgmstreamPath = Path.Combine(assemblyDir, "..", "thirdparty", "vgmstream-cli.exe");
+                if (!File.Exists(vgmstreamPath)) { App.Logger.LogWarning("vgmstream-cli.exe not found at: " + vgmstreamPath); return null; }
+                if (File.Exists(tempOutput)) File.Delete(tempOutput);
+                ProcessStartInfo psi = new ProcessStartInfo { FileName = vgmstreamPath, Arguments = string.Format("-o \"{0}\" \"{1}\"", tempOutput, tempInput), UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                using (Process proc = Process.Start(psi)) { proc.WaitForExit(30000); if (proc.ExitCode != 0) { App.Logger.LogWarning("vgmstream-cli.exe failed: exit code " + proc.ExitCode); return null; } }
+                if (!File.Exists(tempOutput)) return null;
+                using (var wavReader = new WaveFileReader(tempOutput))
+                { channels = wavReader.WaveFormat.Channels; sampleRate = wavReader.WaveFormat.SampleRate; byte[] buffer = new byte[wavReader.Length]; int bytesRead = wavReader.Read(buffer, 0, buffer.Length); short[] samples = new short[bytesRead / 2]; Buffer.BlockCopy(buffer, 0, samples, 0, bytesRead); return samples; }
+            }
+            catch (Exception ex) { App.Logger.LogWarning("vgmstream decode failed: " + ex.Message); return null; }
+            finally { try { if (File.Exists(tempInput)) File.Delete(tempInput); } catch { } try { if (File.Exists(tempOutput)) File.Delete(tempOutput); } catch { } }
         }
     }
 
-    public class FrostyHarmonySampleBankEditor : FrostySoundDataEditor
+     public class FrostyHarmonySampleBankEditor : FrostySoundDataEditor
     {
         public FrostyHarmonySampleBankEditor()
             : base(null)
