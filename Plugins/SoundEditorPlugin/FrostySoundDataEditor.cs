@@ -352,6 +352,9 @@ namespace SoundEditorPlugin
     [TemplatePart(Name = PART_VolumeSlider, Type = typeof(Slider))]
     [TemplatePart(Name = PART_SoundExportMenuItem, Type = typeof(MenuItem))]
     [TemplatePart(Name = PART_SoundImportMenuItem, Type = typeof(MenuItem))]
+    [TemplatePart(Name = PART_SoundAddTrackMenuItem, Type = typeof(MenuItem))]
+    [TemplatePart(Name = PART_SoundDeleteTrackMenuItem, Type = typeof(MenuItem))]
+    [TemplatePart(Name = PART_SoundDeleteAllExceptMenuItem, Type = typeof(MenuItem))]
     public class FrostySoundDataEditor : FrostyAssetEditor
     {
         private const string PART_TracksListBox = "PART_TracksListBox";
@@ -360,6 +363,9 @@ namespace SoundEditorPlugin
         private const string PART_VolumeSlider = "PART_VolumeSlider";
         private const string PART_SoundExportMenuItem = "PART_SoundExportMenuItem";
         private const string PART_SoundImportMenuItem = "PART_SoundImportMenuItem";
+        private const string PART_SoundAddTrackMenuItem = "PART_SoundAddTrackMenuItem";
+        private const string PART_SoundDeleteTrackMenuItem = "PART_SoundDeleteTrackMenuItem";
+        private const string PART_SoundDeleteAllExceptMenuItem = "PART_SoundDeleteAllExceptMenuItem";
 
         public static readonly DependencyProperty TracksListProperty = DependencyProperty.Register("TracksList", typeof(ObservableCollection<SoundDataTrack>), typeof(FrostySoundDataEditor), new FrameworkPropertyMetadata(null));
         public ObservableCollection<SoundDataTrack> TracksList
@@ -370,11 +376,11 @@ namespace SoundEditorPlugin
 
         public bool IsPlaying => audioPlayer != null && audioPlayer.IsPlaying;
 
-        private ListView tracksListBox;
+        protected ListView tracksListBox;
         private Button playButton;
         private Button stopButton;
         private Slider volumeSlider;
-        private AudioPlayer audioPlayer;
+        protected AudioPlayer audioPlayer;
         private bool bFirstTime = true;
 
         public FrostySoundDataEditor(ILogger inLogger) 
@@ -411,6 +417,12 @@ namespace SoundEditorPlugin
             mi.Click += SoundExportMenuItem_Click;
             mi = GetTemplateChild(PART_SoundImportMenuItem) as MenuItem;
             mi.Click += SoundImportMenuItem_Click;
+            mi = GetTemplateChild(PART_SoundAddTrackMenuItem) as MenuItem;
+            if (mi != null) mi.Click += SoundAddTrackMenuItem_Click;
+            mi = GetTemplateChild(PART_SoundDeleteTrackMenuItem) as MenuItem;
+            if (mi != null) mi.Click += SoundDeleteTrackMenuItem_Click;
+            mi = GetTemplateChild(PART_SoundDeleteAllExceptMenuItem) as MenuItem;
+            if (mi != null) mi.Click += SoundDeleteAllExceptMenuItem_Click;
             Loaded += FrostySoundDataEditor_Loaded;
 
             TracksList = new ObservableCollection<SoundDataTrack>();
@@ -564,7 +576,109 @@ namespace SoundEditorPlugin
             }
         }
 
-        private void ImportSound(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
+        private void SoundAddTrackMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            FrostyOpenFileDialog ofd = new FrostyOpenFileDialog("Add Track", "Audio Files (*.mp3; *.wav; *.ealayer3)|*.mp3; *.wav; *.ealayer3", "Sound");
+            if (ofd.ShowDialog())
+            {
+                try
+                {
+                    FrostyTaskWindow.Show("Adding track", "", (task) =>
+                    {
+                        AddTrack(ofd, task);
+                    });
+                }
+                catch (Exception exp)
+                {
+                    App.AssetManager.RevertAsset(AssetEntry);
+                    logger.LogError(exp.Message);
+                }
+            }
+        }
+
+        private void SoundDeleteTrackMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (tracksListBox.SelectedItem == null)
+                return;
+
+            try
+            {
+                FrostyTaskWindow.Show("Deleting track", "", (task) =>
+                {
+                    int index = 0;
+                    Dispatcher?.Invoke(() => { index = tracksListBox.SelectedIndex; });
+                    DeleteTrack(index, task);
+                });
+            }
+            catch (Exception exp)
+            {
+                App.AssetManager.RevertAsset(AssetEntry);
+                logger.LogError(exp.Message);
+            }
+        }
+
+        protected virtual void AddTrack(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
+        {
+            App.Logger.LogWarning("Add Track is not supported for this asset type.");
+        }
+
+        protected virtual void DeleteTrack(int trackIndex, FrostyTaskWindow task)
+        {
+            App.Logger.LogWarning("Delete Track is not supported for this asset type.");
+        }
+
+        private void SoundDeleteAllExceptMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            // Simple input dialog
+            Window inputWindow = new Window
+            {
+                Title = "Keep First N Tracks",
+                Width = 300,
+                Height = 150,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                Owner = Window.GetWindow(this)
+            };
+            StackPanel sp = new StackPanel { Margin = new Thickness(10) };
+            TextBlock tb = new TextBlock { Text = "How many tracks to keep (from the start):" };
+            TextBox input = new TextBox { Margin = new Thickness(0, 5, 0, 5), Text = "1" };
+            Button okBtn = new Button { Content = "OK", Width = 60, HorizontalAlignment = HorizontalAlignment.Right };
+            int keepCount = -1;
+            okBtn.Click += (s2, e2) => { int.TryParse(input.Text, out keepCount); inputWindow.Close(); };
+            sp.Children.Add(tb);
+            sp.Children.Add(input);
+            sp.Children.Add(okBtn);
+            inputWindow.Content = sp;
+            inputWindow.ShowDialog();
+
+            if (keepCount <= 0)
+                return;
+
+            try
+            {
+                FrostyTaskWindow.Show("Deleting tracks", "", (task) =>
+                {
+                    KeepFirstNTracks(keepCount, task);
+                });
+            }
+            catch (Exception exp)
+            {
+                App.AssetManager.RevertAsset(AssetEntry);
+                logger.LogError(exp.Message);
+            }
+        }
+
+        protected virtual void KeepFirstNTracks(int keepCount, FrostyTaskWindow task)
+        {
+            App.Logger.LogWarning("Keep First N Tracks is not supported for this asset type.");
+        }
+
+        protected virtual void DeleteAllExcept(int keepIndex, FrostyTaskWindow task)
+        {
+            App.Logger.LogWarning("Delete All Except is not supported for this asset type.");
+        }
+
+        protected virtual void ImportSound(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
         {
             //WaveFormat waveFormat = null;
             MemoryStream ms = new MemoryStream();
@@ -714,7 +828,7 @@ namespace SoundEditorPlugin
             });
         }
 
-        private static byte[] CreatePcm16BigSound(MemoryStream ms)
+        protected static byte[] CreatePcm16BigSound(MemoryStream ms)
         {
             byte[] resultBuf;
             using (var reader = new StreamMediaFoundationReader(ms))
