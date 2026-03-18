@@ -266,6 +266,85 @@ namespace SoundEditorPlugin
                     track.WaveForm == null && track.Samples != null && track.Samples.Length > 0)
                     LwRenderSingleWaveform(track);
             };
+
+            // Add LocalizedWave context menu items
+            if (tracksListBox.ContextMenu != null)
+            {
+                tracksListBox.ContextMenu.Items.Add(new System.Windows.Controls.Separator());
+
+                var copyCidItem = new System.Windows.Controls.MenuItem { Header = "Copy CID" };
+                copyCidItem.Click += (s, e) =>
+                {
+                    if (!_isLocalizedWave || _lwCommentaryIds == null) return;
+                    int idx = tracksListBox.SelectedIndex;
+                    if (idx >= 0 && idx < _lwCommentaryIds.Length)
+                    {
+                        System.Windows.Clipboard.SetText(_lwCommentaryIds[idx].ToString());
+                        App.Logger.Log("Copied CID {0} (track #{1})", _lwCommentaryIds[idx], idx + 1);
+                    }
+                };
+                tracksListBox.ContextMenu.Items.Add(copyCidItem);
+
+                var bulkExportItem = new System.Windows.Controls.MenuItem { Header = "Bulk Export All (WAV)" };
+                bulkExportItem.Click += LwBulkExport_Click;
+                tracksListBox.ContextMenu.Items.Add(bulkExportItem);
+            }
+        }
+
+        private void LwBulkExport_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isLocalizedWave) { App.Logger.LogWarning("Bulk export only for LocalizedWaveAsset."); return; }
+
+            FrostySaveFileDialog sfd = new FrostySaveFileDialog("Pick export folder (save any name here)", "All Files (*.*)|*.*", "Sound", "bulk_export");
+            if (!sfd.ShowDialog()) return;
+            string outputDir = System.IO.Path.GetDirectoryName(sfd.FileName);
+
+            FrostyTaskWindow.Show("Bulk Exporting Audio", "", task =>
+            {
+                List<SoundDataTrack> tracksCopy = null;
+                Dispatcher?.Invoke(() => { tracksCopy = new List<SoundDataTrack>(TracksList); });
+                if (tracksCopy == null) return;
+
+                int exported = 0;
+                for (int i = 0; i < tracksCopy.Count; i++)
+                {
+                    if (i % 100 == 0 || i == tracksCopy.Count - 1)
+                        task.Update(status: "Exporting " + (i + 1) + " / " + tracksCopy.Count, progress: ((i + 1) / (double)tracksCopy.Count) * 100.0d);
+
+                    SoundDataTrack track = tracksCopy[i];
+                    if (track.Samples == null || track.Samples.Length == 0) continue;
+
+                    string cidStr = (_lwCommentaryIds != null && i < _lwCommentaryIds.Length) ? "_CID" + _lwCommentaryIds[i] : "";
+                    string fileName = string.Format("track_{0:D5}{1}.wav", i, cidStr);
+                    string filePath = System.IO.Path.Combine(outputDir, fileName);
+
+                    try
+                    {
+                        WAV.WAVFormatChunk fmt = new WAV.WAVFormatChunk(WAV.WAVFormatChunk.DataFormats.WAVE_FORMAT_PCM,
+                            (ushort)track.ChannelCount, (uint)track.SampleRate,
+                            (uint)(track.ChannelCount * 2 * track.SampleRate),
+                            (ushort)(2 * track.ChannelCount), 16);
+                        List<WAV.WAVDataFrame> frames = new List<WAV.WAVDataFrame>();
+                        for (int j = 0; j < track.Samples.Length / track.ChannelCount; j++)
+                        {
+                            WAV.WAV16BitDataFrame frame = new WAV.WAV16BitDataFrame((ushort)track.ChannelCount);
+                            for (int ch = 0; ch < track.ChannelCount; ch++)
+                                frame.Data[ch] = track.Samples[j * track.ChannelCount + ch];
+                            frames.Add(frame);
+                        }
+                        WAV.WAVDataChunk data = new WAV.WAVDataChunk(fmt, frames);
+                        WAV.RIFFMainChunk main = new WAV.RIFFMainChunk(
+                            new WAV.RIFFChunkHeader(0, new byte[] { 0x52, 0x49, 0x46, 0x46 }, 0),
+                            new byte[] { 0x57, 0x41, 0x56, 0x45 });
+                        using (FileStream fs = new FileStream(filePath, FileMode.Create))
+                        using (BinaryWriter bw = new BinaryWriter(fs))
+                            main.Write(bw, new List<WAV.IRIFFChunk>(new WAV.IRIFFChunk[] { fmt, data }));
+                        exported++;
+                    }
+                    catch (Exception ex) { App.Logger.LogWarning("Failed to export track {0}: {1}", i, ex.Message); }
+                }
+                App.Logger.Log("Bulk export complete: {0} / {1} tracks to {2}", exported, tracksCopy.Count, outputDir);
+            });
         }
 
         // ── Dispatchers: detect asset type and route to correct path ──
@@ -443,13 +522,11 @@ namespace SoundEditorPlugin
                 if (clips.Count == 0) { for (int c = 0; c < chunkDataList.Count; c++) if (chunkDataList[c] != null && chunkDataList[c].Length > 12) clips.Add(new LwClipLocation { ChunkIndex = c, StartOffset = 0, EndOffset = chunkDataList[c].Length }); }
 
                 int totalClips = clips.Count;
-                int maxDisplay = 200;
-                int decodeCount = Math.Min(totalClips, maxDisplay);
-                App.Logger.Log("LocalizedWave: {0} total clips, displaying first {1} [{2}]", totalClips, decodeCount, _lwUsedResOffsets ? "RES Table J" : "SNR scan");
+                App.Logger.Log("LocalizedWave: {0} total clips [{1}]", totalClips, _lwUsedResOffsets ? "RES Table J" : "SNR scan");
 
-                for (int s = 0; s < decodeCount; s++)
+                for (int s = 0; s < totalClips; s++)
                 {
-                    if (s % 50 == 0 || s == decodeCount - 1) task.Update(status: "Loading Track " + (s + 1) + " / " + decodeCount, progress: ((s + 1) / (double)decodeCount) * 90.0d);
+                    if (s % 500 == 0 || s == totalClips - 1) task.Update(status: "Loading Track " + (s + 1) + " / " + totalClips, progress: ((s + 1) / (double)totalClips) * 90.0d);
                     LwClipLocation loc = clips[s]; byte[] chunkData = chunkDataList[loc.ChunkIndex]; if (chunkData == null) continue;
                     int size = loc.EndOffset - loc.StartOffset; if (size <= 12) continue;
                     byte[] soundBuf = new byte[size]; Array.Copy(chunkData, loc.StartOffset, soundBuf, 0, size);
@@ -489,11 +566,9 @@ namespace SoundEditorPlugin
                     {
                         int boff = blockStart + bi * 24; if (boff + 24 > resData.Length) break;
                         uint btype = BitConverter.ToUInt32(resData, boff);
-                        App.Logger.Log("  TESD#{0} Block{1}: hash=0x{2:X8} data[2]=0x{3:X} data[3]=0x{4:X} data[4]=0x{5:X}",
-                            di, bi, btype, BitConverter.ToUInt32(resData, boff + 8), BitConverter.ToUInt32(resData, boff + 12), BitConverter.ToUInt32(resData, boff + 16));
                         if (btype == HASH_CHUNK_OFFSETS) { uint dp = BitConverter.ToUInt32(resData, boff + 16); tableJOffset = sble + (int)dp; variationCount = varCount; _lwResTableJCopyFileOffset = tableJOffset + varCount * 4; App.Logger.Log("LocalizedWave RES: Table J at 0x{0:X}, {1} variations", tableJOffset, varCount); }
                         else if (btype == HASH_CHUNK_SIZE) { chunkSizeFromRes = BitConverter.ToUInt32(resData, boff + 8); }
-                        else if (btype == HASH_TABLE_A) { uint dp = BitConverter.ToUInt32(resData, boff + 16); if (dp > 0) { tableAOffset = sble + (int)dp; tableAVarCount = varCount; App.Logger.Log("LocalizedWave RES: Table A at 0x{0:X}, varCount={1}", tableAOffset, tableAVarCount); } }
+                        else if (btype == HASH_TABLE_A) { uint dp = BitConverter.ToUInt32(resData, boff + 16); if (dp > 0) { tableAOffset = sble + (int)dp; tableAVarCount = varCount; } }
                     }
                 }
 
