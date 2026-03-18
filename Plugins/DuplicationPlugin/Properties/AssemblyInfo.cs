@@ -38,3 +38,4 @@ using static DuplicationPlugin.DuplicationTool;
 [assembly: RegisterMenuExtension(typeof(DuplicateBallMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateShoeMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateAccessoryMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(DuplicateBodyScaleMenuExtension))]
