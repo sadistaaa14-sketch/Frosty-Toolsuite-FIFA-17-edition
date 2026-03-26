@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.3.11505.172 d18.3
+VisualStudioVersion = 18.3.11505.172
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FrostyEditor", "FrostyEditor.csproj", "{355B078B-45A5-472D-9CCD-688D8E30BAED}"
 	ProjectSection(ProjectDependencies) = postProject
@@ -95,7 +95,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FrostyCmd", "..\FrostyCmd\F
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DifficultyWeaponTableDataPlugin", "..\Plugins\DifficultyWeaponTableDataPlugin\DifficultyWeaponTableDataPlugin.csproj", "{F49314ED-C795-4A39-9748-68D936B35D2C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BundleRefTablePlugin", "..\..\Frosty-Toolsuite-FIFA-17-edition\Plugins\BundleRefTablePlugin\BundleRefTablePlugin.csproj", "{322C61A6-2FC3-6E4B-9BDD-45E2336F19D1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BundleRefTablePlugin", "..\Plugins\BundleRefTablePlugin\BundleRefTablePlugin.csproj", "{322C61A6-2FC3-6E4B-9BDD-45E2336F19D1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AssetBankPlugin", "..\Plugins\AssetBankPlugin\AssetBankPlugin.csproj", "{A721694B-4D2F-8B6C-21C8-E46D1C843E29}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -536,6 +538,16 @@ Global
 		{322C61A6-2FC3-6E4B-9BDD-45E2336F19D1}.Release - Final|x64.Build.0 = Release - Final|x64
 		{322C61A6-2FC3-6E4B-9BDD-45E2336F19D1}.Release|x64.ActiveCfg = Release - Alpha|x64
 		{322C61A6-2FC3-6E4B-9BDD-45E2336F19D1}.Release|x64.Build.0 = Release - Alpha|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Developer - Debug|x64.ActiveCfg = Developer - Debug|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Developer - Debug|x64.Build.0 = Developer - Debug|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release - Alpha|x64.ActiveCfg = Release - Alpha|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release - Alpha|x64.Build.0 = Release - Alpha|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release - Beta|x64.ActiveCfg = Release - Beta|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release - Beta|x64.Build.0 = Release - Beta|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release - Final|x64.ActiveCfg = Release - Final|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release - Final|x64.Build.0 = Release - Final|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release|x64.ActiveCfg = Release - Alpha|x64
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release|x64.Build.0 = Release - Alpha|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -576,6 +588,7 @@ Global
 		{7F280BF3-F794-4715-9D32-770D36454B8C} = {492048B6-848D-4675-A9BF-34A4751303F2}
 		{F49314ED-C795-4A39-9748-68D936B35D2C} = {492048B6-848D-4675-A9BF-34A4751303F2}
 		{322C61A6-2FC3-6E4B-9BDD-45E2336F19D1} = {492048B6-848D-4675-A9BF-34A4751303F2}
+		{A721694B-4D2F-8B6C-21C8-E46D1C843E29} = {492048B6-848D-4675-A9BF-34A4751303F2}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {C0B22EF1-4C3F-45B9-9F08-9793ED912199}
