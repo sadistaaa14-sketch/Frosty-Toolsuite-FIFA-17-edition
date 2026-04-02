@@ -987,7 +987,95 @@ namespace FrostyEditor
             legacyExplorer.RefreshItems();
         }
 
+        private void contextMenuBulkExportFolder_Click(object sender, RoutedEventArgs e)
+        {
+            LegacyFileEntry selectedAsset = legacyExplorer.SelectedAsset as LegacyFileEntry;
+            if (selectedAsset == null)
+                return;
 
+            // use the selected asset's directory as the folder prefix to export
+            string folderPrefix = selectedAsset.Path;
+            if (string.IsNullOrEmpty(folderPrefix))
+            {
+                App.Logger.Log("Selected asset is at the root level — select an asset inside a folder.");
+                return;
+            }
+
+            // ensure prefix ends with / for clean matching
+            if (!folderPrefix.EndsWith("/"))
+                folderPrefix += "/";
+
+            // collect all legacy entries that live under this folder (including subfolders)
+            List<LegacyFileEntry> toExport = new List<LegacyFileEntry>();
+            foreach (AssetEntry entry in App.AssetManager.EnumerateCustomAssets("legacy"))
+            {
+                LegacyFileEntry lfe = entry as LegacyFileEntry;
+                if (lfe != null && lfe.Name.StartsWith(folderPrefix, StringComparison.OrdinalIgnoreCase))
+                    toExport.Add(lfe);
+            }
+
+            if (toExport.Count == 0)
+            {
+                App.Logger.Log("No legacy files found under folder: {0}", folderPrefix);
+                return;
+            }
+
+            // pick output directory
+            using (var fbd = new System.Windows.Forms.FolderBrowserDialog())
+            {
+                fbd.Description = "Select output folder for bulk legacy export (" + toExport.Count + " files)";
+                if (fbd.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+                    return;
+
+                string outputRoot = fbd.SelectedPath;
+
+                FrostyTaskWindow.Show("Bulk Exporting Legacy Folder", folderPrefix, (task) =>
+                {
+                    App.AssetManager.SendManagerCommand("legacy", "SetCacheModeEnabled", true);
+
+                    int progress = 0;
+                    int failed = 0;
+                    foreach (LegacyFileEntry lfe in toExport)
+                    {
+                        task.Update(lfe.Name, (progress / (double)toExport.Count) * 100.0);
+                        progress++;
+
+                        try
+                        {
+                            // preserve subdirectory structure relative to the selected folder
+                            string relativePath = lfe.Name.Substring(folderPrefix.Length);
+                            string outPath = System.IO.Path.Combine(outputRoot, relativePath.Replace('/', '\\'));
+
+                            string dir = System.IO.Path.GetDirectoryName(outPath);
+                            if (!Directory.Exists(dir))
+                                Directory.CreateDirectory(dir);
+
+                            Stream assetStream = App.AssetManager.GetCustomAsset("legacy", lfe);
+                            if (assetStream == null)
+                            {
+                                failed++;
+                                continue;
+                            }
+
+                            using (NativeReader reader = new NativeReader(assetStream))
+                            using (NativeWriter writer = new NativeWriter(new FileStream(outPath, FileMode.Create)))
+                                writer.Write(reader.ReadToEnd());
+                        }
+                        catch
+                        {
+                            failed++;
+                        }
+                    }
+
+                    App.AssetManager.SendManagerCommand("legacy", "FlushCache");
+
+                    if (failed > 0)
+                        App.Logger.Log("Bulk exported {0} legacy files to {1} ({2} failed)", toExport.Count - failed, outputRoot, failed);
+                    else
+                        App.Logger.Log("Bulk exported {0} legacy files to {1}", toExport.Count, outputRoot);
+                });
+            }
+        }
 
 
         private void contextMenuExportAsset_Click(object sender, RoutedEventArgs e)

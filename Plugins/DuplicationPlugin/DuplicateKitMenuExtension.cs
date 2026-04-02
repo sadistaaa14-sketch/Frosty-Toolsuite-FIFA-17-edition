@@ -139,6 +139,23 @@ namespace DuplicationPlugin
             return int.TryParse(candidate, out dummy) ? candidate : null;
         }
 
+        /// <summary>
+        /// Finds the bundle ID for launch_sba by scanning all bundles.
+        /// Returns -1 if not found.
+        /// </summary>
+        private static int FindLaunchSbaBundleId()
+        {
+            foreach (BundleEntry be in App.AssetManager.EnumerateBundles())
+            {
+                if (be.Name.Equals("win32/content/common/configs/bundles/launch_sba",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    return App.AssetManager.GetBundleId(be);
+                }
+            }
+            return -1;
+        }
+
         private void DuplicateKit(FrostyTaskWindow task, string sourceFolder,
             string newFolderName, string destPath)
         {
@@ -146,6 +163,29 @@ namespace DuplicationPlugin
 
             App.Logger.Log("Kit source: " + sourceFolder);
             App.Logger.Log("Kit target: " + newFolder);
+
+            // ── Detect cross-team duplication ───────────────────────────────────
+            // Source: .../1_fc_nurnberg_171/home_0_0 → parent = .../1_fc_nurnberg_171
+            // Dest:   .../new_team_9999/third_3_0   → parent = .../new_team_9999
+            string sourceParent = sourceFolder.Substring(0, sourceFolder.LastIndexOf('/'));
+            string destParent = newFolder.Substring(0, newFolder.LastIndexOf('/'));
+            bool isCrossTeam = !sourceParent.Equals(destParent, StringComparison.OrdinalIgnoreCase);
+
+            int launchSbaBundleId = -1;
+            if (isCrossTeam)
+            {
+                App.Logger.Log("Cross-team duplication detected");
+                App.Logger.Log("  Source team folder: " + sourceParent);
+                App.Logger.Log("  Dest team folder:   " + destParent);
+
+                launchSbaBundleId = FindLaunchSbaBundleId();
+                if (launchSbaBundleId < 0)
+                {
+                    App.Logger.Log("ERROR: Could not find launch_sba bundle. Aborting cross-team duplication.");
+                    return;
+                }
+                App.Logger.Log("  launch_sba bundle ID: " + launchSbaBundleId);
+            }
 
             // ── Phase 1: Enumerate ──────────────────────────────────────────────
             task.Update("Finding kit assets...");
@@ -168,18 +208,8 @@ namespace DuplicationPlugin
             }
 
             // ── Phase 2: Duplicate ──────────────────────────────────────────────
-            // Parse folder names to build the full rename pattern.
-            // Filename pattern: <part>_<teamid>_<kittype>_<year>_<textype>
-            // e.g. "jersey_171_0_0_color" → teamid=171, kittype=0, year=0
-            //
-            // Source folder: ".../1_fc_nurnberg_171/home_0_0"
-            // Dest folder:   ".../1_fc_nurnberg_171/third_3_0"
-            // Old pattern: "_171_0_0_"  New pattern: "_171_3_0_"
-
-            string sourceParent = sourceFolder.Substring(0, sourceFolder.LastIndexOf('/'));
             string sourceParentName = sourceParent.Substring(sourceParent.LastIndexOf('/') + 1);
-            string newParent = newFolder.Substring(0, newFolder.LastIndexOf('/'));
-            string newParentName = newParent.Substring(newParent.LastIndexOf('/') + 1);
+            string newParentName = destParent.Substring(destParent.LastIndexOf('/') + 1);
 
             string oldTeamId = ExtractTrailingNumber(sourceParentName);
             string newTeamId = ExtractTrailingNumber(newParentName);
@@ -231,9 +261,17 @@ namespace DuplicationPlugin
                 EbxAssetEntry newEntry = DuplicateWithExtension(src, newName);
                 if (newEntry != null)
                 {
+                    // Cross-team: move assets into launch_sba so they are always loaded
+                    if (isCrossTeam)
+                    {
+                        newEntry.AddedBundles.Clear();
+                        newEntry.AddedBundles.Add(launchSbaBundleId);
+                    }
+
                     oldToNewNames[src.Name] = newEntry.Name;
                     allNew.Add(newEntry);
-                    App.Logger.Log("  Duplicated: " + src.Name + " -> " + newEntry.Name);
+                    App.Logger.Log("  Duplicated: " + src.Name + " -> " + newEntry.Name
+                        + (isCrossTeam ? " [launch_sba]" : ""));
                 }
             }
 
@@ -244,7 +282,8 @@ namespace DuplicationPlugin
                 InjectBrtEntries(sourceAssets, oldToNewNames);
             }
 
-            App.Logger.Log("Kit duplication complete (" + allNew.Count + " assets)");
+            App.Logger.Log("Kit duplication complete (" + allNew.Count + " assets)"
+                + (isCrossTeam ? " [cross-team]" : ""));
         }
 
         private void InjectBrtEntries(List<EbxAssetEntry> sourceAssets,

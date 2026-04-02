@@ -182,16 +182,15 @@ namespace Frosty.Core.Legacy
                 return null;
 
             LegacyFileEntry lfe = legacyEntries[hash];
-            ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(lfe.ChunkId);
 
-            if (chunkEntry == null)
-                return null;
-
-            if (chunkEntry.ModifiedEntry != null && chunkEntry.ModifiedEntry.Data != null)
-                return chunkEntry.ModifiedEntry.Data;
-
-            using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(chunkEntry)))
-                return reader.ReadToEnd();
+            // FIX: extract only the file's slice, not the entire shared manifest chunk.
+            // GetAsset correctly reads at inst.Offset for inst.Size bytes.
+            using (Stream s = GetAsset(lfe))
+            {
+                if (s == null)
+                    return null;
+                return ((MemoryStream)s).ToArray();
+            }
         }
 
         public void DuplicateAsset(string sourceKey, string newKey)
@@ -206,14 +205,21 @@ namespace Frosty.Core.Legacy
 
             LegacyFileEntry source = legacyEntries[sourceHash];
 
-            byte[] data = GetAssetData(sourceKey);
-            if (data == null)
-                return;
+            // FIX: use GetAsset to extract only the file's slice from the shared chunk,
+            // not GetAssetData which previously returned the entire manifest chunk.
+            byte[] data;
+            using (Stream s = GetAsset(source))
+            {
+                if (s == null)
+                    return;
+                data = ((MemoryStream)s).ToArray();
+            }
 
             // create new entry
             LegacyFileEntry newEntry = new LegacyFileEntry
             {
                 Name = newKey,
+                IsAdded = true,
             };
 
             // register new chunk
@@ -262,6 +268,40 @@ namespace Frosty.Core.Legacy
             addedEntryHashes.Add(newHash);
         }
 
+        /// <summary>
+        /// Called from LegacyCustomActionHandler.LoadFromProject to restore a duplicated entry
+        /// that was saved in a project file. Creates the LegacyFileEntry and registers it
+        /// so that subsequent handler code can find it via GetCustomAssetEntry.
+        /// </summary>
+        public void RegisterRestoredEntry(string name, string[] collectorEbxNames)
+        {
+            int hash = Fnv1.HashString(name);
+            if (legacyEntries.ContainsKey(hash))
+                return;
+
+            LegacyFileEntry newEntry = new LegacyFileEntry
+            {
+                Name = name,
+                IsAdded = true,
+            };
+
+            foreach (string ebxName in collectorEbxNames)
+            {
+                EbxAssetEntry ebxEntry = App.AssetManager.GetEbxEntry(ebxName);
+                if (ebxEntry == null)
+                    continue;
+
+                // create a collector instance stub — ModifiedEntry will be set by the handler
+                newEntry.CollectorInstances.Add(new LegacyFileEntry.ChunkCollectorInstance
+                {
+                    Entry = ebxEntry,
+                });
+            }
+
+            legacyEntries.Add(hash, newEntry);
+            addedEntryHashes.Add(hash);
+        }
+
         private void ClearAddedEntries()
         {
             foreach (int hash in addedEntryHashes)
@@ -298,6 +338,7 @@ namespace Frosty.Core.Legacy
                 case "FlushCache": FlushCache(); break;
                 case "DuplicateAsset": DuplicateAsset((string)value[0], (string)value[1]); break;
                 case "ClearAddedEntries": ClearAddedEntries(); break;
+                case "RegisterRestoredEntry": RegisterRestoredEntry((string)value[0], (string[])value[1]); break;
             }
         }
 

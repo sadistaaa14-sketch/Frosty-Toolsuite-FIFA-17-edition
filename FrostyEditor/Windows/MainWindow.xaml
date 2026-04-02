@@ -1166,6 +1166,14 @@
                                                                RenderOptions.BitmapScalingMode="Fant" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
+                                                <Separator />
+                                                <MenuItem Header="Bulk Export Folder"
+                                                          Click="contextMenuBulkExportFolder_Click">
+                                                    <MenuItem.Icon>
+                                                        <Image Source="/FrostyEditor;component/Images/Export.png"
+                                                               RenderOptions.BitmapScalingMode="Fant" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                             </ContextMenu>
                                         </core:FrostyDataExplorer.AssetContextMenu>
                                     </core:FrostyDataExplorer>

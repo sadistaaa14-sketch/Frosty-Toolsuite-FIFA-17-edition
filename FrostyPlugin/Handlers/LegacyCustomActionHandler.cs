@@ -28,6 +28,13 @@ namespace Frosty.Core.Handlers
 
         public static uint Hash => 0xBD9BFB65;
 
+        // =====================================================================
+        // IMPORTANT: bump your project version constant to at least 13
+        // in FrostyProject.cs (or wherever it is defined) so that the new
+        // added-entry fields are written and read correctly.
+        // =====================================================================
+        private const uint kAddedEntriesVersion = 13;
+
         private class LegacyResource : EditorModResource
         {
             public override ModResourceType Type => ModResourceType.Chunk;
@@ -113,11 +120,23 @@ namespace Frosty.Core.Handlers
                 writer.WriteNullTerminatedString(lfe.Name);
                 FrostyProject.SaveLinkedAssets(lfe, writer);
 
+                // FIX: write whether this is a newly added (duplicated) entry
+                writer.Write(lfe.IsAdded);
+
                 writer.Write(lfe.ChunkId);
                 writer.Write(inst.Offset);
                 writer.Write(inst.CompressedOffset);
                 writer.Write(inst.CompressedSize);
                 writer.Write(inst.Size);
+
+                // FIX: for added entries, persist the collector EBX names so we can
+                // rebuild CollectorInstances on project load
+                if (lfe.IsAdded)
+                {
+                    writer.Write(lfe.CollectorInstances.Count);
+                    foreach (LegacyFileEntry.ChunkCollectorInstance ci in lfe.CollectorInstances)
+                        writer.WriteNullTerminatedString(ci.Entry.Name);
+                }
 
                 count++;
             }
@@ -138,7 +157,26 @@ namespace Frosty.Core.Handlers
 
             foreach (DbObject legacyObj in modifiedObj.GetValue<DbObject>("legacy"))
             {
-                LegacyFileEntry entry = App.AssetManager.GetCustomAssetEntry<LegacyFileEntry>("legacy", legacyObj.GetValue<string>("name"));
+                string name = legacyObj.GetValue<string>("name");
+                LegacyFileEntry entry = App.AssetManager.GetCustomAssetEntry<LegacyFileEntry>("legacy", name);
+
+                // FIX: handle added (duplicated) entries that don't exist in base data
+                bool isAdded = legacyObj.HasValue("isAdded") && legacyObj.GetValue<bool>("isAdded");
+                if (entry == null && isAdded)
+                {
+                    DbObject collectorsObj = legacyObj.GetValue<DbObject>("collectors");
+                    if (collectorsObj != null)
+                    {
+                        List<string> collectorNames = new List<string>();
+                        foreach (DbObject c in collectorsObj)
+                            collectorNames.Add(c.GetValue<string>("name"));
+
+                        App.AssetManager.SendManagerCommand("legacy", "RegisterRestoredEntry",
+                            name, collectorNames.ToArray());
+                        entry = App.AssetManager.GetCustomAssetEntry<LegacyFileEntry>("legacy", name);
+                    }
+                }
+
                 if (entry != null)
                 {
                     FrostyProject.LoadLinkedAssets(legacyObj, entry, version);
@@ -167,15 +205,40 @@ namespace Frosty.Core.Handlers
             {
                 string name = reader.ReadNullTerminatedString();
                 List<AssetEntry> linkedEntries = FrostyProject.LoadLinkedAssets(reader);
+
+                // FIX: read the isAdded flag (only present in version >= kAddedEntriesVersion)
+                bool isAdded = false;
+                string[] collectorEbxNames = null;
+                if (version >= kAddedEntriesVersion)
+                    isAdded = reader.ReadBoolean();
+
                 Guid chunkId = reader.ReadGuid();
                 long offset = reader.ReadLong();
                 long compressedOffset = reader.ReadLong();
                 long compressedSize = reader.ReadLong();
                 long size = reader.ReadLong();
 
+                // FIX: read collector EBX names for added entries
+                if (version >= kAddedEntriesVersion && isAdded)
+                {
+                    int numCollectors = reader.ReadInt();
+                    collectorEbxNames = new string[numCollectors];
+                    for (int j = 0; j < numCollectors; j++)
+                        collectorEbxNames[j] = reader.ReadNullTerminatedString();
+                }
+
                 LegacyFileEntry entry = App.AssetManager.GetCustomAssetEntry<LegacyFileEntry>("legacy", name);
 
-                if (version < 12)
+                // FIX: for added entries that don't exist in base data, register them
+                // with the manager so they can be found and have ModifiedEntry set below
+                if (entry == null && isAdded && collectorEbxNames != null)
+                {
+                    App.AssetManager.SendManagerCommand("legacy", "RegisterRestoredEntry",
+                        name, collectorEbxNames);
+                    entry = App.AssetManager.GetCustomAssetEntry<LegacyFileEntry>("legacy", name);
+                }
+
+                if (version < 12 && entry != null)
                 {
                     // retroactively change guid to a determinstic guid
                     ChunkAssetEntry oldEntry = App.AssetManager.GetChunkEntry(chunkId);
@@ -211,6 +274,18 @@ namespace Frosty.Core.Handlers
                             CompressedSize = compressedSize,
                             Size = size
                         };
+                    }
+
+                    // FIX: for restored added entries, ensure the chunk is set up correctly
+                    if (isAdded)
+                    {
+                        ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(chunkId);
+                        if (chunkEntry != null)
+                        {
+                            chunkEntry.ModifiedEntry.AddToChunkBundle = true;
+                            chunkEntry.ModifiedEntry.UserData = "legacy;" + name;
+                            entry.LinkAsset(chunkEntry);
+                        }
                     }
                 }
             }

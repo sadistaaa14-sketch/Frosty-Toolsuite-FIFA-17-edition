@@ -72,12 +72,37 @@ namespace AssetBankPlugin.Export
             var rotMap = new Dictionary<string, int>();
             for (int i = 0; i < animation.RotationChannels.Count; i++)
                 rotMap[animation.RotationChannels[i]] = i;
+            var posMap = new Dictionary<string, int>();
+            for (int i = 0; i < animation.PositionChannels.Count; i++)
+                posMap[animation.PositionChannels[i]] = i;
 
             var sb = new StringBuilder(numFrames * 100);
             sb.Append("{\n");
             sb.AppendFormat("  \"name\": \"{0}\",\n", safeName);
             sb.Append("  \"fps\": 30,\n");
             sb.AppendFormat("  \"num_frames\": {0},\n", numFrames);
+
+            // ─── Write skeleton rest pose ───────────────────────────
+            // This gives the Python helper the EXACT game rest quaternions
+            // so it doesn't need to derive them from the mesh FBX (which may differ).
+            sb.Append("  \"skeleton\": {\n");
+            for (int i = 0; i < skeleton.BoneNames.Count; i++)
+            {
+                string bn = skeleton.BoneNames[i];
+                Transform lt = skeleton.LocalTransforms[i];
+                Quaternion rq = lt.Rotation;
+                Vector3 rp = lt.Position;
+                int parent = skeleton.BoneParents[i];
+
+                sb.AppendFormat("    \"{0}\": {{", bn);
+                sb.AppendFormat(ci, "\"r\":[{0},{1},{2},{3}]", rq.W, rq.X, rq.Y, rq.Z);
+                sb.AppendFormat(ci, ",\"t\":[{0},{1},{2}]", rp.X, rp.Y, rp.Z);
+                sb.AppendFormat(",\"p\":{0}", parent);
+                sb.Append(i < skeleton.BoneNames.Count - 1 ? "},\n" : "}\n");
+            }
+            sb.Append("  },\n");
+
+            // ─── Write rotation channels ────────────────────────────
             sb.Append("  \"bones\": {\n");
 
             int boneIdx = 0, totalBones = rotMap.Count;
@@ -91,6 +116,10 @@ namespace AssetBankPlugin.Export
                     if (chIdx < animation.Frames[f].Rotations.Count)
                     {
                         Quaternion q = animation.Frames[f].Rotations[chIdx];
+                        // Output order: [q.W, q.X, q.Y, q.Z]
+                        // Due to the double-swap in VbrAnimationAsset.ConvertToInternal,
+                        // q.W = X_vbr, q.X = Y_vbr, q.Y = Z_vbr, q.Z = W_vbr
+                        // So this writes [X_vbr, Y_vbr, Z_vbr, W_vbr] — correct VBR DOF order.
                         sb.AppendFormat(ci, "[{0},{1},{2},{3}]", q.W, q.X, q.Y, q.Z);
                     }
                     else sb.Append("[1,0,0,0]");
@@ -98,7 +127,31 @@ namespace AssetBankPlugin.Export
                 boneIdx++;
                 sb.Append(boneIdx < totalBones ? "],\n" : "]\n");
             }
-            sb.Append("  }\n}\n");
+            sb.Append("  },\n");
+
+            // ─── Write position channels ────────────────────────────
+            sb.Append("  \"positions\": {\n");
+            int posIdx = 0, totalPos = posMap.Count;
+            foreach (var kvp in posMap)
+            {
+                int chIdx = kvp.Value;
+                sb.AppendFormat("    \"{0}\": [", kvp.Key);
+                for (int f = 0; f < numFrames; f++)
+                {
+                    if (f > 0) sb.Append(",");
+                    if (chIdx < animation.Frames[f].Positions.Count)
+                    {
+                        Vector3 p = animation.Frames[f].Positions[chIdx];
+                        sb.AppendFormat(ci, "[{0},{1},{2}]", p.X, p.Y, p.Z);
+                    }
+                    else sb.Append("[0,0,0]");
+                }
+                posIdx++;
+                sb.Append(posIdx < totalPos ? "],\n" : "]\n");
+            }
+            sb.Append("  }\n");
+
+            sb.Append("}\n");
             File.WriteAllText(jsonPath, sb.ToString());
 
             // Call Blender

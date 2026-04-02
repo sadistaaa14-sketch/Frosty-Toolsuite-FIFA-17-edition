@@ -35,6 +35,12 @@ namespace Frosty.Core.Legacy
 
         public override string AssetType => "legacy";
 
+        /// <summary>
+        /// True if this entry was created via DuplicateAsset (does not exist in base game data).
+        /// Used by SaveToProject / LoadFromProject to persist and restore duplicated entries.
+        /// </summary>
+        public bool IsAdded { get; set; } = false;
+
         public override string Type
         {
             get
