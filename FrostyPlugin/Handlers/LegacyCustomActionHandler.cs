@@ -38,13 +38,15 @@ namespace Frosty.Core.Handlers
         private class LegacyResource : EditorModResource
         {
             public override ModResourceType Type => ModResourceType.Chunk;
-            public LegacyResource(string inName, string ebxName, byte[] data, IEnumerable<int> bundles, FrostyModWriter.Manifest manifest)
+            public LegacyResource(string inName, string ebxName, byte[] data, IEnumerable<int> bundles, FrostyModWriter.Manifest manifest, bool isAdded = false)
             {
                 name = inName;
                 sha1 = Utils.GenerateSha1(data);
                 resourceIndex = manifest.Add(data);
                 size = data.Length;
                 flags = 2;
+                if (isAdded)
+                    flags |= 0x08;
                 handlerHash = (int)Hash;
                 userData = "legacy;Collector (" + ebxName + ")";
             }
@@ -99,9 +101,21 @@ namespace Frosty.Core.Handlers
                         chunkWriter.Write(inst.Item2.Size);
                     }
 
+                    // Check if any of the legacy file entries are added (duplicated)
+                    bool hasAddedEntries = false;
+                    foreach (Tuple<int, LegacyFileEntry.ChunkCollectorInstance, string> inst in manifests[entry])
+                    {
+                        LegacyFileEntry lfe = App.AssetManager.GetCustomAssetEntry<LegacyFileEntry>("legacy", inst.Item3);
+                        if (lfe != null && lfe.IsAdded)
+                        {
+                            hasAddedEntries = true;
+                            break;
+                        }
+                    }
+
                     writer.AddResource(new LegacyResource(
                         collectorChunkEntry.Name, entry.Name, ms.ToArray(),
-                        collectorChunkEntry.EnumerateBundles(), writer.ResourceManifest));
+                        collectorChunkEntry.EnumerateBundles(), writer.ResourceManifest, hasAddedEntries));
                 }
             }
         }
@@ -323,6 +337,33 @@ namespace Frosty.Core.Handlers
                 }
             }
             return entries;
+        }
+
+        /// <summary>
+        /// Handles the merge of multiple mod files for legacy assets.
+        /// When multiple mods modify the same legacy collector chunk, this ensures
+        /// that added (duplicated) entries from all mods are properly merged.
+        /// </summary>
+        public object Merge(object existing, object incoming)
+        {
+            List<ModLegacyFileEntry> existingEntries = (List<ModLegacyFileEntry>)existing ?? new List<ModLegacyFileEntry>();
+            List<ModLegacyFileEntry> incomingEntries = (List<ModLegacyFileEntry>)incoming ?? new List<ModLegacyFileEntry>();
+
+            // Build a lookup for existing entries by hash
+            Dictionary<int, ModLegacyFileEntry> existingLookup = new Dictionary<int, ModLegacyFileEntry>();
+            foreach (ModLegacyFileEntry e in existingEntries)
+            {
+                existingLookup[e.Hash] = e;
+            }
+
+            // Merge incoming entries - incoming entries override existing ones
+            // This allows later mods to override earlier mods for the same asset
+            foreach (ModLegacyFileEntry e in incomingEntries)
+            {
+                existingLookup[e.Hash] = e;
+            }
+
+            return existingLookup.Values.ToList();
         }
 
         /// <summary>
