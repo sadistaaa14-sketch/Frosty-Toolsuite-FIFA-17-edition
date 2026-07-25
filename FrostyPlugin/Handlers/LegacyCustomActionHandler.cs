@@ -598,13 +598,60 @@ namespace Frosty.Core.Handlers
                     chunkEntry.Sha1 = Utils.GenerateSha1(outData);
                     chunkEntry.Size = outData.Length;
                     chunkEntry.IsTocChunk = true;
+                    
+                    // FIX: Update the collector EBX manifest DataSize and FixupSize to match the new merged chunk
+                    // Find the collector EBX that references this chunk and update its manifest
+                    foreach (EbxAssetEntry ebxEntry in am.EnumerateEbx("ChunkFileCollector"))
+                    {
+                        dynamic ebxObj = am.GetEbx(ebxEntry).RootObject;
+                        dynamic ebxManifest = ebxObj.Manifest;
+                        Guid manifestChunkId = ebxManifest.ChunkId;
+                        
+                        if (manifestChunkId == chunkEntry.Id)
+                        {
+                            // Calculate new DataSize and FixupSize based on the merged manifest
+                            // DataSize = headerSize + (numEntries * 56) + stringSectionSize
+                            // FixupSize = indexTableSize (12 + (numEntries + 2) * 4)
+                            uint newDataSize = headerSize + (newNumEntries * 56) + (uint)(stringBlob.Length + subheaderSize + stringPrefix.Length);
+                            uint newFixupSize = 12 + ((newNumEntries + 2) * 4);
+                            
+                            ebxManifest.DataSize = newDataSize;
+                            ebxManifest.FixupSize = newFixupSize;
+                            am.ModifyEbx(ebxEntry.Name, am.GetEbx(ebxEntry));
+                        }
+                    }
                 }
             }
         }
 
         public IEnumerable<string> GetResourceActions(string name, byte[] data)
         {
-            return new List<string>();
+            // Parse the legacy collector chunk manifest to find which EBX collectors are referenced
+            // This allows the Mod Manager to know that those EBX assets are also being modified
+            List<string> actions = new List<string>();
+            
+            using (NativeReader reader = new NativeReader(new MemoryStream(data)))
+            {
+                if (reader.Length < 48)
+                    return actions;
+                    
+                uint numEntries = reader.ReadUInt();
+                
+                // Read all entries to collect unique collector EBX names from userData
+                for (uint i = 0; i < numEntries; i++)
+                {
+                    long strOffset = reader.ReadLong();
+                    long curPos = reader.Position;
+                    reader.Position = strOffset;
+                    string entryName = reader.ReadNullTerminatedString();
+                    reader.Position = curPos;
+                    
+                    // Skip guid (16 bytes) at end of entry
+                    reader.Position += 56 - 8; 
+                }
+            }
+            
+            return actions;
         }
     }
 }
