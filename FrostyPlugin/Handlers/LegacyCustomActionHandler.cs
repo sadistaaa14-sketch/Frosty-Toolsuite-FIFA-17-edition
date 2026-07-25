@@ -350,21 +350,61 @@ namespace Frosty.Core.Handlers
             List<ModLegacyFileEntry> existingEntries = (List<ModLegacyFileEntry>)existing ?? new List<ModLegacyFileEntry>();
             List<ModLegacyFileEntry> incomingEntries = (List<ModLegacyFileEntry>)incoming ?? new List<ModLegacyFileEntry>();
 
-            // Build a lookup for existing entries by hash
-            Dictionary<int, ModLegacyFileEntry> existingLookup = new Dictionary<int, ModLegacyFileEntry>();
+            // Build a lookup for existing entries by hash + chunkId to handle duplicates properly
+            // Key is hash, value is list of entries (multiple entries can have same hash if they're different chunks)
+            Dictionary<int, List<ModLegacyFileEntry>> existingLookup = new Dictionary<int, List<ModLegacyFileEntry>>();
             foreach (ModLegacyFileEntry e in existingEntries)
             {
-                existingLookup[e.Hash] = e;
+                if (!existingLookup.ContainsKey(e.Hash))
+                    existingLookup[e.Hash] = new List<ModLegacyFileEntry>();
+                
+                // Check if this exact entry (same hash + chunkId) already exists
+                bool exists = false;
+                foreach (var existingEntry in existingLookup[e.Hash])
+                {
+                    if (existingEntry.ChunkId == e.ChunkId && existingEntry.Name == e.Name)
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+                
+                if (!exists)
+                    existingLookup[e.Hash].Add(e);
             }
 
-            // Merge incoming entries - incoming entries override existing ones
-            // This allows later mods to override earlier mods for the same asset
+            // Merge incoming entries - add new entries, but allow later mods to override 
+            // entries with the same hash AND same chunkId (same asset being modified by multiple mods)
             foreach (ModLegacyFileEntry e in incomingEntries)
             {
-                existingLookup[e.Hash] = e;
+                if (!existingLookup.ContainsKey(e.Hash))
+                    existingLookup[e.Hash] = new List<ModLegacyFileEntry>();
+                
+                // Check if this exact entry (same hash + chunkId) already exists
+                bool exists = false;
+                for (int i = 0; i < existingLookup[e.Hash].Count; i++)
+                {
+                    if (existingLookup[e.Hash][i].ChunkId == e.ChunkId && existingLookup[e.Hash][i].Name == e.Name)
+                    {
+                        // Override this specific entry with the incoming one (later mod wins)
+                        existingLookup[e.Hash][i] = e;
+                        exists = true;
+                        break;
+                    }
+                }
+                
+                if (!exists)
+                    existingLookup[e.Hash].Add(e);
             }
 
-            return existingLookup.Values.ToList();
+            // Flatten the lookup back into a list
+            List<ModLegacyFileEntry> result = new List<ModLegacyFileEntry>();
+            foreach (var kvp in existingLookup)
+            {
+                result.AddRange(kvp.Value);
+            }
+
+            return result;
         }
 
         /// <summary>
