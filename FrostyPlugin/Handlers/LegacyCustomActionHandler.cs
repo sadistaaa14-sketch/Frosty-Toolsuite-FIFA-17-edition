@@ -415,10 +415,13 @@ namespace Frosty.Core.Handlers
             ChunkAssetEntry chunkEntry = origEntry as ChunkAssetEntry;
             List<ModLegacyFileEntry> modEntries = (List<ModLegacyFileEntry>)data;
 
-            // build lookup by hash for quick matching
-            Dictionary<int, ModLegacyFileEntry> modLookup = new Dictionary<int, ModLegacyFileEntry>();
+            // build lookup by hash + name for quick matching (multiple entries can have same hash but different names/chunks)
+            Dictionary<string, ModLegacyFileEntry> modLookup = new Dictionary<string, ModLegacyFileEntry>();
             foreach (ModLegacyFileEntry e in modEntries)
-                modLookup[e.Hash] = e;
+            {
+                string key = e.Hash + "_" + e.Name;
+                modLookup[key] = e;
+            }
 
             using (NativeReader reader = new NativeReader(am.GetChunk(am.GetChunkEntry(chunkEntry.Id))))
             {
@@ -488,7 +491,7 @@ namespace Frosty.Core.Handlers
 
                 // --- build new entry list ---
                 var newEntries = new List<(string name, long compOff, long compSize, long offset, long size, Guid guid)>();
-                HashSet<int> matched = new HashSet<int>();
+                HashSet<string> matched = new HashSet<string>();
 
                 // patch existing entries
                 for (int i = 0; i < parsedEntries.Count; i++)
@@ -496,10 +499,11 @@ namespace Frosty.Core.Handlers
                     var e = parsedEntries[i];
                     string name = entryNames[i];
                     int hash = Fnv1.HashString(name);
+                    string key = hash + "_" + name;
 
-                    if (modLookup.TryGetValue(hash, out ModLegacyFileEntry mod))
+                    if (modLookup.TryGetValue(key, out ModLegacyFileEntry mod))
                     {
-                        matched.Add(hash);
+                        matched.Add(key);
                         newEntries.Add((name, mod.CompressedOffset, mod.CompressedSize, mod.Offset, mod.Size, mod.ChunkId));
                     }
                     else
@@ -511,7 +515,8 @@ namespace Frosty.Core.Handlers
                 // add new entries (duplicates - hashes not found in original)
                 foreach (ModLegacyFileEntry mod in modEntries)
                 {
-                    if (!matched.Contains(mod.Hash))
+                    string key = mod.Hash + "_" + mod.Name;
+                    if (!matched.Contains(key))
                         newEntries.Add((mod.Name, mod.CompressedOffset, mod.CompressedSize, mod.Offset, mod.Size, mod.ChunkId));
                 }
 
