@@ -4,7 +4,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
-using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -76,6 +75,34 @@ namespace Frosty.Core.Controls
             // top-down dump in the log.
             path.Reverse();
             return path;
+        }
+
+        /// <summary>
+        /// Walk UP the visual tree from <paramref name="start"/> and return
+        /// the first ancestor (inclusive of <paramref name="start"/> itself)
+        /// of type <typeparamref name="T"/>.
+        ///
+        /// This is deliberately the opposite direction of a normal
+        /// "find descendant" search. A top-down search from some distant
+        /// root (e.g. the ListView) for "the first ScrollContentPresenter/
+        /// ScrollViewer anywhere in the subtree" is NOT guaranteed to find
+        /// the one that's actually in the same scroll chain as a specific
+        /// panel — if more than one instance of that type exists anywhere
+        /// under the root, the search can silently return the wrong one.
+        ///
+        /// Walking up from the actual items-host panel guarantees the
+        /// result is a genuine ancestor of that panel, i.e. part of its
+        /// real scroll chain.
+        /// </summary>
+        public static T FindVisualAncestor<T>(DependencyObject start) where T : DependencyObject
+        {
+            var node = start;
+            while (node != null)
+            {
+                if (node is T match) return match;
+                node = VisualTreeHelper.GetParent(node);
+            }
+            return null;
         }
     }
 
@@ -535,89 +562,26 @@ namespace Frosty.Core.Controls
             }), System.Windows.Threading.DispatcherPriority.Loaded);
 
             // ----------------------------------------------------------------
-            // VIRTUALIZATION HARD-FIX PART 2: LayoutUpdated watchdog.
+            // NOTE: a LayoutUpdated watchdog used to live here, re-running
+            // ForceVirtualizationHookup on every layout pass because the SCP
+            // it found appeared to keep reverting to CanContentScroll=False.
             //
-            // The ForceVirtualizationHookup call above runs ONCE at Loaded
-            // priority. But the diagnostic log proves that the
-            // ScrollContentPresenter is RECREATED later (e.g. when
-            // assetListView.ItemsSource is assigned in UpdateListView, or
-            // when WPF reapplies the ScrollViewer's template). Each new SCP
-            // instance starts with the DEFAULT CanContentScroll=False, and
-            // since CanContentScroll is NOT inherited (the SCP's AddOwner
-            // metadata drops the Inherits flag), the new SCP never picks up
-            // the True value we set on the previous SCP or on the ScrollViewer.
+            // Root cause turned out to be simpler: the hookup was finding
+            // the WRONG ScrollContentPresenter/ScrollViewer pair (a top-down
+            // "first match anywhere under assetListView" search, which isn't
+            // guaranteed to be the same instance that's actually in the
+            // items host panel's scroll chain — confirmed by comparing SCP
+            // hash codes in the diagnostic log). It wasn't reverting; it was
+            // simply never the real one to begin with, so it always read
+            // back as False.
             //
-            // Result: by the time the natural layout pass runs, the SCP is
-            // back to CanContentScroll=False, measures the panel with
-            // infinite height, and the panel realizes all 20,469 containers
-            // (the 61-second freeze).
-            //
-            // Fix: subscribe to LayoutUpdated. This fires after every
-            // layout pass, so we catch any new SCP the moment it appears
-            // in the visual tree. If the new SCP has CanContentScroll=False,
-            // we re-apply the fix and force ANOTHER layout pass — the second
-            // pass measures the panel with the correct (finite) viewport
-            // size, and VSP cleans up the non-visible containers.
-            //
-            // The _isFixingScp flag prevents recursion (UpdateLayout inside
-            // ForceVirtualizationHookup would otherwise fire LayoutUpdated
-            // again).
+            // ForceVirtualizationHookup now walks UP from the actual items
+            // host panel to find its real SCP/ScrollViewer ancestors, so it
+            // fixes the correct instance on the first (and only) call. If a
+            // future WPF/template change genuinely starts recreating the
+            // SCP after this point, re-add a LayoutUpdated subscription that
+            // calls ForceVirtualizationHookup() again.
             // ----------------------------------------------------------------
-            assetListView.LayoutUpdated -= OnLayoutUpdatedCheckScp;
-            assetListView.LayoutUpdated += OnLayoutUpdatedCheckScp;
-        }
-
-        private bool _isFixingScp = false;
-
-        /// <summary>
-        /// LayoutUpdated watchdog — fires after every layout pass. Checks
-        /// whether the current ScrollContentPresenter has CanContentScroll=True
-        /// (which we need for item-based scrolling and virtualization). If not,
-        /// re-applies ForceVirtualizationHookup to catch SCP instances that
-        /// were recreated since the last fix.
-        /// </summary>
-        private void OnLayoutUpdatedCheckScp(object sender, EventArgs e)
-        {
-            if (_isFixingScp) return;
-            if (assetListView == null) return;
-
-            var scp = FindScrollContentPresenter(assetListView);
-            if (scp == null) return;
-
-            bool canScroll = (bool)scp.GetValue(ScrollViewer.CanContentScrollProperty);
-            if (!canScroll)
-            {
-                _isFixingScp = true;
-                try
-                {
-                    App.Logger.Log("LayoutUpdated-watchdog: SCP.CanContentScroll is False — re-applying fix (scp.Hash=" + scp.GetHashCode() + ")");
-                    ForceVirtualizationHookup();
-                }
-                finally
-                {
-                    _isFixingScp = false;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Walk the visual tree below <paramref name="assetListView"/> and
-        /// find the ScrollContentPresenter that lives inside the ListView's
-        /// ScrollViewer. Returns null if the visual tree hasn't been built
-        /// yet or no ScrollContentPresenter exists.
-        /// </summary>
-        private static ScrollContentPresenter FindScrollContentPresenter(DependencyObject root)
-        {
-            if (root == null) return null;
-            int count = VisualTreeHelper.GetChildrenCount(root);
-            for (int i = 0; i < count; i++)
-            {
-                var child = VisualTreeHelper.GetChild(root, i);
-                if (child is ScrollContentPresenter scp) return scp;
-                var inner = FindScrollContentPresenter(child);
-                if (inner != null) return inner;
-            }
-            return null;
         }
 
         /// <summary>
@@ -640,146 +604,77 @@ namespace Frosty.Core.Controls
         {
             if (assetListView == null) return;
 
-            // Find the SCP inside the ListView's template.
-            var scp = FindScrollContentPresenter(assetListView);
+            // Anchor on the REAL items host panel first (this lookup was
+            // already reliable — PerfDiag.FindItemsHostPanel finds the
+            // panel with IsItemsHost=True, which is unambiguous). Then walk
+            // UP from it to find its actual ScrollContentPresenter and
+            // ScrollViewer ancestors.
+            //
+            // This replaces the old top-down "first SCP/ScrollViewer found
+            // anywhere under assetListView" search, which was silently
+            // returning a DIFFERENT instance than the one in the panel's
+            // real scroll chain (confirmed by comparing SCP hash codes in
+            // the diagnostic log: the hookup was always operating on
+            // scp.Hash=36749739, while the panel's actual ancestor SCP was
+            // scp.Hash=8918541 — two different objects, so every fix below
+            // was being applied to the wrong one and never took effect).
+            var itemsHostPanel = PerfDiag.FindItemsHostPanel(assetListView);
+            if (itemsHostPanel == null)
+            {
+                App.Logger.Log("ForceVirtualizationHookup: items host panel NOT FOUND — visual tree may not be built yet");
+                return;
+            }
+
+            var scp = PerfDiag.FindVisualAncestor<ScrollContentPresenter>(itemsHostPanel);
             if (scp == null)
             {
-                App.Logger.Log("ForceVirtualizationHookup: ScrollContentPresenter NOT FOUND — visual tree may not be built yet");
+                App.Logger.Log("ForceVirtualizationHookup: ScrollContentPresenter NOT FOUND above items host panel");
                 return;
             }
 
-            // Find the inner ScrollViewer that owns the SCP. The panel's
-            // IScrollInfo.ScrollOwner is typed as ScrollViewer (NOT
-            // ScrollContentPresenter), so we need this reference when
-            // force-wiring the panel's ScrollOwner below.
-            var scrollViewer = FindVisualChild<ScrollViewer>(assetListView);
+            var scrollViewer = PerfDiag.FindVisualAncestor<ScrollViewer>(scp);
             if (scrollViewer == null)
             {
-                App.Logger.Log("ForceVirtualizationHookup: inner ScrollViewer NOT FOUND — visual tree may not be built yet");
+                App.Logger.Log("ForceVirtualizationHookup: ScrollViewer NOT FOUND above ScrollContentPresenter");
                 return;
             }
 
-            // Log the SCP and ScrollViewer hash codes so we can detect when
-            // WPF recreates these elements (each recreation produces a new
-            // instance with a new hash code). This is the key diagnostic for
-            // proving that the SCP's CanContentScroll reset is caused by
-            // element recreation, not by our SetValue being undone.
+            // Log the SCP and ScrollViewer hash codes so a mismatch against
+            // the virtualization-config dump (which walks the same path
+            // from the other direction) is easy to spot if this ever
+            // regresses.
             App.Logger.Log("ForceVirtualizationHookup: enter scp.Hash=" + scp.GetHashCode()
                 + " scrollViewer.Hash=" + scrollViewer.GetHashCode()
-                + " scp.CanContentScroll=" + (bool)scp.GetValue(ScrollViewer.CanContentScrollProperty)
+                + " scp.CanContentScroll=" + scp.CanContentScroll
                 + " sv.CanContentScroll=" + scrollViewer.CanContentScroll);
 
             bool changed = false;
 
-            // (1) Set the SCP's CanContentScroll DP to True. The CLR setter
-            //     is internal, but the underlying DP is the public
-            //     ScrollViewer.CanContentScrollProperty — which we set
-            //     via SetValue. This sets a LOCAL value (highest precedence
-            //     except for animations), so it overrides anything WPF's
-            //     propagation might (or might not) have done.
-            //
-            //     CRITICAL: We TOGGLE False→True instead of just setting True.
-            //     If the current value is already True (e.g. from a previous
-            //     ForceVirtualizationHookup call), SetValue(True) would be a
-            //     no-op and the PropertyChanged callback (which calls
-            //     HookUpScrolling) would NOT fire. By explicitly setting False
-            //     first, we guarantee the callback fires when we set True.
-            bool currentScpCanScroll = (bool)scp.GetValue(ScrollViewer.CanContentScrollProperty);
-            // Always force a False→True transition so the PropertyChanged
-            // callback fires and re-runs HookUpScrolling() with the now-
-            // available IScrollInfo (the VSP, which is in the visual tree by
-            // the time this method runs).
-            scp.SetValue(ScrollViewer.CanContentScrollProperty, false);
-            scp.SetValue(ScrollViewer.CanContentScrollProperty, true);
-            bool verifyScpCanScroll = (bool)scp.GetValue(ScrollViewer.CanContentScrollProperty);
-            changed = true;
-            App.Logger.Log("ForceVirtualizationHookup: toggled ScrollContentPresenter.CanContentScroll False→True (was " + currentScpCanScroll + "), verify=" + verifyScpCanScroll);
-
-            // (1a) REFLECTION KICKER: ScrollContentPresenter.HookUpScrolling()
-            //      is the private method that wires up the IScrollInfo path:
-            //      it walks _content (the ItemsPresenter) → finds the VSP →
-            //      assigns _scrollData._scrollInfo = isi and
-            //      isi.ScrollOwner = _scroller. The CanContentScroll
-            //      PropertyChanged callback calls this, BUT if _content was
-            //      null or didn't contain the VSP at the time of the callback
-            //      (e.g. the template was just applied and the ItemsPresenter
-            //      hasn't generated the VSP yet), HookUpScrolling silently
-            //      fails and _scrollData._scrollInfo stays null. The SCP
-            //      then falls back to pixel-scroll mode (measures the panel
-            //      with INFINITE height → VSP realizes all 20K containers →
-            //      60-second freeze).
-            //
-            //      We force-call HookUpScrolling via reflection NOW — at this
-            //      point the visual tree is fully built (we're called from
-            //      LayoutUpdated, or synchronously after ItemsSource assignment
-            //      in UpdateListView, or from the Loaded callback), so _content
-            //      definitely contains the VSP. This is the missing piece that
-            //      makes virtualization actually kick in.
-            try
+            // (1) Set the SCP's CanContentScroll DP to True. This is a
+            //     normal public DP — no reflection needed. Toggle False→True
+            //     (rather than a same-value set) so the PropertyChanged
+            //     callback fires and WPF's own internal HookUpScrolling runs
+            //     with the VSP already present in the visual tree.
+            if (!scp.CanContentScroll)
             {
-                var hookUpMethod = typeof(ScrollContentPresenter).GetMethod(
-                    "HookUpScrolling",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (hookUpMethod != null)
-                {
-                    hookUpMethod.Invoke(scp, null);
-                    App.Logger.Log("ForceVirtualizationHookup: invoked ScrollContentPresenter.HookUpScrolling() via reflection");
-                }
-                else
-                {
-                    App.Logger.Log("ForceVirtualizationHookup: HookUpScrolling method NOT FOUND via reflection (WPF version mismatch?)");
-                }
-            }
-            catch (Exception ex)
-            {
-                App.Logger.Log("ForceVirtualizationHookup: HookUpScrolling reflection invoke FAILED: " + ex.GetType().Name + ": " + ex.Message);
+                scp.SetValue(ScrollViewer.CanContentScrollProperty, false);
+                scp.SetValue(ScrollViewer.CanContentScrollProperty, true);
+                changed = true;
+                App.Logger.Log("ForceVirtualizationHookup: toggled ScrollContentPresenter.CanContentScroll False→True, verify=" + scp.CanContentScroll);
             }
 
-            // (1b) Reflect into the SCP's _scrollData._scrollInfo field to
-            //      verify HookUpScrolling actually found the VSP. If this is
-            //      null, the SCP will still measure with infinite height
-            //      despite CanContentScroll=True, and we need a different fix.
-            try
-            {
-                var scpType = typeof(ScrollContentPresenter);
-                var scrollDataField = scpType.GetField("_scrollData",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                object scrollData = scrollDataField?.GetValue(scp);
-                if (scrollData != null)
-                {
-                    var scrollInfoField = scrollData.GetType().GetField("_scrollInfo",
-                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                    object scrollInfo = scrollInfoField?.GetValue(scrollData);
-                    App.Logger.Log("ForceVirtualizationHookup: SCP._scrollData._scrollInfo = " + (scrollInfo == null ? "NULL (BAD — SCP will measure with infinite height)" : scrollInfo.GetType().Name));
-                }
-                else
-                {
-                    App.Logger.Log("ForceVirtualizationHookup: SCP._scrollData = NULL (BAD — HookUpScrolling didn't create the ScrollData)");
-                }
-            }
-            catch (Exception ex)
-            {
-                App.Logger.Log("ForceVirtualizationHookup: _scrollData._scrollInfo reflection read FAILED: " + ex.GetType().Name);
-            }
-
-            // (1b) Also ensure the OUTER ScrollViewer's CanContentScroll is
-            //      True. The SCP reads this on its template parent during
-            //      OnApplyTemplate via this._scroller.CanContentScroll, and
-            //      uses it to decide whether to call HookUpScrolling().
-            //      Setting it as a local value on the ScrollViewer forces
-            //      the propagation that the XAML Setter failed to do.
-            bool currentSvCanScroll = scrollViewer.CanContentScroll;
-            if (!currentSvCanScroll)
+            // (1b) Also ensure the outer ScrollViewer's CanContentScroll is
+            //      True, since the SCP consults its template-parent
+            //      ScrollViewer for this during scrolling hookup.
+            if (!scrollViewer.CanContentScroll)
             {
                 scrollViewer.CanContentScroll = true;
                 changed = true;
                 App.Logger.Log("ForceVirtualizationHookup: set ScrollViewer.CanContentScroll True (was False)");
             }
 
-            // (2) Verify the SCP also has CanHorizontallyScroll / CanVerticallyScroll
-            //     set to True. These DPs are public settable, but let's
-            //     be defensive and force them in case a future template
-            //     override resets them.
+            // (2) Defensive: keep CanHorizontallyScroll / CanVerticallyScroll
+            //     True on the SCP in case a template override resets them.
             if (!scp.CanHorizontallyScroll)
             {
                 scp.CanHorizontallyScroll = true;
@@ -793,64 +688,55 @@ namespace Frosty.Core.Controls
                 App.Logger.Log("ForceVirtualizationHookup: set ScrollContentPresenter.CanVerticallyScroll True");
             }
 
-            // (3) Find the actual items host panel and check whether its
-            //     ScrollOwner is correctly wired to the ScrollViewer. If
-            //     it's NULL, force-wire it via the IScrollInfo interface
-            //     (Panel.ScrollOwner is protected, accessible only via the
-            //     IScrollInfo interface that Panel implements).
-            //
-            //     NOTE: IScrollInfo.ScrollOwner is typed as ScrollViewer,
-            //     NOT ScrollContentPresenter — we must assign the OUTER
-            //     ScrollViewer. This mirrors what WPF's own
-            //     ScrollContentPresenter.HookUpScrolling() does internally:
-            //         if (isi.ScrollOwner != _scroller)
-            //             isi.ScrollOwner = _scroller;  // _scroller is ScrollViewer
-            var panel = PerfDiag.FindItemsHostPanel(assetListView);
-            if (panel is IScrollInfo si)
+            // (3) Make sure the items host panel's ScrollOwner is wired to
+            //     the ScrollViewer. IScrollInfo.ScrollOwner is a normal
+            //     explicit-interface member on Panel — accessible via a
+            //     plain interface cast, no reflection required. This is
+            //     what lets the VirtualizingStackPanel ask the ScrollViewer
+            //     for the viewport size during Measure instead of being
+            //     measured with infinite available height.
+            if (itemsHostPanel is IScrollInfo si)
             {
                 var scrollOwner = si.ScrollOwner;
                 if (scrollOwner == null)
                 {
-                    // Force-wire the panel's ScrollOwner to the ScrollViewer.
-                    // This is the missing step that HookupScrolling() would
-                    // have done if CanContentScroll had been True at
-                    // OnApplyTemplate time.
                     si.ScrollOwner = scrollViewer;
                     changed = true;
-                    App.Logger.Log("ForceVirtualizationHookup: FORCE-WIRED panel.ScrollOwner = ScrollViewer (was NULL)");
+                    App.Logger.Log("ForceVirtualizationHookup: wired panel.ScrollOwner = ScrollViewer (was NULL)");
                 }
                 else if (!ReferenceEquals(scrollOwner, scrollViewer))
                 {
-                    // ScrollOwner is set to something other than the inner
-                    // ScrollViewer. That's still wrong — re-wire it.
                     si.ScrollOwner = scrollViewer;
                     changed = true;
-                    App.Logger.Log("ForceVirtualizationHookup: RE-WIRED panel.ScrollOwner = ScrollViewer (was " + scrollOwner.GetType().Name + ")");
+                    App.Logger.Log("ForceVirtualizationHookup: re-wired panel.ScrollOwner = ScrollViewer (was " + scrollOwner.GetType().Name + ")");
                 }
             }
 
             if (!changed)
             {
                 App.Logger.Log("ForceVirtualizationHookup: nothing to fix (CanContentScroll=True and ScrollOwner already wired)");
+                return;
             }
-            else
+
+            // Use InvalidateMeasure (async, Render-priority layout pass)
+            // rather than a synchronous UpdateLayout() call. A synchronous
+            // pass triggered from inside a DP PropertyChanged callback can
+            // cause WPF to reapply the ScrollViewer's template mid-pass,
+            // which would create a brand-new SCP instance and undo the
+            // fix we just made. InvalidateMeasure schedules the re-measure
+            // for later instead, avoiding that reentrancy.
+            try
             {
-                // If we changed anything, force a layout pass so the panel
-                // re-measures with the now-correct ScrollOwner. Use
-                // UpdateLayout() — at this point we're at Loaded priority
-                // (after the natural layout pass), so this is safe and
-                // will not cause a recursive layout. The panel will see
-                // a non-NULL ScrollOwner, query it for the viewport size,
-                // and only realize the visible containers.
-                try
+                scp.InvalidateMeasure();
+                if (itemsHostPanel is UIElement panelElement)
                 {
-                    assetListView.UpdateLayout();
-                    App.Logger.Log("ForceVirtualizationHookup: forced re-layout via UpdateLayout()");
+                    panelElement.InvalidateMeasure();
                 }
-                catch (Exception ex)
-                {
-                    App.Logger.Log("ForceVirtualizationHookup: UpdateLayout threw " + ex.GetType().Name + ": " + ex.Message);
-                }
+                App.Logger.Log("ForceVirtualizationHookup: InvalidateMeasure on SCP+panel");
+            }
+            catch (Exception ex)
+            {
+                App.Logger.Log("ForceVirtualizationHookup: InvalidateMeasure threw " + ex.GetType().Name + ": " + ex.Message);
             }
         }
 
@@ -1126,11 +1012,15 @@ namespace Frosty.Core.Controls
 
                     // ListView itself does not expose ViewportHeight — that
                     // property lives on the inner ScrollViewer that the
-                    // ListView control template injects. Walk the visual
-                    // tree to find it; if it isn't there yet (e.g. the
-                    // template hasn't been applied) log "n/a".
+                    // ListView control template injects. Walk UP from the
+                    // actual items host panel (not top-down from
+                    // assetListView) so this is guaranteed to be the
+                    // ScrollViewer actually in the panel's scroll chain,
+                    // not just some ScrollViewer found first elsewhere.
                     double listViewportHeight = double.NaN;
-                    var listScrollViewer = FindVisualChild<ScrollViewer>(assetListView);
+                    var listScrollViewer = actualPanel != null
+                        ? PerfDiag.FindVisualAncestor<ScrollViewer>(actualPanel)
+                        : null;
                     if (listScrollViewer != null)
                         listViewportHeight = listScrollViewer.ViewportHeight;
 
@@ -1503,6 +1393,23 @@ namespace Frosty.Core.Controls
             // assigned — WPF will do a single sort/refresh when the using
             // block exits, instead of refreshing on every internal state
             // change during the assignment.
+            //
+            // CRITICAL ORDERING: Clear SelectedItem BEFORE setting ItemsSource.
+            // Setting SelectedItem=null AFTER ItemsSource=20K-items forces WPF
+            // to linear-search the new 20K-item list to find the previously-
+            // selected container (so it can deselect it). With broken
+            // virtualization this triggers full container generation for ALL
+            // 20K items → 45-second freeze (the "select=44938ms" symptom in
+            // the diagnostic log).
+            //
+            // By clearing SelectedItem while the OLD (small) items list is
+            // still active, the deselection search runs against the old list
+            // (which has maybe 8 containers realized) — trivially cheap.
+            // Then we assign the new 20K-item ItemsSource, which has no
+            // selection to apply, so no container generation is forced.
+            assetListView.SelectedItem = null;
+            SelectedAsset = null;
+
             using (assetListView.Items.DeferRefresh())
             {
                 assetListView.ItemsSource = items;
@@ -1538,10 +1445,12 @@ namespace Frosty.Core.Controls
             // realizes ~6 visible containers instead of all 20,469.
             ForceVirtualizationHookup();
 
-            if (SelectedAsset != null)
-            {
-                assetListView.SelectedItem = SelectedAsset;
-            }
+            // No SelectedItem manipulation needed here — both SelectedItem and
+            // SelectedAsset were cleared BEFORE the ItemsSource assignment
+            // (see "CRITICAL ORDERING" comment above). Setting them again here
+            // would risk forcing container generation on the new (potentially
+            // 20K-item) list. SelectAsset() (called from external code) sets
+            // both explicitly when needed.
             t5 = sw.ElapsedMilliseconds;
 
             // Only log when the folder has a meaningful number of items —
