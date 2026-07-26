@@ -1162,7 +1162,7 @@
                                                 <MenuItem Header="Duplicate"
                                                           Click="contextMenuDuplicateAsset_Click">
                                                     <MenuItem.Icon>
-                                                        <Image Source="/FrostyEditor;component/Images/Import.png"
+                                                        <Image Source="/FrostyEditor;component/Images/Add.png"
                                                                RenderOptions.BitmapScalingMode="Fant" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
@@ -1171,6 +1171,13 @@
                                                           Click="contextMenuBulkExportFolder_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Export.png"
+                                                               RenderOptions.BitmapScalingMode="Fant" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="Bulk Import Folder"
+                                                          Click="contextMenuBulkImportFolder_Click">
+                                                    <MenuItem.Icon>
+                                                        <Image Source="/FrostyEditor;component/Images/Import.png"
                                                                RenderOptions.BitmapScalingMode="Fant" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>

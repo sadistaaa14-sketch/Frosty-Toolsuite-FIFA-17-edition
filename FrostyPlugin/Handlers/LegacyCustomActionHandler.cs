@@ -338,6 +338,13 @@ namespace Frosty.Core.Handlers
             foreach (ModLegacyFileEntry e in modEntries)
                 modLookup[e.Hash] = e;
 
+            // NOTE: Do NOT call am.ModifyEbx or otherwise mutate 'am' from in
+            // here — Modify() runs inside Parallel.ForEach in the executor,
+            // and AssetManager.ebxList is not thread-safe. The owning
+            // ChunkFileCollector EBX's DataSize/FixupSize recomputation is
+            // done in the SERIAL post-pass (ProcessLegacyCollectorEbx) using
+            // RecomputeCollectorEbxForChunk below.
+
             using (NativeReader reader = new NativeReader(am.GetChunk(am.GetChunkEntry(chunkEntry.Id))))
             {
                 // --- read header (48 bytes) ---
@@ -513,6 +520,162 @@ namespace Frosty.Core.Handlers
                     chunkEntry.IsTocChunk = true;
                 }
             }
+
+            // -----------------------------------------------------------------
+            // EBX recomputation for the owning ChunkFileCollector is intentionally
+            // NOT done here. Modify() runs inside Parallel.ForEach, and
+            // AssetManager is not thread-safe. The recomputation is performed
+            // in the SERIAL post-pass via RecomputeCollectorEbxForChunk below.
+            // -----------------------------------------------------------------
+        }
+
+        /// <summary>
+        /// Recomputes Manifest.DataSize and Manifest.FixupSize on the
+        /// ChunkFileCollector EBX that owns the given collector chunk, so they
+        /// reflect ALL new (duplicated) legacy entries across every mod, not
+        /// just the last mod's increment.
+        ///
+        /// MUST be called from a serial context (not from inside the executor's
+        /// Parallel.ForEach), because it mutates 'am' via am.ModifyEbx.
+        ///
+        /// Returns the name of the collector EBX that was modified (or null if
+        /// no modification was needed / possible). The caller is then
+        /// responsible for re-serializing the EBX and updating archiveData /
+        /// modifiedEbx so the final written mod data has a chunk and EBX that
+        /// agree on layout.
+        /// </summary>
+        public static string RecomputeCollectorEbxForChunk(AssetManager am, Guid chunkId, object modEntriesData)
+        {
+            List<ModLegacyFileEntry> modEntries = (List<ModLegacyFileEntry>)modEntriesData;
+            if (modEntries == null || modEntries.Count == 0)
+                return null;
+
+            System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: chunkId=" + chunkId + " modEntries.Count=" + modEntries.Count);
+
+            // Find the collector EBX whose Manifest.ChunkId matches this chunk.
+            EbxAssetEntry collectorEntry = null;
+            EbxAsset collectorAsset = null;
+            foreach (EbxAssetEntry e in am.EnumerateEbx("ChunkFileCollector"))
+            {
+                EbxAsset a = am.GetEbx(e);
+                if (a == null)
+                    continue;
+
+                dynamic root = a.RootObject;
+                dynamic manifest = root.Manifest;
+                if (manifest.ChunkId == chunkId)
+                {
+                    collectorEntry = e;
+                    collectorAsset = a;
+                    break;
+                }
+            }
+
+            if (collectorEntry == null || collectorAsset == null)
+            {
+                System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: no collector EBX found for chunk " + chunkId);
+                return null;
+            }
+
+            System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: found collector EBX " + collectorEntry.Name);
+
+            // Read the ORIGINAL collector chunk from am (am only holds base
+            // game data, so this is the unmodified chunk) and compute the set
+            // of FNV hashes that already exist there. Any modEntry whose hash
+            // is NOT in this set is a newly-duplicated entry.
+            HashSet<int> originalHashes = new HashSet<int>();
+            ChunkAssetEntry origChunkEntry = am.GetChunkEntry(chunkId);
+            if (origChunkEntry != null)
+            {
+                Stream chunkStream = am.GetChunk(origChunkEntry);
+                if (chunkStream != null)
+                {
+                    using (NativeReader reader = new NativeReader(chunkStream))
+                    {
+                        uint numEntries = reader.ReadUInt();
+                        uint headerSize = reader.ReadUInt();   // always 48
+                        System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: original chunk numEntries=" + numEntries + " headerSize=" + headerSize);
+                        // Each entry record is 56 bytes: strOff(8) + compOff(8)
+                        // + compSize(8) + offset(8) + size(8) + guid(16).
+                        for (int i = 0; i < numEntries; i++)
+                        {
+                            // Seek to the start of entry i's strOff field.
+                            reader.Position = headerSize + (i * 56);
+                            long strOff = reader.ReadLong();
+
+                            // Read the name at strOff, then come back.
+                            long curPos = reader.Position;
+                            reader.Position = strOff;
+                            string name = reader.ReadNullTerminatedString();
+                            reader.Position = curPos;
+
+                            originalHashes.Add(Fnv1.HashString(name));
+                        }
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: chunkStream is null for " + chunkId);
+                }
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: origChunkEntry is null for " + chunkId);
+            }
+
+            // Read base values from the ORIGINAL asset (am is unmodified in the executor).
+            dynamic collectorRoot = collectorAsset.RootObject;
+            dynamic collectorManifest = collectorRoot.Manifest;
+            uint baseDataSize = (uint)collectorManifest.DataSize;
+            uint baseFixupSize = (uint)collectorManifest.FixupSize;
+
+            System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: baseDataSize=" + baseDataSize + " baseFixupSize=" + baseFixupSize + " originalHashes.Count=" + originalHashes.Count);
+
+            // Count NEW entries (those in the merged list that did NOT match an
+            // original entry) and sum their name bytes.
+            //
+            // Each new entry contributes:
+            //   - 56 bytes to DataSize (entry record: 5 longs + 1 guid)
+            //   - nameBytes to DataSize (UTF-8 bytes + null terminator)
+            //   - 4 bytes to FixupSize (one fixup slot in the index table)
+            //
+            // This matches the incremental formula used by the editor in
+            // LegacyFileManager.DuplicateAsset.
+            uint numNew = 0;
+            uint newNameBytes = 0;
+            foreach (ModLegacyFileEntry m in modEntries)
+            {
+                bool isNew = !originalHashes.Contains(m.Hash);
+                System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: modEntry hash=" + m.Hash + " name=" + m.Name + " isNew=" + isNew);
+                if (isNew)
+                {
+                    numNew++;
+                    newNameBytes += (uint)System.Text.Encoding.UTF8.GetByteCount(m.Name) + 1;
+                }
+            }
+
+            // If nothing was added, no EBX update is needed.
+            if (numNew == 0)
+            {
+                System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: numNew=0, no update needed");
+                return null;
+            }
+
+            uint newDataSize = baseDataSize + numNew * 56u + newNameBytes;
+            uint newFixupSize = baseFixupSize + numNew * 4u;
+
+            System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: numNew=" + numNew + " newNameBytes=" + newNameBytes + " -> newDataSize=" + newDataSize + " newFixupSize=" + newFixupSize);
+
+            collectorManifest.DataSize = newDataSize;
+            collectorManifest.FixupSize = newFixupSize;
+
+            // Push the modified asset back into am. am.ModifyEbx sets
+            // ModifiedEntry.DataObject to the asset (SaveModifiedResource
+            // returns null for vanilla EbxAsset), so am.GetEbx(entry) will
+            // subsequently return this asset.
+            am.ModifyEbx(collectorEntry.Name, collectorAsset);
+            System.Diagnostics.Debug.WriteLine("RecomputeCollectorEbxForChunk: am.ModifyEbx done for " + collectorEntry.Name);
+            return collectorEntry.Name;
         }
 
         public IEnumerable<string> GetResourceActions(string name, byte[] data)

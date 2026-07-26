@@ -41,22 +41,62 @@ namespace Frosty.Core.Legacy
         /// </summary>
         public bool IsAdded { get; set; } = false;
 
+        // Cached derived-from-Name fields. Name is only ever set at construction
+        // time (see LegacyFileManager — both the loader path and the DuplicateAsset
+        // path use object-initializer syntax `new LegacyFileEntry { Name = ... }`,
+        // there is no code path that re-assigns .Name after creation). So we can
+        // safely compute Filename / Path / Type once and cache them.
+        //
+        // Without these caches, every sort comparison in the Legacy Explorer
+        // would re-walk Name.LastIndexOf('/') + Substring multiple times per
+        // comparison — for a folder with ~20k entries that means hundreds of
+        // thousands of redundant string allocations per folder click. The
+        // cache converts each per-comparison call into a single field read.
+        private string cachedFilename;
+        private string cachedPath;
+        private string cachedType;
+
         public override string Type
         {
             get
             {
-                int lastPeriodIndex = Name.LastIndexOf('.');
-                return lastPeriodIndex == -1 ? "" : Name.Substring(lastPeriodIndex + 1).ToUpper();
+                if (cachedType == null)
+                {
+                    int lastPeriodIndex = Name.LastIndexOf('.');
+                    cachedType = lastPeriodIndex == -1 ? "" : Name.Substring(lastPeriodIndex + 1).ToUpper();
+                }
+                return cachedType;
             }
-            set { }
+            set { /* no-op — Type is derived from Name and cannot be set */ }
         }
 
         public override string Filename
         {
             get
             {
-                int lastPeriodIndex = base.Filename.LastIndexOf('.');
-                return lastPeriodIndex == -1 ? base.Filename : base.Filename.Substring(0, lastPeriodIndex);
+                if (cachedFilename == null)
+                {
+                    // base.Filename extracts the part of Name after the last '/',
+                    // then we strip the extension. Both involve string allocations,
+                    // so we cache the result.
+                    string baseFilename = base.Filename;
+                    int lastPeriodIndex = baseFilename.LastIndexOf('.');
+                    cachedFilename = lastPeriodIndex == -1 ? baseFilename : baseFilename.Substring(0, lastPeriodIndex);
+                }
+                return cachedFilename;
+            }
+        }
+
+        public override string Path
+        {
+            get
+            {
+                if (cachedPath == null)
+                {
+                    int id = Name.LastIndexOf('/');
+                    cachedPath = id == -1 ? "" : Name.Substring(0, id);
+                }
+                return cachedPath;
             }
         }
 

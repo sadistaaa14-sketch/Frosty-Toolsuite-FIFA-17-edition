@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Text;
 using System.Windows;
 using System.Windows.Data;
+using System.Windows.Threading;
 
 namespace FrostyCore
 {
@@ -13,6 +14,9 @@ namespace FrostyCore
     {
         public string LogText => sb.ToString();
         private StringBuilder sb = new StringBuilder();
+
+        // Coalescing flag for deferred PropertyChanged notifications.
+        private bool pendingNotify = false;
 
         public void Log(string text, params object[] vars)
         {
@@ -24,7 +28,7 @@ namespace FrostyCore
                 category = "[" + attr.DisplayName + "] ";
 
             sb.AppendLine(string.Format("[" + DateTime.Now.ToLongTimeString() + "]: " + category + text, vars));
-            RaisePropertyChanged("LogText");
+            ScheduleNotify();
         }
 
         public void LogWarning(string text, params object[] vars)
@@ -37,7 +41,7 @@ namespace FrostyCore
                 category = "[" + attr.DisplayName + "] ";
 
             sb.AppendLine(string.Format("[" + DateTime.Now.ToLongTimeString() + "]: " + category + "(WARNING) " + text, vars));
-            RaisePropertyChanged("LogText");
+            ScheduleNotify();
         }
 
         public void LogError(string text, params object[] vars)
@@ -50,7 +54,20 @@ namespace FrostyCore
                 category = "[" + attr.DisplayName + "] ";
 
             sb.AppendLine(string.Format("[" + DateTime.Now.ToLongTimeString() + "]: " + category + "(ERROR) " + text, vars));
-            RaisePropertyChanged("LogText");
+            ScheduleNotify();
+        }
+
+        private void ScheduleNotify()
+        {
+            if (pendingNotify)
+                return;
+
+            pendingNotify = true;
+            Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() =>
+            {
+                pendingNotify = false;
+                RaisePropertyChanged("LogText");
+            }), DispatcherPriority.Background);
         }
 
         public void AddBinding(UIElement elementToBind, DependencyProperty propertyToBind)

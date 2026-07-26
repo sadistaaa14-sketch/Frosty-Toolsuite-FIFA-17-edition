@@ -351,7 +351,18 @@ namespace FrostyEditor
         {
             if (tb.IsFocused)
                 tb.MoveFocus(new TraversalRequest(FocusNavigationDirection.Previous));
-            tb.ScrollToEnd();
+
+            // Defer ScrollToEnd to Background priority so it doesn't force
+            // a synchronous layout pass during click handlers (which would
+            // trigger ListView container generation for all 20K items).
+            tb.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                double distanceFromBottom = tb.ExtentHeight - tb.VerticalOffset - tb.ViewportHeight;
+                if (distanceFromBottom < 40.0)
+                {
+                    tb.ScrollToEnd();
+                }
+            }), System.Windows.Threading.DispatcherPriority.Background);
         }
 
         int lastSaveIndex = 0;
@@ -1074,6 +1085,236 @@ namespace FrostyEditor
                     else
                         App.Logger.Log("Bulk exported {0} legacy files to {1}", toExport.Count, outputRoot);
                 });
+            }
+        }
+
+
+        /// <summary>
+        /// Bulk-imports every file in a user-selected folder into the Legacy Explorer.
+        /// For each file:
+        ///   - The relative path from the chosen folder becomes the target legacy
+        ///     asset name (e.g. "data\kit\kit_001.dds" -> "data/kit/kit_001.dds").
+        ///   - If a legacy asset with that name already exists, the file's bytes
+        ///     are imported into it (ModifyCustomAsset).
+        ///   - If no such asset exists, the currently-selected legacy asset is
+        ///     duplicated to the new name (DuplicateAsset), then the file's bytes
+        ///     are imported into the new asset. This mirrors the behaviour of the
+        ///     existing "Duplicate" context menu item, which uses the selected
+        ///     asset as the source.
+        /// Subdirectory structure is preserved and the folder is scanned
+        /// recursively. Existing asset lookup is case-insensitive (matching the
+        /// behaviour of the existing "Bulk Export Folder" command), but when a
+        /// match is found the EXISTING entry's canonical name is used for the
+        /// modify call so the case stays correct.
+        /// </summary>
+        private void contextMenuBulkImportFolder_Click(object sender, RoutedEventArgs e)
+        {
+            // The selected legacy asset is the duplication template for files
+            // whose name doesn't already exist in the project.
+            LegacyFileEntry templateAsset = legacyExplorer.SelectedAsset as LegacyFileEntry;
+            if (templateAsset == null)
+            {
+                App.Logger.Log("Bulk Import: select a legacy asset first — it will be used as the duplication template for files that don't already exist.");
+                return;
+            }
+
+            using (var fbd = new System.Windows.Forms.FolderBrowserDialog())
+            {
+                fbd.Description = "Select a folder containing the files to bulk-import. Each file is matched against existing legacy assets by filename; matches are modified in place, others are duplicated from '" + templateAsset.Name + "' (and placed in the same folder as that template).";
+                if (fbd.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+                    return;
+
+                string inputRoot = fbd.SelectedPath;
+
+                // Enumerate all files recursively. Order by path so progress is
+                // predictable (top-down by directory).
+                string[] files;
+                try
+                {
+                    files = Directory.GetFiles(inputRoot, "*", SearchOption.AllDirectories);
+                    Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+                }
+                catch (Exception ex)
+                {
+                    App.Logger.Log("Bulk Import: failed to enumerate {0}: {1}", inputRoot, ex.Message);
+                    return;
+                }
+
+                if (files.Length == 0)
+                {
+                    App.Logger.Log("Bulk Import: no files found in {0}", inputRoot);
+                    return;
+                }
+
+                // Build a case-insensitive lookup of existing legacy asset names
+                // keyed by BARE filename (the last segment of the canonical name,
+                // e.g. "p20801.dds" for "data/ui/imgAssets/heads/p20801.dds").
+                //
+                // Bulk import is filesystem-layout-agnostic: it ignores the
+                // directory structure inside the user's input folder and matches
+                // files against existing legacy assets by bare filename only.
+                // When a match is found we reuse the existing entry's canonical
+                // name as the modify target so the case-sensitive FNV1 hash
+                // matches.
+                //
+                // Note: multiple legacy assets can share the same bare filename
+                // across different directories. The last one wins — if the user
+                // needs to target a specific one they should use single-asset
+                // import instead.
+                Dictionary<string, LegacyFileEntry> existingByBareName =
+                    new Dictionary<string, LegacyFileEntry>(StringComparer.OrdinalIgnoreCase);
+                foreach (AssetEntry entry in App.AssetManager.EnumerateCustomAssets("legacy"))
+                {
+                    LegacyFileEntry lfe = entry as LegacyFileEntry;
+                    if (lfe != null && !string.IsNullOrEmpty(lfe.Name))
+                    {
+                        int lastSlash = lfe.Name.LastIndexOf('/');
+                        string bare = lastSlash == -1 ? lfe.Name : lfe.Name.Substring(lastSlash + 1);
+                        existingByBareName[bare] = lfe;
+                    }
+                }
+                App.Logger.Log("Bulk Import: existing legacy assets indexed by bare filename: {0}",
+                    existingByBareName.Count);
+
+                FrostyTaskWindow.Show("Bulk Importing Legacy Folder", inputRoot, (task) =>
+                {
+                    int progress = 0;
+                    int duplicated = 0;
+                    int modified = 0;
+                    int failed = 0;
+
+                    foreach (string filePath in files)
+                    {
+                        task.Update(filePath, (progress / (double)files.Length) * 100.0);
+                        progress++;
+
+                        try
+                        {
+                            // Compute the file's BARE filename (last path segment,
+                            // no directory) — we ignore any subdirectory structure
+                            // inside the user's input folder on purpose. Users are
+                            // expected to point the picker at a flat folder of
+                            // files. This keeps the import agnostic to the user's
+                            // local filesystem layout.
+                            //
+                            // We use both Path.GetFileName (which strips both '\'
+                            // and '/' on Windows) and a manual fallback so the
+                            // behaviour is identical regardless of which separator
+                            // the OS used when enumerating the folder.
+                            string fileBare = System.IO.Path.GetFileName(filePath);
+                            if (string.IsNullOrEmpty(fileBare))
+                            {
+                                // Fallback — split on both separators manually.
+                                string normalized = filePath.Replace('\\', '/');
+                                int lastSlash = normalized.LastIndexOf('/');
+                                fileBare = lastSlash == -1 ? normalized : normalized.Substring(lastSlash + 1);
+                            }
+                            if (string.IsNullOrEmpty(fileBare))
+                                continue;
+
+                            // Read the file bytes once — we'll need them whether
+                            // we're modifying an existing asset or importing into
+                            // a freshly duplicated one.
+                            byte[] buffer;
+                            using (NativeReader reader = new NativeReader(new FileStream(filePath, FileMode.Open, FileAccess.Read)))
+                                buffer = reader.ReadToEnd();
+
+                            // Decide whether to duplicate or just modify.
+                            //
+                            // Match priority:
+                            //   1. Bare-filename match (file's name matches an
+                            //      existing entry's last path segment, case-insensitively).
+                            //      Reuse the existing entry's canonical name so the
+                            //      case-sensitive FNV1 hash matches.
+                            //   2. No match — duplicate from the template. The new
+                            //      entry's name is built from the TEMPLATE asset's
+                            //      directory path + the file's bare filename, so it
+                            //      appears in the same folder as the template in
+                            //      the Legacy Explorer.
+                            string targetName;
+                            LegacyFileEntry matchEntry = null;
+                            if (existingByBareName.TryGetValue(fileBare, out matchEntry))
+                            {
+                                // Found an existing entry whose bare filename matches.
+                                // Reuse its canonical name so FNV1 hash matches.
+                                targetName = matchEntry.Name;
+                                App.Logger.Log("Bulk Import: modify  '{0}' (bare-name match on '{1}', {2} bytes)",
+                                    targetName, fileBare, buffer.Length);
+                                modified++;
+                            }
+                            else
+                            {
+                                // No match — duplicate from the template. Build the
+                                // new asset's name from the template's directory +
+                                // the file's bare filename.
+                                string templateDir = templateAsset.Path;
+                                targetName = string.IsNullOrEmpty(templateDir)
+                                    ? fileBare
+                                    : templateDir + "/" + fileBare;
+
+                                App.Logger.Log("Bulk Import: dup     '{0}' -> '{1}' ({2} bytes)",
+                                    templateAsset.Name, targetName, buffer.Length);
+                                App.AssetManager.SendManagerCommand(
+                                    "legacy", "DuplicateAsset",
+                                    templateAsset.Name, targetName);
+
+                                // Fetch the newly-created entry and cache it.
+                                LegacyFileEntry newEntry =
+                                    App.AssetManager.GetCustomAssetEntry<LegacyFileEntry>("legacy", targetName);
+                                if (newEntry == null)
+                                {
+                                    App.Logger.Log("Bulk Import: !! duplicate failed for '{0}' (SendManagerCommand returned without creating entry)", targetName);
+                                    failed++;
+                                    continue;
+                                }
+                                // Register the new entry under bare name so
+                                // subsequent files that collide go through modify.
+                                string newBare = targetName.Substring(targetName.LastIndexOf('/') + 1);
+                                existingByBareName[newBare] = newEntry;
+                                duplicated++;
+                            }
+
+                            // Now apply the file's bytes to the (possibly newly
+                            // duplicated) asset. ModifyCustomAsset dispatches to
+                            // LegacyFileManager.ModifyAsset which writes a new
+                            // chunk and points the entry at it.
+                            App.AssetManager.ModifyCustomAsset("legacy", targetName, buffer);
+
+                            // Verify the modify actually took effect by re-reading
+                            // the entry and checking its IsModified flag. If the
+                            // entry is not marked modified, ModifyAsset silently
+                            // returned without doing anything (FNV1 hash miss).
+                            LegacyFileEntry afterEntry =
+                                App.AssetManager.GetCustomAssetEntry<LegacyFileEntry>("legacy", targetName);
+                            if (afterEntry == null || !afterEntry.IsModified)
+                            {
+                                App.Logger.Log("Bulk Import: !! modify failed for '{0}' (entry not found or not marked modified after ModifyCustomAsset)", targetName);
+                                failed++;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            App.Logger.Log("Bulk Import: failed to import {0}: {1}", filePath, ex.Message);
+                            failed++;
+                        }
+                    }
+
+                    if (failed > 0)
+                        App.Logger.Log(
+                            "Bulk imported {0} files ({1} duplicated, {2} modified, {3} failed) from {4}",
+                            files.Length - failed, duplicated, modified, failed, inputRoot);
+                    else
+                        App.Logger.Log(
+                            "Bulk imported {0} files ({1} duplicated, {2} modified) from {3}",
+                            files.Length, duplicated, modified, inputRoot);
+                });
+
+                // Use RefreshAll (not RefreshItems) so that newly duplicated
+                // entries appear in the explorer. RefreshItems only refreshes
+                // the existing list-view snapshot — it does NOT re-iterate the
+                // ItemsSource, so any new entries added during the bulk import
+                // would be invisible until the user manually navigates the tree.
+                legacyExplorer.RefreshAll();
             }
         }
 

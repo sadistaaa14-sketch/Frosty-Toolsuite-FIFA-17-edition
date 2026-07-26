@@ -1,5 +1,6 @@
 ﻿using Frosty.Controls;
 using Frosty.Core;
+using Frosty.Core.Handlers;
 using Frosty.Core.Mod;
 using Frosty.Hash;
 using FrostySdk;
@@ -683,6 +684,217 @@ namespace Frosty.ModSupport
             });
         }
 
+        /// <summary>
+        /// Post-pass that runs SERIALLY after all handler Modify() calls have
+        /// completed.
+        ///
+        /// LegacyCustomActionHandler.Modify rebuilds each collector chunk with
+        /// ALL legacy entries from ALL mods (the chunk-side merge works). But
+        /// the owning ChunkFileCollector EBX still goes through the generic
+        /// EBX merge path in the executor ("last mod wins"), so its
+        /// Manifest.DataSize / FixupSize only reflect ONE mod's increment.
+        ///
+        /// This method fixes that desync: for each legacy collector chunk, it
+        /// recomputes DataSize/FixupSize from the FULL merged entry list,
+        /// updates the EBX in 'am', re-serializes it, and replaces the stale
+        /// bytes in archiveData so the final written mod data has a chunk and
+        /// EBX that agree on layout.
+        ///
+        /// This MUST run serially (not inside the Parallel.ForEach above),
+        /// because LegacyCustomActionHandler.RecomputeCollectorEbxForChunk
+        /// mutates 'am' via am.ModifyEbx, and AssetManager is not thread-safe.
+        /// </summary>
+        private void ProcessLegacyCollectorEbx(AssetManager am)
+        {
+            // Track EBX names we've already updated, so we don't re-serialize
+            // the same EBX twice if multiple legacy chunks happen to share a
+            // collector (shouldn't happen in practice, but be defensive).
+            HashSet<string> alreadyUpdated = new HashSet<string>();
+
+            Logger.Log("ProcessLegacyCollectorEbx: starting (modifiedChunks=" + modifiedChunks.Count + ")");
+            App.Logger.Log("ProcessLegacyCollectorEbx: starting (modifiedChunks=" + modifiedChunks.Count + ")");
+
+            foreach (var kvp in modifiedChunks)
+            {
+                ChunkAssetEntry chunkEntry = kvp.Value;
+                if (!(chunkEntry.ExtraData is HandlerExtraData hd))
+                    continue;
+                if (!(hd.Handler is LegacyCustomActionHandler))
+                    continue;
+                if (hd.Data == null)
+                    continue;
+
+                Guid chunkId = chunkEntry.Id;
+
+                Logger.Log("ProcessLegacyCollectorEbx: chunk=" + chunkId + " sha1=" + chunkEntry.Sha1 + " size=" + chunkEntry.Size);
+                App.Logger.Log("ProcessLegacyCollectorEbx: chunk=" + chunkId + " sha1=" + chunkEntry.Sha1 + " size=" + chunkEntry.Size);
+
+                // Recompute DataSize/FixupSize on the owning collector EBX.
+                // This mutates 'am' (via am.ModifyEbx). Returns the name of
+                // the modified EBX, or null if no update was needed/possible.
+                string ebxName = LegacyCustomActionHandler.RecomputeCollectorEbxForChunk(am, chunkId, hd.Data);
+                Logger.Log("ProcessLegacyCollectorEbx: RecomputeCollectorEbxForChunk returned ebxName=" + (ebxName ?? "<null>"));
+                App.Logger.Log("ProcessLegacyCollectorEbx: RecomputeCollectorEbxForChunk returned ebxName=" + (ebxName ?? "<null>"));
+
+                if (string.IsNullOrEmpty(ebxName))
+                    continue;
+                if (!alreadyUpdated.Add(ebxName))
+                {
+                    Logger.Log("ProcessLegacyCollectorEbx: already updated " + ebxName + ", skipping");
+                    App.Logger.Log("ProcessLegacyCollectorEbx: already updated " + ebxName + ", skipping");
+                    continue;
+                }
+
+                // modifiedEbx keys are stored LOWERCASE (FrostyModWriter line 92
+                // does name = entry.Name.ToLower()), but ebxName here is the
+                // AssetManager's mixed-case name (e.g. "Core/ChunkFiles/CFC_GameModes").
+                // Use a lowercased key for all modifiedEbx / modifiedBundles lookups.
+                string ebxKey = ebxName.ToLower();
+
+                // The EBX may or may not already be in modifiedEbx:
+                //  - If at least one loaded mod directly modified the collector
+                //    EBX (the normal case when DuplicateAsset calls
+                //    am.ModifyEbx and FrostyModWriter writes it as an
+                //    EbxResource), then it's already here and we just need to
+                //    replace its data with the recomputed version.
+                //  - If NO mod directly modified the EBX (e.g. mods built
+                //    before the EBX-recompute feature, or mods that only touch
+                //    the chunk manifest via the legacy handler), then it's NOT
+                //    in modifiedEbx and we must synthesize an entry here so the
+                //    recomputed EBX actually gets written into the mod data.
+                EbxAssetEntry executorEntry;
+                bool synthesized = false;
+                if (!modifiedEbx.TryGetValue(ebxKey, out executorEntry))
+                {
+                    Logger.Log("ProcessLegacyCollectorEbx: EBX " + ebxName + " not in modifiedEbx, synthesizing entry");
+                    App.Logger.Log("ProcessLegacyCollectorEbx: EBX " + ebxName + " not in modifiedEbx, synthesizing entry");
+
+                    // We need the base EBX entry to discover which bundles
+                    // contain this EBX, so the synthesized entry can be linked
+                    // into them (otherwise the bundle writer would never pick
+                    // up our modified EBX and the game would keep using the
+                    // original, unmodified collector).
+                    EbxAssetEntry baseEbxEntry = am.GetEbxEntry(ebxName);
+                    if (baseEbxEntry == null)
+                    {
+                        Logger.Log("ProcessLegacyCollectorEbx: am.GetEbxEntry returned null for " + ebxName + ", skipping");
+                        App.Logger.Log("ProcessLegacyCollectorEbx: am.GetEbxEntry returned null for " + ebxName + ", skipping");
+                        continue;
+                    }
+
+                    executorEntry = new EbxAssetEntry();
+                    executorEntry.Name = ebxKey;
+                    // Sha1 / OriginalSize / Size are set below after compression.
+
+                    // Link the EBX into every bundle that originally contains
+                    // it, so the bundle writer (Standard.cs) replaces the base
+                    // EBX with our modified version. Without this, the bundle
+                    // would still reference the original EBX sha1 and the
+                    // recomputed DataSize/FixupSize would never reach the game.
+                    int linkedBundles = 0;
+                    foreach (int bid in baseEbxEntry.Bundles)
+                    {
+                        BundleEntry bEntry = am.GetBundleEntry(bid);
+                        if (bEntry == null)
+                            continue;
+
+                        int bundleHash = HashBundle(bEntry);
+                        modifiedBundles.TryAdd(bundleHash, new ModBundleInfo() { Name = bundleHash });
+                        modifiedBundles[bundleHash].Modify.AddEbx(ebxKey);
+                        linkedBundles++;
+                    }
+
+                    Logger.Log("ProcessLegacyCollectorEbx: synthesized entry for " + ebxName + ", linked into " + linkedBundles + " bundle(s)");
+                    App.Logger.Log("ProcessLegacyCollectorEbx: synthesized entry for " + ebxName + ", linked into " + linkedBundles + " bundle(s)");
+
+                    modifiedEbx.TryAdd(ebxKey, executorEntry);
+                    synthesized = true;
+                }
+
+                Logger.Log("ProcessLegacyCollectorEbx: executorEntry old sha1=" + executorEntry.Sha1 + " size=" + executorEntry.Size + " originalSize=" + executorEntry.OriginalSize + " synthesized=" + synthesized);
+                App.Logger.Log("ProcessLegacyCollectorEbx: executorEntry old sha1=" + executorEntry.Sha1 + " size=" + executorEntry.Size + " originalSize=" + executorEntry.OriginalSize + " synthesized=" + synthesized);
+
+                // Re-serialize the updated EBX from am. am.GetEbxEntry uses
+                // the AssetManager's mixed-case name, so pass ebxName (NOT ebxKey).
+                EbxAssetEntry amEntry = am.GetEbxEntry(ebxName);
+                if (amEntry == null || amEntry.ModifiedEntry?.DataObject == null)
+                {
+                    Logger.Log("ProcessLegacyCollectorEbx: amEntry null or no DataObject for " + ebxName);
+                    App.Logger.Log("ProcessLegacyCollectorEbx: amEntry null or no DataObject for " + ebxName);
+                    continue;
+                }
+
+                EbxAsset updatedAsset = am.GetEbx(amEntry);
+                if (updatedAsset == null)
+                {
+                    Logger.Log("ProcessLegacyCollectorEbx: am.GetEbx returned null for " + ebxName);
+                    App.Logger.Log("ProcessLegacyCollectorEbx: am.GetEbx returned null for " + ebxName);
+                    continue;
+                }
+
+                byte[] ebxBytes;
+                using (EbxBaseWriter writer = EbxBaseWriter.CreateWriter(new MemoryStream()))
+                {
+                    writer.WriteAsset(updatedAsset);
+                    ebxBytes = writer.ToByteArray();
+                }
+
+                CompressionType compressType =
+                    (ProfilesLibrary.DataVersion == (int)ProfileVersion.Fifa18)
+                        ? CompressionType.ZStd
+                        : CompressionType.Default;
+                byte[] compressed = Utils.CompressFile(ebxBytes, compressionOverride: compressType);
+                Sha1 newSha1 = Utils.GenerateSha1(compressed);
+
+                Logger.Log("ProcessLegacyCollectorEbx: new ebx uncompressed=" + ebxBytes.Length + " compressed=" + compressed.Length + " sha1=" + newSha1);
+                App.Logger.Log("ProcessLegacyCollectorEbx: new ebx uncompressed=" + ebxBytes.Length + " compressed=" + compressed.Length + " sha1=" + newSha1);
+
+                // If the recomputed bytes happen to match the existing SHA1
+                // (e.g. only one mod duplicated, and its increment matches),
+                // there's nothing to update. Skip this check for synthesized
+                // entries — they have no prior SHA1 to compare against.
+                if (!synthesized && newSha1 == executorEntry.Sha1)
+                {
+                    Logger.Log("ProcessLegacyCollectorEbx: new sha1 matches old, no update needed");
+                    App.Logger.Log("ProcessLegacyCollectorEbx: new sha1 matches old, no update needed");
+                    continue;
+                }
+
+                // Swap the old entry out of archiveData and add the new one.
+                // For synthesized entries there is no old entry to remove.
+                if (!synthesized)
+                {
+                    Sha1 oldSha1 = executorEntry.Sha1;
+                    if (archiveData.ContainsKey(oldSha1))
+                    {
+                        archiveData[oldSha1].RefCount--;
+                        if (archiveData[oldSha1].RefCount <= 0)
+                            archiveData.TryRemove(oldSha1, out _);
+                    }
+                    else
+                    {
+                        Logger.Log("ProcessLegacyCollectorEbx: WARNING old sha1 " + oldSha1 + " not in archiveData!");
+                        App.Logger.Log("ProcessLegacyCollectorEbx: WARNING old sha1 " + oldSha1 + " not in archiveData!");
+                    }
+                }
+
+                if (!archiveData.TryAdd(newSha1, new ArchiveInfo() { Data = compressed, RefCount = 1 }))
+                    archiveData[newSha1].RefCount++;
+
+                // Update the executor's entry so the final write picks up the
+                // new SHA1 / size.
+                executorEntry.Sha1 = newSha1;
+                executorEntry.OriginalSize = ebxBytes.Length;
+                executorEntry.Size = compressed.Length;
+
+                Logger.Log("ProcessLegacyCollectorEbx: updated executorEntry for " + ebxName + " (synthesized=" + synthesized + ")");
+                App.Logger.Log("ProcessLegacyCollectorEbx: updated executorEntry for " + ebxName + " (synthesized=" + synthesized + ")");
+            }
+
+            Logger.Log("ProcessLegacyCollectorEbx: done");
+            App.Logger.Log("ProcessLegacyCollectorEbx: done");
+        }
+
         private void ProcessLegacyModResources(string modPath)
         {
             DbObject mod = null;
@@ -1154,6 +1366,13 @@ namespace Frosty.ModSupport
 
                 // process any new resources added during custom handler modification
                 ProcessModResources(runtimeResources);
+
+                // Re-serialize ChunkFileCollector EBX assets that were updated by
+                // LegacyCustomActionHandler.Modify (which recomputes Manifest.DataSize
+                // / FixupSize to account for legacy duplicates across ALL mods).
+                // Without this, only the last mod's EBX increment would survive the
+                // generic EBX merge path, causing a chunk/EBX layout desync.
+                ProcessLegacyCollectorEbx(am);
 
                 cancelToken.ThrowIfCancellationRequested();
                 Logger.Log("Cleaning Up ModData");

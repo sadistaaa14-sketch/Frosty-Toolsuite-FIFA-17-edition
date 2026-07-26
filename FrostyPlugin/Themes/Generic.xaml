@@ -235,7 +235,40 @@
 
                         <GridSplitter x:Name="gs" Grid.Row="2" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Height="3" Background="{StaticResource ControlBackground}" ResizeDirection="Rows"/>
 
-                        <ListView x:Name="PART_AssetListView" Grid.Row="3" HorizontalContentAlignment="Stretch" SelectionMode="Single" />
+                        <!--
+                            Explicit virtualization properties. These work
+                            TOGETHER with the CanContentScroll="True" fix in
+                            FrostyControls/Themes/Generic.xaml (the
+                            GridViewScrollViewerStyleKey style). Without
+                            CanContentScroll=True on the ScrollContentPresenter,
+                            these VirtualizingPanel properties are silently
+                            ignored and WPF generates ALL containers (which
+                            caused the 20-second freeze on 20K-item folders).
+
+                            - VirtualizingPanel.IsVirtualizing="True" : ensure
+                              container recycling is on.
+                            - VirtualizingPanel.VirtualizationMode="Recycling" :
+                              recycle ListViewItem containers during scroll
+                              instead of allocating new ones.
+                            - ScrollUnit defaults to "Item" which is the most
+                              virtualization-friendly mode for GridView. Do NOT
+                              set ScrollUnit="Pixel" — it can partially break
+                              virtualization with GridView.
+                        -->
+                        <ListView x:Name="PART_AssetListView" Grid.Row="3"
+                                  HorizontalContentAlignment="Stretch"
+                                  SelectionMode="Single"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling"
+                                  ScrollViewer.CanContentScroll="True">
+                            <ListView.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VirtualizingStackPanel
+                                        IsVirtualizing="True"
+                                        VirtualizationMode="Recycling" />
+                                </ItemsPanelTemplate>
+                            </ListView.ItemsPanel>
+                        </ListView>
                         <Grid Grid.Row="2" Visibility="Hidden">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="3*"/>
@@ -1221,7 +1254,14 @@
                         <conv:AssetEntryToBitmapSourceConverter x:Key="AssetEntryToBitmapSourceConverter"/>
                     </ControlTemplate.Resources>
                     <Grid>
-                        <ListView x:Name="PART_AssetListView" Grid.Row="3" HorizontalContentAlignment="Stretch" SelectionMode="Single" ItemsSource="{TemplateBinding ItemsSource}">
+                        <ListView x:Name="PART_AssetListView" Grid.Row="3" HorizontalContentAlignment="Stretch" SelectionMode="Single" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True" ItemsSource="{TemplateBinding ItemsSource}">
+                            <ListView.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VirtualizingStackPanel
+                                        IsVirtualizing="True"
+                                        VirtualizationMode="Recycling" />
+                                </ItemsPanelTemplate>
+                            </ListView.ItemsPanel>
                             <ListView.ItemContainerStyle>
                                 <Style TargetType="ListViewItem" BasedOn="{StaticResource baseListViewItemStyle}">
                                     <Setter Property="ContextMenu" Value="{Binding Path=AssetContextMenu, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:FrostyAssetListView}}}"/>
