@@ -737,6 +737,44 @@ namespace FrostyModManager
                     // process was cancelled
                     App.Logger.Log("Launch Cancelled");
                 }
+                catch (System.AggregateException ae)
+                {
+                    retCode = -1;
+
+                    // Unwrap AggregateException (thrown by Parallel.ForEach) and show the REAL error
+                    FileLogger.LogException("Launch (AggregateException)", ae);
+
+                    Exception realError = ae.InnerExceptions.Count > 0 ? ae.InnerExceptions[0] : ae;
+                    string errorMsg = string.Format("Launch failed:\n\n{0}\n\n{1}\n\nSee log file: {2}",
+                        realError?.GetType().Name ?? "Unknown",
+                        realError?.Message ?? "No message",
+                        FileLogger.LogPath);
+
+                    App.Logger.LogError("Launch failed: {0}", realError?.Message ?? ae.Message);
+
+                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        FrostyMessageBox.Show(errorMsg, "Launch Error", System.Windows.MessageBoxButton.OK);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    retCode = -1;
+
+                    FileLogger.LogException("Launch (general)", ex);
+
+                    string errorMsg = string.Format("Launch failed:\n\n{0}\n\n{1}\n\nSee log file: {2}",
+                        ex?.GetType().Name ?? "Unknown",
+                        ex?.Message ?? "No message",
+                        FileLogger.LogPath);
+
+                    App.Logger.LogError("Launch failed: {0}", ex?.Message ?? "Unknown");
+
+                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        FrostyMessageBox.Show(errorMsg, "Launch Error", System.Windows.MessageBoxButton.OK);
+                    });
+                }
 
             }, showCancelButton: true, cancelCallback: (task) => cancelToken.Cancel());
 

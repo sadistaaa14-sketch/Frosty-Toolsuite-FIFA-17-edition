@@ -70,36 +70,88 @@ namespace BundleRefTablePlugin.Handlers
 
         public object Load(object existing, byte[] newData)
         {
-            ModifiedBundleRefTableResource oldTable = (ModifiedBundleRefTableResource)existing;
-            ModifiedBundleRefTableResource newTable = (ModifiedBundleRefTableResource)ModifiedResource.Read(newData);
-
-            if (oldTable == null)
-                return newTable;
-
-            foreach (string key in newTable.DuplicationDict.Keys)
+            try
             {
-                oldTable.AddAsset(key, newTable.DuplicationDict[key]);
-            }
+                FileLogger.Log("  BRT.Load START: existing={0} newData.Length={1}",
+                    existing != null ? "non-null" : "null", newData?.Length ?? 0);
 
-            return oldTable;
+                ModifiedBundleRefTableResource oldTable = (ModifiedBundleRefTableResource)existing;
+                ModifiedBundleRefTableResource newTable = (ModifiedBundleRefTableResource)ModifiedResource.Read(newData);
+
+                FileLogger.Log("  BRT.Load: newTable.DuplicationDict.Count={0}", newTable?.DuplicationDict?.Count ?? -1);
+
+                if (oldTable == null)
+                {
+                    FileLogger.Log("  BRT.Load: no existing table — returning new table");
+                    return newTable;
+                }
+
+                foreach (string key in newTable.DuplicationDict.Keys)
+                {
+                    FileLogger.Log("  BRT.Load: merging pair: '{0}' -> '{1}'", key, newTable.DuplicationDict[key]);
+                    oldTable.AddAsset(key, newTable.DuplicationDict[key]);
+                }
+
+                FileLogger.Log("  BRT.Load: merged table now has {0} pairs", oldTable.DuplicationDict.Count);
+                return oldTable;
+            }
+            catch (Exception ex)
+            {
+                FileLogger.LogException("BRT.Load", ex);
+                throw;
+            }
         }
 
         public void Modify(AssetEntry origEntry, AssetManager am, RuntimeResources runtimeResources, object data, out byte[] outData)
         {
-            ModifiedBundleRefTableResource modifiedData = data as ModifiedBundleRefTableResource;
+            try
+            {
+                FileLogger.Log("  BRT.Modify START: entry.Name='{0}'", origEntry.Name);
 
-            ResAssetEntry resAssetEntry = am.GetResEntry(origEntry.Name);
-            BundleRefTableResource resource = am.GetResAs<BundleRefTableResource>(resAssetEntry, modifiedData);
+                ModifiedBundleRefTableResource modifiedData = data as ModifiedBundleRefTableResource;
+                FileLogger.Log("  BRT.Modify: modifiedData={0} pairs={1}",
+                    modifiedData != null ? "non-null" : "null",
+                    modifiedData?.DuplicationDict?.Count ?? -1);
 
-            resource.ApplyModifiedResource(modifiedData);
+                ResAssetEntry resAssetEntry = am.GetResEntry(origEntry.Name);
+                if (resAssetEntry == null)
+                {
+                    FileLogger.Log("  BRT.Modify ERROR: am.GetResEntry('{0}') returned null — BRT resource not found in asset manager!", origEntry.Name);
+                    throw new InvalidOperationException(string.Format("BRT resource '{0}' not found in asset manager", origEntry.Name));
+                }
+                FileLogger.Log("  BRT.Modify: resAssetEntry found: ResRid={0} ResType=0x{1:X8} ResMeta.Length={2}",
+                    resAssetEntry.ResRid, resAssetEntry.ResType, resAssetEntry.ResMeta?.Length ?? 0);
 
-            byte[] savedBytes = resource.SaveBytes();
-            origEntry.OriginalSize = savedBytes.Length;
-            outData = Utils.CompressFile(savedBytes);
+                BundleRefTableResource resource = am.GetResAs<BundleRefTableResource>(resAssetEntry, modifiedData);
+                if (resource == null)
+                {
+                    FileLogger.Log("  BRT.Modify ERROR: am.GetResAs<BundleRefTableResource> returned null!");
+                    throw new InvalidOperationException(string.Format("Failed to load BRT resource '{0}' as BundleRefTableResource", origEntry.Name));
+                }
+                FileLogger.Log("  BRT.Modify: BRT loaded — assetLookups={0} assets={1}",
+                    resource.assetLookups?.Count ?? -1, resource.assets?.Count ?? -1);
 
-            ((ResAssetEntry)origEntry).ResMeta = resource.ResourceMeta;
-            origEntry.Size = outData.Length;
-            origEntry.Sha1 = Utils.GenerateSha1(outData);
+                resource.ApplyModifiedResource(modifiedData);
+                FileLogger.Log("  BRT.Modify: ApplyModifiedResource done — assetLookups={0} assets={1}",
+                    resource.assetLookups?.Count ?? -1, resource.assets?.Count ?? -1);
+
+                byte[] savedBytes = resource.SaveBytes();
+                FileLogger.Log("  BRT.Modify: SaveBytes done — size={0}", savedBytes?.Length ?? 0);
+
+                origEntry.OriginalSize = savedBytes.Length;
+                outData = Utils.CompressFile(savedBytes);
+                FileLogger.Log("  BRT.Modify: CompressFile done — compressed={0}", outData?.Length ?? 0);
+
+                ((ResAssetEntry)origEntry).ResMeta = resource.ResourceMeta;
+                origEntry.Size = outData.Length;
+                origEntry.Sha1 = Utils.GenerateSha1(outData);
+                FileLogger.Log("  BRT.Modify COMPLETE: entry.Size={0} entry.Sha1={1}", origEntry.Size, origEntry.Sha1);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.LogException(string.Format("BRT.Modify (entry='{0}')", origEntry?.Name), ex);
+                throw;
+            }
         }
 
         #endregion

@@ -544,6 +544,14 @@ namespace BundleRefTablePlugin
 
     public class ModifiedBundleRefTableResource : ModifiedResource
     {
+        // App.AssetManager is only populated inside the Frosty Editor process. FrostyModExecutor
+        // (used by FrostyModManager to actually launch mods) builds and uses its own local
+        // AssetManager instance instead and never sets this static, so it is null here during a
+        // real mod launch — guard for that below. When it IS available, its internal lookups are
+        // not thread-safe, but ReadInternal can be invoked concurrently (ProcessModResources uses
+        // Parallel.ForEach), so serialize access to avoid a race inside GetEbxEntry.
+        private static readonly object s_assetManagerLock = new object();
+
         public Dictionary<string, string> DuplicationDict { get { return newAssetMapping; } }
 
         private Dictionary<string, string> newAssetMapping = new Dictionary<string, string>();
@@ -571,17 +579,50 @@ namespace BundleRefTablePlugin
         public override void ReadInternal(NativeReader reader)
         {
             int count = reader.ReadInt();
+            FileLogger.Log("    BRT.ReadInternal: count={0}", count);
+
             for (int i = 0; i < count; i++)
             {
                 string newAsset = reader.ReadNullTerminatedString();
                 string oldAsset = reader.ReadNullTerminatedString();
 
-                EbxAssetEntry existingNewEntry = App.AssetManager.GetEbxEntry(newAsset.ToLower());
-                if (existingNewEntry != null && !existingNewEntry.IsAdded)
-                    continue;
+                FileLogger.Log("    BRT.ReadInternal [{0}/{1}]: new='{2}' old='{3}'", i + 1, count, newAsset, oldAsset);
 
-                newAssetMapping.Add(newAsset, oldAsset);
+                EbxAssetEntry existingNewEntry = null;
+                if (App.AssetManager != null)
+                {
+                    lock (s_assetManagerLock)
+                    {
+                        existingNewEntry = App.AssetManager.GetEbxEntry(newAsset.ToLower());
+                    }
+                }
+                else
+                {
+                    FileLogger.Log("      → App.AssetManager is null (running outside the Editor, e.g. FrostyModExecutor) — skipping existence check, keeping mapping");
+                }
+                if (existingNewEntry != null && !existingNewEntry.IsAdded)
+                {
+                    FileLogger.Log("      → SKIPPED (entry exists but IsAdded=false)");
+                    continue;
+                }
+
+                if (existingNewEntry == null)
+                    FileLogger.Log("      → entry not found in AM (will keep mapping)");
+                else
+                    FileLogger.Log("      → entry found, IsAdded=true (will keep mapping)");
+
+                if (!newAssetMapping.ContainsKey(newAsset))
+                {
+                    newAssetMapping.Add(newAsset, oldAsset);
+                    FileLogger.Log("      → added to mapping");
+                }
+                else
+                {
+                    FileLogger.Log("      → SKIPPED (already in mapping)");
+                }
             }
+
+            FileLogger.Log("    BRT.ReadInternal: done, total pairs={0}", newAssetMapping.Count);
         }
 
         public override void SaveInternal(NativeWriter writer)

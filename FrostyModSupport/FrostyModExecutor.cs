@@ -262,10 +262,18 @@ namespace Frosty.ModSupport
             }
 
 
+            FileLogger.Log("════════════════════════════════════════════════════════════");
+            FileLogger.Log("ProcessModResources START — resource count: {0}", fmod.Resources.Count());
+
             Parallel.ForEach(fmod.Resources, new ParallelOptions() { MaxDegreeOfParallelism = Environment.ProcessorCount }, resource =>
             {
                 // pull existing bundles from asset manager
                 HashSet<int> bundles = new HashSet<int>();
+
+              try
+              {
+                FileLogger.Log("  Processing resource: name='{0}' type={1} handler=0x{2:X8} hasHandler={3} isModified={4}",
+                    resource.Name, resource.Type, (uint)resource.Handler, resource.HasHandler, resource.IsModified);
 
                 if (resource.Type == ModResourceType.Bundle)
                 {
@@ -298,13 +306,27 @@ namespace Frosty.ModSupport
 
                                 ICustomActionHandler handler = App.PluginManager.GetCustomHandler((uint)resource.Handler);
                                 if (handler != null)
+                                {
                                     extraData.Handler = handler;
+                                    FileLogger.Log("    Ebx handler found: handler=0x{0:X8} type={1}", (uint)resource.Handler, handler.GetType().Name);
+                                }
+                                else
+                                {
+                                    FileLogger.Log("    WARNING: No handler found for Ebx handlerHash=0x{0:X8} (resource='{1}')", (uint)resource.Handler, resource.Name);
+                                }
 
                                 // add in existing bundles
                                 var ebxEntry = am.GetEbxEntry(resource.Name);
-                                foreach (int bid in ebxEntry.Bundles)
+                                if (ebxEntry == null)
                                 {
-                                    bundles.Add(HashBundle(am.GetBundleEntry(bid)));
+                                    FileLogger.Log("    WARNING: am.GetEbxEntry('{0}') returned null — base-game ebx entry not found.", resource.Name);
+                                }
+                                else
+                                {
+                                    foreach (int bid in ebxEntry.Bundles)
+                                    {
+                                        bundles.Add(HashBundle(am.GetBundleEntry(bid)));
+                                    }
                                 }
 
                                 entry.ExtraData = extraData;
@@ -312,8 +334,17 @@ namespace Frosty.ModSupport
                             }
 
                             // merge new and old data together
-                            if (extraData != null)
+                            if (extraData != null && extraData.Handler != null)
+                            {
+                                FileLogger.Log("    Calling Ebx handler.Load for resource '{0}'...", resource.Name);
                                 extraData.Data = extraData.Handler.Load(extraData.Data, data);
+                                FileLogger.Log("    Ebx handler.Load completed for resource '{0}'", resource.Name);
+                            }
+                            else if (extraData != null && extraData.Handler == null)
+                            {
+                                FileLogger.Log("    ERROR: extraData.Handler is null for Ebx resource '{0}' — cannot call Load.", resource.Name);
+                                App.Logger.LogError("Cannot load modified data for Ebx '{0}' — no handler assigned", resource.Name);
+                            }
                         }
                         else
                         {
@@ -391,13 +422,29 @@ namespace Frosty.ModSupport
 
                                 ICustomActionHandler handler = App.PluginManager.GetCustomHandler((ResourceType)entry.ResType);
                                 if (handler != null)
+                                {
                                     extraData.Handler = handler;
+                                    FileLogger.Log("    Res handler found: type={0} handler={1}", entry.ResType, handler.GetType().Name);
+                                }
+                                else
+                                {
+                                    FileLogger.Log("    WARNING: No handler found for ResType=0x{0:X8} (resource='{1}')", entry.ResType, resource.Name);
+                                    App.Logger.LogWarning("No custom handler found for Res resource '{0}' (ResType=0x{1:X8})", resource.Name, entry.ResType);
+                                }
 
                                 // add in existing bundles
                                 var resEntry = am.GetResEntry(resource.Name);
-                                foreach (int bid in resEntry.Bundles)
+                                if (resEntry == null)
                                 {
-                                    bundles.Add(HashBundle(am.GetBundleEntry(bid)));
+                                    FileLogger.Log("    WARNING: am.GetResEntry('{0}') returned null — base-game res entry not found. Bundles will not be enumerated.", resource.Name);
+                                    App.Logger.LogWarning("Res entry not found in asset manager for '{0}'. This may be normal for added resources.", resource.Name);
+                                }
+                                else
+                                {
+                                    foreach (int bid in resEntry.Bundles)
+                                    {
+                                        bundles.Add(HashBundle(am.GetBundleEntry(bid)));
+                                    }
                                 }
 
                                 entry.ExtraData = extraData;
@@ -405,8 +452,17 @@ namespace Frosty.ModSupport
                             }
 
                             // merge new and old data together
-                            if (extraData != null)
+                            if (extraData != null && extraData.Handler != null)
+                            {
+                                FileLogger.Log("    Calling handler.Load for resource '{0}'...", resource.Name);
                                 extraData.Data = extraData.Handler.Load(extraData.Data, data);
+                                FileLogger.Log("    handler.Load completed for resource '{0}'", resource.Name);
+                            }
+                            else if (extraData != null && extraData.Handler == null)
+                            {
+                                FileLogger.Log("    ERROR: extraData.Handler is null for resource '{0}' — cannot call Load. Skipping.", resource.Name);
+                                App.Logger.LogError("Cannot load modified data for '{0}' — no handler assigned (ResType=0x{1:X8})", resource.Name, entry.ResType);
+                            }
                         }
                         else
                         {
@@ -502,9 +558,16 @@ namespace Frosty.ModSupport
                                 // add in existing bundles
                                 var chunkEntry = am.GetChunkEntry(guid);
                                 bundles.Add(chunksBundleHash);
-                                foreach (int bid in chunkEntry.Bundles)
+                                if (chunkEntry == null)
                                 {
-                                    bundles.Add(HashBundle(am.GetBundleEntry(bid)));
+                                    FileLogger.Log("    WARNING: am.GetChunkEntry('{0}') returned null — base-game chunk entry not found (this is normal for added chunks).", guid);
+                                }
+                                else
+                                {
+                                    foreach (int bid in chunkEntry.Bundles)
+                                    {
+                                        bundles.Add(HashBundle(am.GetBundleEntry(bid)));
+                                    }
                                 }
 
                                 entry.ExtraData = extraData;
@@ -512,7 +575,17 @@ namespace Frosty.ModSupport
                             }
 
                             // merge new and old data together
-                            extraData.Data = extraData.Handler.Load(extraData.Data, data);
+                            if (extraData.Handler != null)
+                            {
+                                FileLogger.Log("    Calling Chunk handler.Load for guid='{0}'...", guid);
+                                extraData.Data = extraData.Handler.Load(extraData.Data, data);
+                                FileLogger.Log("    Chunk handler.Load completed for guid='{0}'", guid);
+                            }
+                            else
+                            {
+                                FileLogger.Log("    ERROR: extraData.Handler is null for Chunk guid='{0}' — cannot call Load.", guid);
+                                App.Logger.LogError("Cannot load modified data for Chunk '{0}' — no handler assigned", guid);
+                            }
                         }
                         else
                         {
@@ -681,7 +754,21 @@ namespace Frosty.ModSupport
                         case ModResourceType.Chunk: modBundle.Add.AddChunk(new Guid(resource.Name)); break;
                     }
                 }
+              }
+              catch (Exception ex)
+              {
+                  FileLogger.LogException(
+                      string.Format("ProcessModResources — resource name='{0}' type={1} handler=0x{2:X8} hasHandler={3}",
+                          resource.Name, resource.Type, (uint)resource.Handler, resource.HasHandler),
+                      ex);
+                  App.Logger.LogError("Failed to process mod resource '{0}' ({1}): {2}", resource.Name, resource.Type, ex.Message);
+                  throw;
+              }
             });
+
+            FileLogger.Log("ProcessModResources END — modifiedEbx={0} modifiedRes={1} modifiedChunks={2}",
+                modifiedEbx.Count, modifiedRes.Count, modifiedChunks.Count);
+            FileLogger.Log("════════════════════════════════════════════════════════════");
         }
 
         /// <summary>
@@ -1218,6 +1305,22 @@ namespace Frosty.ModSupport
             modDirName = "ModData\\" + modPackName;
             cancelToken.ThrowIfCancellationRequested();
 
+            // Clear the debug log file at the start of each launch
+            FileLogger.Clear();
+            FileLogger.Log("════════════════════════════════════════════════════════════");
+            FileLogger.Log("FrostyModExecutor.Run START");
+            FileLogger.Log("  rootPath: {0}", rootPath);
+            FileLogger.Log("  modPackName: {0}", modPackName);
+            FileLogger.Log("  additionalArgs: {0}", additionalArgs ?? "<null>");
+            FileLogger.Log("  modPaths ({0}):", modPaths?.Length ?? 0);
+            if (modPaths != null)
+            {
+                foreach (string mp in modPaths)
+                    FileLogger.Log("    {0}", mp);
+            }
+            FileLogger.Log("  Profile: {0} (DataVersion={1})", ProfilesLibrary.ProfileName, ProfilesLibrary.DataVersion);
+            FileLogger.Log("════════════════════════════════════════════════════════════");
+
             App.Logger.Log("Launching");
 
             fs = inFs;
@@ -1342,6 +1445,8 @@ namespace Frosty.ModSupport
                 
                 Logger.Log("Applying Handlers");
                 App.Logger.Log("Applying Handlers");
+                FileLogger.Log("════════════════════════════════════════════════════════════");
+                FileLogger.Log("APPLYING HANDLERS");
 
                 // apply handlers
                 RuntimeResources runtimeResources = new RuntimeResources();
@@ -1351,18 +1456,39 @@ namespace Frosty.ModSupport
                 assetEntries.AddRange(modifiedRes.Values);
                 assetEntries.AddRange(modifiedChunks.Values);
 
+                FileLogger.Log("  assetEntries count: ebx={0} res={1} chunks={2} total={3}",
+                    modifiedEbx.Count, modifiedRes.Count, modifiedChunks.Count, assetEntries.Count);
+
                 int currentResource = 0;
                 Parallel.ForEach(assetEntries, new ParallelOptions() { MaxDegreeOfParallelism = Environment.ProcessorCount }, entry =>
                 {
+                  try
+                  {
                     if (entry.ExtraData is HandlerExtraData handlerExtaData)
                     {
+                        FileLogger.Log("  Modify: name='{0}' type={1} handler={2}",
+                            entry.Name, entry.Type, handlerExtaData.Handler?.GetType().Name ?? "<null>");
                         handlerExtaData.Handler.Modify(entry, am, runtimeResources, handlerExtaData.Data, out byte[] data);
 
                         if (!archiveData.TryAdd(entry.Sha1, new ArchiveInfo() { Data = data, RefCount = 1 }))
                             archiveData[entry.Sha1].RefCount++;
+                        FileLogger.Log("  Modify completed: name='{0}' outDataSize={1}", entry.Name, data?.Length ?? 0);
                     }
                     ReportProgress(currentResource++, assetEntries.Count);
+                  }
+                  catch (Exception ex)
+                  {
+                      FileLogger.LogException(
+                          string.Format("ApplyHandlers — entry name='{0}' type={1} handler={2}",
+                              entry.Name, entry.Type,
+                              (entry.ExtraData is HandlerExtraData hed) ? (hed.Handler?.GetType().Name ?? "<null>") : "<no extraData>"),
+                          ex);
+                      App.Logger.LogError("Failed to apply handler for '{0}' ({1}): {2}", entry.Name, entry.Type, ex.Message);
+                      throw;
+                  }
                 });
+                FileLogger.Log("APPLYING HANDLERS — complete");
+                FileLogger.Log("════════════════════════════════════════════════════════════");
 
                 // process any new resources added during custom handler modification
                 ProcessModResources(runtimeResources);

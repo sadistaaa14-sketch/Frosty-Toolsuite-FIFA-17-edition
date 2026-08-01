@@ -92,6 +92,7 @@
     <Compile Include="Ebx\ResourceRef.cs" />
     <Compile Include="Ebx\TypeRef.cs" />
     <Compile Include="FileSystem.cs" />
+    <Compile Include="FileLogger.cs" />
     <Compile Include="FileSystemSource.cs" />
     <Compile Include="Interfaces\IBinarySbReader.cs" />
     <Compile Include="Interfaces\ICompressionUtils.cs" />
