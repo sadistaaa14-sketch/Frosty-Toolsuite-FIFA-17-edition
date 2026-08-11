@@ -156,7 +156,7 @@ namespace DuplicationPlugin
             return -1;
         }
 
-        private void DuplicateKit(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateKit(FrostyTaskWindow task, string sourceFolder,
             string newFolderName, string destPath)
         {
             string newFolder = destPath.TrimEnd('/') + "/" + newFolderName;

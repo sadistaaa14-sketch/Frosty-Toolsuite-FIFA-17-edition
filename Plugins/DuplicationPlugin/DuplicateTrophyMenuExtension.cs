@@ -146,7 +146,7 @@ namespace DuplicationPlugin
             return new PointerRef(r);
         }
 
-        private void DuplicateTrophy(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateTrophy(FrostyTaskWindow task, string sourceFolder,
             string newTrophyName, string destPath)
         {
             string sourceTrophyName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);

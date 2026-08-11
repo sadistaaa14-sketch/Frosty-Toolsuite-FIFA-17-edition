@@ -9,6 +9,7 @@
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <OutputType>Library</OutputType>
   </PropertyGroup>
 
@@ -60,6 +61,7 @@
     <ProjectReference Include="..\BundleRefTablePlugin\BundleRefTablePlugin.csproj" />
     <ProjectReference Include="..\MeshSetPlugin\MeshSetPlugin.csproj" />
     <ProjectReference Include="..\SvgImagePlugin\SvgImagePlugin.csproj" />
+    <ProjectReference Include="..\TexturePlugin\TexturePlugin.csproj" />
   </ItemGroup>
 
   <ItemGroup>

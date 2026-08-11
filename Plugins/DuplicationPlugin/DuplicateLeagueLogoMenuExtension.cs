@@ -146,7 +146,7 @@ namespace DuplicationPlugin
             return new PointerRef(r);
         }
 
-        private void DuplicateLeagueLogo(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateLeagueLogo(FrostyTaskWindow task, string sourceFolder,
             string newLogoName, string destPath)
         {
             string sourceName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);

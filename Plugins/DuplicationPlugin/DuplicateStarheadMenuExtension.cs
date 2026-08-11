@@ -154,7 +154,18 @@ namespace DuplicationPlugin
             return new PointerRef(r);
         }
 
-        private void DuplicateStarhead(FrostyTaskWindow task, string sourceFolder,
+        /// <summary>
+        /// Duplicates an entire starhead folder: every ebx asset directly inside
+        /// <paramref name="sourceFolder"/>, plus its "_starhead_brt"/"_launch_starhead_brt"
+        /// sibling folder if one exists, cross-reference fixups (MVDB/blueprint pointers)
+        /// and BRT injection.
+        ///
+        /// Public (rather than private) so it can be invoked programmatically by other
+        /// tooling -- e.g. BulkImportStarheadsMenuExtension -- and not only from the
+        /// interactive "Duplicate Starhead" menu item above. Behaviour is identical either
+        /// way; this is the same method the menu item calls.
+        /// </summary>
+        public void DuplicateStarhead(FrostyTaskWindow task, string sourceFolder,
             string newPlayerName, string destPath)
         {
             string sourcePlayerName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);

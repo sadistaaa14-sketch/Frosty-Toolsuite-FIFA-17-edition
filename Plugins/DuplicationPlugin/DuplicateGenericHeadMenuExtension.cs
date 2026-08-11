@@ -152,7 +152,7 @@ namespace DuplicationPlugin
             return new PointerRef(r);
         }
 
-        private void DuplicateGenericHead(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateGenericHead(FrostyTaskWindow task, string sourceFolder,
             string newHeadName, string destPath)
         {
             string sourceName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);

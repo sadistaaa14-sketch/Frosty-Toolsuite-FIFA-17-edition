@@ -1,0 +1,60 @@
+﻿<ctrl:FrostyDockableWindow x:Class="DuplicationPlugin.Windows.BulkImportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ctrl="clr-namespace:Frosty.Controls;assembly=FrostyControls"
+        mc:Ignorable="d"
+        Title="Bulk Duplicate" Height="560" Width="640" ResizeMode="CanResize"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/FrostyControls;component/Themes/Generic.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Background="{StaticResource WindowBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="38"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="8,8,8,4">
+            <TextBlock x:Name="instructionsText" TextWrapping="Wrap" FontFamily="Global User Interface"
+                       Text="One entry per line: SourcePath,NewName,DestPath (DestPath optional — defaults to the source's parent folder). Lines starting with # are ignored."/>
+        </StackPanel>
+
+        <DockPanel Grid.Row="1" Margin="8,0,8,4" LastChildFill="False">
+            <Button x:Name="loadFileButton" Content="Load CSV/TXT File..." Width="150" HorizontalAlignment="Left"
+                    Click="LoadFileButton_Click"/>
+            <Button x:Name="validateButton" Content="Validate" Width="100" HorizontalAlignment="Left" Margin="8,0,0,0"
+                    Click="ValidateButton_Click"/>
+            <TextBlock x:Name="rowCountText" VerticalAlignment="Center" Margin="12,0,0,0" FontFamily="Global User Interface"/>
+        </DockPanel>
+
+        <Border Grid.Row="2" Margin="8,0,8,4" BorderBrush="{StaticResource ControlBackground}" BorderThickness="1">
+            <TextBox x:Name="importTextBox" AcceptsReturn="True" AcceptsTab="True" TextWrapping="NoWrap"
+                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                     FontFamily="Consolas" Padding="4" BorderThickness="0"/>
+        </Border>
+
+        <Border Grid.Row="3" Margin="8,0,8,4" MaxHeight="120" BorderBrush="{StaticResource ControlBackground}" BorderThickness="1">
+            <ListBox x:Name="errorListBox" FontFamily="Consolas" Foreground="OrangeRed" BorderThickness="0"/>
+        </Border>
+
+        <Border Grid.Row="4">
+            <Grid Margin="8">
+                <Button x:Name="cancelButton" Content="Cancel" HorizontalAlignment="Left"
+                        Width="75" Click="CancelButton_Click"/>
+                <Button x:Name="startButton" Content="Start Bulk Duplication" HorizontalAlignment="Right"
+                        Width="170" Click="StartButton_Click"/>
+            </Grid>
+        </Border>
+    </Grid>
+</ctrl:FrostyDockableWindow>

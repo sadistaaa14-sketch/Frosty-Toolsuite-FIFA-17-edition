@@ -119,7 +119,7 @@ namespace DuplicationPlugin
             }
         }
 
-        private void DuplicateBodyScale(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateBodyScale(FrostyTaskWindow task, string sourceFolder,
             string sourceName, string newName)
         {
             App.Logger.Log("Body Scale source: " + sourceName);

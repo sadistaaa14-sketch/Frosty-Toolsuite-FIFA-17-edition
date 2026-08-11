@@ -99,6 +99,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BundleRefTablePlugin", "..\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AssetBankPlugin", "..\Plugins\AssetBankPlugin\AssetBankPlugin.csproj", "{A721694B-4D2F-8B6C-21C8-E46D1C843E29}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ShaderDataPlugin", "..\Plugins\FrostyShaderDataPlugin\ShaderDataPlugin.csproj", "{153A9661-41EF-93BE-AF5D-916505004822}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Developer - Debug|x64 = Developer - Debug|x64
@@ -548,6 +550,16 @@ Global
 		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release - Final|x64.Build.0 = Release - Final|x64
 		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release|x64.ActiveCfg = Release - Alpha|x64
 		{A721694B-4D2F-8B6C-21C8-E46D1C843E29}.Release|x64.Build.0 = Release - Alpha|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Developer - Debug|x64.ActiveCfg = Developer - Debug|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Developer - Debug|x64.Build.0 = Developer - Debug|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Release - Alpha|x64.ActiveCfg = Release - Alpha|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Release - Alpha|x64.Build.0 = Release - Alpha|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Release - Beta|x64.ActiveCfg = Release - Beta|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Release - Beta|x64.Build.0 = Release - Beta|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Release - Final|x64.ActiveCfg = Release - Final|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Release - Final|x64.Build.0 = Release - Final|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Release|x64.ActiveCfg = Release - Alpha|x64
+		{153A9661-41EF-93BE-AF5D-916505004822}.Release|x64.Build.0 = Release - Alpha|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -589,6 +601,7 @@ Global
 		{F49314ED-C795-4A39-9748-68D936B35D2C} = {492048B6-848D-4675-A9BF-34A4751303F2}
 		{322C61A6-2FC3-6E4B-9BDD-45E2336F19D1} = {492048B6-848D-4675-A9BF-34A4751303F2}
 		{A721694B-4D2F-8B6C-21C8-E46D1C843E29} = {492048B6-848D-4675-A9BF-34A4751303F2}
+		{153A9661-41EF-93BE-AF5D-916505004822} = {B8E215D1-2B8D-4843-841B-92EE1FFBF487}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {C0B22EF1-4C3F-45B9-9F08-9793ED912199}

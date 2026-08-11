@@ -155,7 +155,7 @@ namespace DuplicationPlugin
             return new PointerRef(r);
         }
 
-        private void DuplicateGenericHair(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateGenericHair(FrostyTaskWindow task, string sourceFolder,
             string newHairName, string destPath)
         {
             string sourceName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);

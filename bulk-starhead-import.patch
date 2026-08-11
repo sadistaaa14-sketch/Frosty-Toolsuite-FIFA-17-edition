@@ -1,0 +1,714 @@
+diff --git a/Plugins/DuplicationPlugin/BulkImportStarheadsMenuExtension.cs b/Plugins/DuplicationPlugin/BulkImportStarheadsMenuExtension.cs
+new file mode 100644
+index 0000000..fc150fb
+--- /dev/null
++++ b/Plugins/DuplicationPlugin/BulkImportStarheadsMenuExtension.cs
+@@ -0,0 +1,359 @@
++using Frosty.Controls;
++using Frosty.Core;
++using Frosty.Core.Viewport;
++using Frosty.Core.Windows;
++using FrostySdk;
++using FrostySdk.Managers;
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Linq;
++using System.Windows.Forms;
++using System.Windows.Media;
++
++namespace DuplicationPlugin
++{
++    /// <summary>
++    /// "Tools > Bulk Import Starheads": given a local folder containing one subfolder per
++    /// player (each subfolder named the same way as an in-game starhead folder, e.g.
++    /// "firstname_lastname_123456"), this either:
++    ///   - imports the subfolder's texture file(s) directly onto the matching in-game
++    ///     starhead, if one already exists for that player ID, or
++    ///   - duplicates a single "template" starhead (whichever asset is selected in the
++    ///     Data Explorer when this is run -- the same selection the interactive
++    ///     "Duplicate Starhead" tool uses) into a new folder for that player ID, via
++    ///     DuplicateStarheadMenuExtension.DuplicateStarhead, and then imports onto the
++    ///     freshly duplicated copy.
++    ///
++    /// Only textures (TextureAsset ebx entries, imported via TexturePlugin's
++    /// FrostyTextureEditor.ImportTexture2D) are handled. Meshes/hair/cloth are duplicated
++    /// along with everything else in the "doesn't exist" case (DuplicateStarhead copies the
++    /// whole folder), but this tool does not import mesh files onto them -- that would need
++    /// MeshSetPlugin's mesh importer, which is a separate, more involved pipeline.
++    /// </summary>
++    public class BulkImportStarheadsMenuExtension : MenuExtension
++    {
++        private static readonly string[] SupportedImageExtensions = { ".dds", ".png", ".tga", ".hdr" };
++
++        public override string TopLevelMenuName => "Tools";
++        public override string SubLevelMenuName => null;
++        public override string MenuItemName => "Bulk Import Starheads";
++        public override ImageSource Icon => null;
++
++        public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
++        {
++            EbxAssetEntry templateEntry = App.SelectedAsset as EbxAssetEntry;
++            if (templateEntry == null)
++            {
++                FrostyMessageBox.Show(
++                    "No asset selected. Select any asset inside an existing player head folder to use " +
++                    "as the template for any players that don't exist yet, then run this again.",
++                    "Bulk Starhead Importer");
++                return;
++            }
++
++            string templateFolder = ResolveStarheadFolder(templateEntry);
++            if (string.IsNullOrEmpty(templateFolder))
++            {
++                FrostyMessageBox.Show("Selected asset has no folder path.", "Bulk Starhead Importer");
++                return;
++            }
++
++            string templateId = DuplicateStarheadMenuExtension.ExtractId(LeafName(templateFolder));
++            if (string.IsNullOrEmpty(templateId))
++            {
++                FrostyMessageBox.Show(
++                    "Could not extract a numeric player ID from folder name '" + LeafName(templateFolder) + "'.\n" +
++                    "Expected format: firstname_lastname_123456",
++                    "Bulk Starhead Importer");
++                return;
++            }
++
++            FolderBrowserDialog fbd = new FolderBrowserDialog
++            {
++                Description = "Select the folder containing one subfolder per player " +
++                              "(each named e.g. firstname_lastname_123456)."
++            };
++            if (fbd.ShowDialog() != DialogResult.OK)
++                return;
++
++            string[] playerFolders = Directory.GetDirectories(fbd.SelectedPath);
++            if (playerFolders.Length == 0)
++            {
++                FrostyMessageBox.Show("No subfolders found in " + fbd.SelectedPath, "Bulk Starhead Importer");
++                return;
++            }
++
++            string categoryParent = GetParentPath(templateFolder);
++            BulkImportSummary summary = new BulkImportSummary();
++
++            FrostyTaskWindow.Show("Bulk Importing Starheads", "", (task) =>
++            {
++                if (!MeshVariationDb.IsLoaded)
++                    MeshVariationDb.LoadVariations(task);
++
++                Dictionary<string, string> existingByIdInCategory = BuildExistingFolderIndex(categoryParent);
++
++                int current = 0;
++                foreach (string localPlayerFolder in playerFolders)
++                {
++                    current++;
++                    string playerFolderName = LeafName(localPlayerFolder);
++                    task.Update(playerFolderName, (current / (double)playerFolders.Length) * 100.0);
++
++                    try
++                    {
++                        ProcessOnePlayer(task, localPlayerFolder, playerFolderName, templateId, templateFolder,
++                            categoryParent, existingByIdInCategory, summary);
++                    }
++                    catch (Exception ex)
++                    {
++                        summary.Failed++;
++                        summary.Messages.Add(playerFolderName + ": " + ex.Message);
++                        App.Logger.Log("Bulk starhead import: error on " + playerFolderName + ": " + ex);
++                    }
++                }
++            });
++
++            App.EditorWindow.DataExplorer.RefreshAll();
++
++            string report =
++                "Duplicated (new): " + summary.NewlyDuplicated + "\n" +
++                "Updated (existing): " + summary.ExistingUpdated + "\n" +
++                "Textures imported: " + summary.TexturesImported + "\n" +
++                "Skipped: " + summary.Skipped + "\n" +
++                "Failed: " + summary.Failed;
++
++            App.Logger.Log("Bulk starhead import complete. " + report.Replace("\n", " | "));
++            foreach (string msg in summary.Messages)
++                App.Logger.Log("  " + msg);
++
++            FrostyMessageBox.Show(report, "Bulk Starhead Importer");
++        });
++
++        // ─── Per-player processing ──────────────────────────────────────────────
++
++        private void ProcessOnePlayer(FrostyTaskWindow task, string localPlayerFolder, string playerFolderName,
++            string templateId, string templateFolder, string categoryParent,
++            Dictionary<string, string> existingByIdInCategory, BulkImportSummary summary)
++        {
++            string targetId = DuplicateStarheadMenuExtension.ExtractId(playerFolderName);
++            if (string.IsNullOrEmpty(targetId))
++            {
++                summary.Skipped++;
++                summary.Messages.Add(playerFolderName + ": skipped, folder name doesn't end in a numeric ID (expected firstname_lastname_123456)");
++                return;
++            }
++
++            if (targetId == templateId)
++            {
++                summary.Skipped++;
++                summary.Messages.Add(playerFolderName + ": skipped, same ID as the template selected in the Data Explorer");
++                return;
++            }
++
++            string targetFolder;
++            bool didDuplicate = false;
++
++            if (existingByIdInCategory.TryGetValue(targetId, out string foundFolder))
++            {
++                targetFolder = foundFolder;
++            }
++            else
++            {
++                task.Update("Duplicating " + playerFolderName + "...");
++                new DuplicateStarheadMenuExtension().DuplicateStarhead(task, templateFolder, playerFolderName, categoryParent);
++                targetFolder = categoryParent.TrimEnd('/') + "/" + playerFolderName;
++                didDuplicate = true;
++            }
++
++            List<EbxAssetEntry> textureEntries = FindTextureEntries(targetFolder);
++            List<string> localImages = Directory.GetFiles(localPlayerFolder)
++                .Where(f => SupportedImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
++                .ToList();
++
++            if (didDuplicate)
++                summary.NewlyDuplicated++;
++            else
++                summary.ExistingUpdated++;
++
++            if (textureEntries.Count == 0)
++            {
++                summary.Messages.Add(playerFolderName + ": no TextureAsset found in " + targetFolder + " to import onto");
++                return;
++            }
++
++            if (localImages.Count == 0)
++            {
++                summary.Messages.Add(playerFolderName + ": no .dds/.png/.tga/.hdr files found in " + localPlayerFolder);
++                return;
++            }
++
++            List<Tuple<EbxAssetEntry, string>> pairs = MatchFilesToTextures(localImages, textureEntries, playerFolderName, summary);
++
++            foreach (Tuple<EbxAssetEntry, string> pair in pairs)
++            {
++                bool ok = TexturePlugin.FrostyTextureEditor.ImportTexture2D(pair.Item1, pair.Item2, App.Logger, out string err);
++                if (ok)
++                    summary.TexturesImported++;
++                else
++                {
++                    summary.Failed++;
++                    summary.Messages.Add(playerFolderName + ": " + Path.GetFileName(pair.Item2) + " -> " + pair.Item1.Name + " failed: " + err);
++                }
++            }
++        }
++
++        // ─── Matching local files to TextureAsset entries ──────────────────────
++
++        private List<Tuple<EbxAssetEntry, string>> MatchFilesToTextures(List<string> localImages,
++            List<EbxAssetEntry> textureEntries, string playerFolderName, BulkImportSummary summary)
++        {
++            List<Tuple<EbxAssetEntry, string>> result = new List<Tuple<EbxAssetEntry, string>>();
++            List<string> remainingFiles = new List<string>(localImages);
++            List<EbxAssetEntry> remainingEntries = new List<EbxAssetEntry>(textureEntries);
++
++            // Pass 1: exact match on filename (no extension), case-insensitive
++            for (int i = remainingFiles.Count - 1; i >= 0; i--)
++            {
++                string fileKey = Path.GetFileNameWithoutExtension(remainingFiles[i]);
++                EbxAssetEntry match = remainingEntries.FirstOrDefault(
++                    e => string.Equals(e.Filename, fileKey, StringComparison.OrdinalIgnoreCase));
++
++                if (match != null)
++                {
++                    result.Add(Tuple.Create(match, remainingFiles[i]));
++                    remainingEntries.Remove(match);
++                    remainingFiles.RemoveAt(i);
++                }
++            }
++
++            // Pass 2: one name contains the other, case-insensitive
++            for (int i = remainingFiles.Count - 1; i >= 0; i--)
++            {
++                string fileKey = Path.GetFileNameWithoutExtension(remainingFiles[i]).ToLowerInvariant();
++                EbxAssetEntry match = remainingEntries.FirstOrDefault(e =>
++                    e.Filename.ToLowerInvariant().Contains(fileKey) || fileKey.Contains(e.Filename.ToLowerInvariant()));
++
++                if (match != null)
++                {
++                    result.Add(Tuple.Create(match, remainingFiles[i]));
++                    remainingEntries.Remove(match);
++                    remainingFiles.RemoveAt(i);
++                }
++            }
++
++            // Pass 3: exactly one of each left over -> pair positionally
++            if (remainingFiles.Count == 1 && remainingEntries.Count == 1)
++            {
++                result.Add(Tuple.Create(remainingEntries[0], remainingFiles[0]));
++                remainingEntries.Clear();
++                remainingFiles.Clear();
++            }
++
++            foreach (string leftover in remainingFiles)
++                summary.Messages.Add(playerFolderName + ": couldn't match file '" + Path.GetFileName(leftover) + "' to a texture (imported nothing for it)");
++            foreach (EbxAssetEntry leftover in remainingEntries)
++                summary.Messages.Add(playerFolderName + ": couldn't match texture '" + leftover.Filename + "' to a file (left unchanged)");
++
++            return result;
++        }
++
++        // ─── Folder / index helpers ─────────────────────────────────────────────
++
++        private static string ResolveStarheadFolder(EbxAssetEntry entry)
++        {
++            string folder = entry.Path.Replace('\\', '/');
++            if (string.IsNullOrEmpty(folder))
++                return null;
++
++            if (folder.EndsWith("_launch_starhead_brt", StringComparison.OrdinalIgnoreCase))
++                folder = folder.Substring(0, folder.Length - "_launch_starhead_brt".Length);
++            else if (folder.EndsWith("_starhead_brt", StringComparison.OrdinalIgnoreCase))
++                folder = folder.Substring(0, folder.Length - "_starhead_brt".Length);
++
++            return folder;
++        }
++
++        private static string LeafName(string path)
++        {
++            int idx = path.Replace('\\', '/').LastIndexOf('/');
++            return idx < 0 ? path : path.Substring(idx + 1);
++        }
++
++        private static string GetParentPath(string path)
++        {
++            string normalized = path.Replace('\\', '/').TrimEnd('/');
++            int idx = normalized.LastIndexOf('/');
++            return idx < 0 ? "" : normalized.Substring(0, idx);
++        }
++
++        /// <summary>
++        /// One pass over every ebx asset, mapping each existing starhead's numeric ID to
++        /// its canonical folder path, scoped to direct children of categoryParent (i.e.
++        /// siblings of the chosen template) so an unrelated folder elsewhere that happens
++        /// to end in the same number can't be mistaken for an existing starhead.
++        /// </summary>
++        private static Dictionary<string, string> BuildExistingFolderIndex(string categoryParent)
++        {
++            Dictionary<string, string> byId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
++
++            foreach (EbxAssetEntry e in App.AssetManager.EnumerateEbx())
++            {
++                string canonical = ResolveStarheadFolder(e);
++                if (string.IsNullOrEmpty(canonical))
++                    continue;
++
++                string parent = GetParentPath(canonical);
++                if (!parent.Equals(categoryParent, StringComparison.OrdinalIgnoreCase))
++                    continue;
++
++                string leaf = LeafName(canonical);
++                string id = DuplicateStarheadMenuExtension.ExtractId(leaf);
++                if (string.IsNullOrEmpty(id))
++                    continue;
++
++                if (!byId.ContainsKey(id))
++                    byId[id] = canonical;
++            }
++
++            return byId;
++        }
++
++        /// <summary>
++        /// Finds every TextureAsset ebx entry directly inside targetFolder or its
++        /// "_starhead_brt"/"_launch_starhead_brt" sibling.
++        /// </summary>
++        private static List<EbxAssetEntry> FindTextureEntries(string targetFolder)
++        {
++            HashSet<string> candidateFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
++            {
++                targetFolder,
++                targetFolder + "_starhead_brt",
++                targetFolder + "_launch_starhead_brt"
++            };
++
++            List<EbxAssetEntry> result = new List<EbxAssetEntry>();
++            foreach (EbxAssetEntry e in App.AssetManager.EnumerateEbx())
++            {
++                string path = e.Path.Replace('\\', '/');
++                if (!candidateFolders.Contains(path))
++                    continue;
++
++                if (e.Type == "TextureAsset" || TypeLibrary.IsSubClassOf(e.Type, "TextureAsset"))
++                    result.Add(e);
++            }
++            return result;
++        }
++
++        private class BulkImportSummary
++        {
++            public int NewlyDuplicated;
++            public int ExistingUpdated;
++            public int TexturesImported;
++            public int Skipped;
++            public int Failed;
++            public List<string> Messages = new List<string>();
++        }
++    }
++}
+diff --git a/Plugins/DuplicationPlugin/DuplicateStarheadMenuExtension.cs b/Plugins/DuplicationPlugin/DuplicateStarheadMenuExtension.cs
+index ce771d4..1801b4e 100644
+--- a/Plugins/DuplicationPlugin/DuplicateStarheadMenuExtension.cs
++++ b/Plugins/DuplicationPlugin/DuplicateStarheadMenuExtension.cs
+@@ -154,7 +154,18 @@ namespace DuplicationPlugin
+             return new PointerRef(r);
+         }
+ 
+-        private void DuplicateStarhead(FrostyTaskWindow task, string sourceFolder,
++        /// <summary>
++        /// Duplicates an entire starhead folder: every ebx asset directly inside
++        /// <paramref name="sourceFolder"/>, plus its "_starhead_brt"/"_launch_starhead_brt"
++        /// sibling folder if one exists, cross-reference fixups (MVDB/blueprint pointers)
++        /// and BRT injection.
++        ///
++        /// Public (rather than private) so it can be invoked programmatically by other
++        /// tooling -- e.g. BulkImportStarheadsMenuExtension -- and not only from the
++        /// interactive "Duplicate Starhead" menu item above. Behaviour is identical either
++        /// way; this is the same method the menu item calls.
++        /// </summary>
++        public void DuplicateStarhead(FrostyTaskWindow task, string sourceFolder,
+             string newPlayerName, string destPath)
+         {
+             string sourcePlayerName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);
+diff --git a/Plugins/DuplicationPlugin/DuplicationPlugin.csproj b/Plugins/DuplicationPlugin/DuplicationPlugin.csproj
+index 143df58..51dc558 100644
+--- a/Plugins/DuplicationPlugin/DuplicationPlugin.csproj
++++ b/Plugins/DuplicationPlugin/DuplicationPlugin.csproj
+@@ -9,6 +9,7 @@
+     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+     <UseWPF>true</UseWPF>
++    <UseWindowsForms>true</UseWindowsForms>
+     <OutputType>Library</OutputType>
+   </PropertyGroup>
+ 
+@@ -60,6 +61,7 @@
+     <ProjectReference Include="..\BundleRefTablePlugin\BundleRefTablePlugin.csproj" />
+     <ProjectReference Include="..\MeshSetPlugin\MeshSetPlugin.csproj" />
+     <ProjectReference Include="..\SvgImagePlugin\SvgImagePlugin.csproj" />
++    <ProjectReference Include="..\TexturePlugin\TexturePlugin.csproj" />
+   </ItemGroup>
+ 
+   <ItemGroup>
+diff --git a/Plugins/DuplicationPlugin/Properties/AssemblyInfo.cs b/Plugins/DuplicationPlugin/Properties/AssemblyInfo.cs
+index 7bed8fe..bc0b065 100644
+--- a/Plugins/DuplicationPlugin/Properties/AssemblyInfo.cs
++++ b/Plugins/DuplicationPlugin/Properties/AssemblyInfo.cs
+@@ -39,3 +39,4 @@ using static DuplicationPlugin.DuplicationTool;
+ [assembly: RegisterMenuExtension(typeof(DuplicateShoeMenuExtension))]
+ [assembly: RegisterMenuExtension(typeof(DuplicateAccessoryMenuExtension))]
+ [assembly: RegisterMenuExtension(typeof(DuplicateBodyScaleMenuExtension))]
++[assembly: RegisterMenuExtension(typeof(BulkImportStarheadsMenuExtension))]
+diff --git a/Plugins/TexturePlugin/FrostyTextureEditor.cs b/Plugins/TexturePlugin/FrostyTextureEditor.cs
+index 2f698a3..29fe183 100644
+--- a/Plugins/TexturePlugin/FrostyTextureEditor.cs
++++ b/Plugins/TexturePlugin/FrostyTextureEditor.cs
+@@ -396,7 +396,7 @@ namespace TexturePlugin
+                                 }
+                             }
+ 
+-                            GetPixelFormat(header, out string pixelFormat, out TextureFlags baseFlags);
++                            GetPixelFormat(header, textureAsset.PixelFormat, out string pixelFormat, out TextureFlags baseFlags);
+ 
+                             // make sure texture mip maps can be generated
+                             if (TextureUtils.IsCompressedFormat(pixelFormat) && textureAsset.MipCount > 1)
+@@ -528,6 +528,202 @@ namespace TexturePlugin
+             }
+         }
+ 
++        /// <summary>
++        /// Headless single-file import of a 2D texture (PNG/TGA/HDR/DDS) into an existing
++        /// TextureAsset ebx entry, without requiring the interactive editor to be open for
++        /// that asset. Mirrors the TT_2d path of ImportButton_Click above: same dxtex.dll
++        /// conversion, same mip/format handling, same AssetManager calls -- just driven
++        /// from a file path instead of an open-file dialog. Intended for bulk-import
++        /// tooling (e.g. DuplicationPlugin's bulk starhead importer).
++        ///
++        /// Only TT_2d textures are supported: cube/array/volume textures need multiple
++        /// input files with per-face/slice assignment, which doesn't map onto a
++        /// one-file-per-target bulk import.
++        /// </summary>
++        public static bool ImportTexture2D(EbxAssetEntry assetEntry, string filePath, ILogger logger, out string errorMessage)
++        {
++            errorMessage = null;
++
++            if (assetEntry.Type != "TextureAsset" && !TypeLibrary.IsSubClassOf(assetEntry.Type, "TextureAsset"))
++            {
++                errorMessage = "Asset '" + assetEntry.Name + "' is not a TextureAsset (type: " + assetEntry.Type + ")";
++                return false;
++            }
++
++            EbxAsset asset = App.AssetManager.GetEbx(assetEntry);
++            dynamic rootObj = asset.RootObject;
++            ulong resRid = rootObj.Resource;
++
++            ResAssetEntry resEntry = App.AssetManager.GetResEntry(resRid);
++            Texture textureAsset = App.AssetManager.GetResAs<Texture>(resEntry);
++
++            if (textureAsset.Type != TextureType.TT_2d)
++            {
++                errorMessage = "Only 2D textures are supported by the bulk importer (this texture is " + textureAsset.Type + ")";
++                return false;
++            }
++
++            string ext = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
++            ImageFormat fmt;
++            switch (ext)
++            {
++                case "dds": fmt = ImageFormat.DDS; break;
++                case "png": fmt = ImageFormat.PNG; break;
++                case "tga": fmt = ImageFormat.TGA; break;
++                case "hdr": fmt = ImageFormat.HDR; break;
++                default:
++                    errorMessage = "Unsupported file extension '." + ext + "' (expected .dds, .png, .tga or .hdr)";
++                    return false;
++            }
++
++            bool textureIsSRGB = textureAsset.PixelFormat.Contains("SRGB") || ((textureAsset.Flags & TextureFlags.SrgbGamma) != 0);
++
++            ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(textureAsset.ChunkId);
++            BlobData blob = new BlobData();
++            bool bFailed = false;
++
++            byte[] rawFile = NativeReader.ReadInStream(new FileStream(filePath, FileMode.Open, FileAccess.Read));
++            MemoryStream memStream;
++
++            if (fmt == ImageFormat.DDS)
++            {
++                memStream = new MemoryStream(rawFile);
++            }
++            else
++            {
++                TextureImportOptions options = new TextureImportOptions
++                {
++                    type = textureAsset.Type,
++                    format = TextureUtils.ToShaderFormat(textureAsset.PixelFormat, (textureAsset.Flags & TextureFlags.SrgbGamma) != 0),
++                    generateMipmaps = textureAsset.MipCount > 1,
++                    mipmapsFilter = 0,
++                    resizeTexture = false,
++                    resizeFilter = 0,
++                    resizeWidth = 0,
++                    resizeHeight = 0
++                };
++                ConvertImageToDDS(rawFile, rawFile.Length, fmt, options, ref blob);
++                memStream = new MemoryStream(blob.Data);
++            }
++
++            using (NativeReader reader = new NativeReader(memStream))
++            {
++                TextureUtils.DDSHeader header = new TextureUtils.DDSHeader();
++                if (!header.Read(reader))
++                {
++                    errorMessage = "Invalid DDS format";
++                    ReleaseBlob(blob);
++                    return false;
++                }
++
++                TextureType type = TextureType.TT_2d;
++                if (header.HasExtendedHeader)
++                {
++                    if (header.ExtendedHeader.resourceDimension == D3D11.ResourceDimension.Texture2D)
++                    {
++                        if ((header.ExtendedHeader.miscFlag & 4) != 0)
++                            type = TextureType.TT_Cube;
++                        else if (header.ExtendedHeader.arraySize > 1)
++                            type = TextureType.TT_2dArray;
++                    }
++                    else if (header.ExtendedHeader.resourceDimension == D3D11.ResourceDimension.Texture3D)
++                        type = TextureType.TT_3d;
++                }
++                else
++                {
++                    if ((header.dwCaps2 & TextureUtils.DDSCaps2.CubeMap) != 0)
++                        type = TextureType.TT_Cube;
++                    else if ((header.dwCaps2 & TextureUtils.DDSCaps2.Volume) != 0)
++                        type = TextureType.TT_3d;
++                }
++
++                if (type != textureAsset.Type)
++                {
++                    errorMessage = "Imported texture must match original texture type. Original texture type is " + textureAsset.Type + ". Imported texture type is " + type;
++                    bFailed = true;
++                }
++
++                if (!bFailed && textureIsSRGB)
++                {
++                    if (!header.HasExtendedHeader || !header.ExtendedHeader.dxgiFormat.ToString().ToLower().Contains("srgb"))
++                    {
++                        errorMessage = "Format must be SRGB variant";
++                        bFailed = true;
++                    }
++                }
++
++                if (!bFailed)
++                {
++                    GetPixelFormat(header, textureAsset.PixelFormat, out string pixelFormat, out TextureFlags baseFlags);
++
++                    if (TextureUtils.IsCompressedFormat(pixelFormat) && textureAsset.MipCount > 1)
++                    {
++                        if (header.dwWidth % 4 != 0 || header.dwHeight % 4 != 0)
++                        {
++                            errorMessage = "Texture width/height must be divisible by 4 for compressed formats requiring mip maps";
++                            bFailed = true;
++                        }
++                    }
++
++                    if (!bFailed)
++                    {
++                        byte[] buffer = new byte[reader.Length - reader.Position];
++                        reader.Read(buffer, 0, (int)(reader.Length - reader.Position));
++
++                        ushort depth = (header.HasExtendedHeader && header.ExtendedHeader.resourceDimension == D3D11.ResourceDimension.Texture2D)
++                                ? (ushort)header.ExtendedHeader.arraySize
++                                : (ushort)1;
++                        if ((header.dwCaps2 & TextureUtils.DDSCaps2.CubeMap) != 0)
++                            depth = 6;
++                        if ((header.dwCaps2 & TextureUtils.DDSCaps2.Volume) != 0)
++                            depth = (ushort)header.dwDepth;
++
++                        Texture newTextureAsset = new Texture(textureAsset.Type, pixelFormat, (ushort)header.dwWidth, (ushort)header.dwHeight, depth) { FirstMip = textureAsset.FirstMip };
++                        if (header.dwMipMapCount <= textureAsset.FirstMip)
++                            newTextureAsset.FirstMip = 0;
++
++                        newTextureAsset.TextureGroup = textureAsset.TextureGroup;
++                        newTextureAsset.CalculateMipData((byte)header.dwMipMapCount, TextureUtils.GetFormatBlockSize(pixelFormat), TextureUtils.IsCompressedFormat(pixelFormat), (uint)buffer.Length);
++                        newTextureAsset.Flags = baseFlags;
++
++                        TextureFlags oldFlags = textureAsset.Flags & ~(TextureFlags.SrgbGamma);
++                        newTextureAsset.Flags |= oldFlags;
++
++                        if (ProfilesLibrary.MustAddChunks && chunkEntry.Bundles.Count == 0 && !chunkEntry.IsAdded)
++                        {
++                            textureAsset.ChunkId = App.AssetManager.AddChunk(buffer, null, (newTextureAsset.Flags & TextureFlags.OnDemandLoaded) != 0 ? null : newTextureAsset);
++                            chunkEntry = App.AssetManager.GetChunkEntry(textureAsset.ChunkId);
++                        }
++                        else
++                        {
++                            App.AssetManager.ModifyChunk(textureAsset.ChunkId, buffer, ((newTextureAsset.Flags & TextureFlags.OnDemandLoaded) != 0 || newTextureAsset.Type != TextureType.TT_2d) ? null : newTextureAsset);
++                        }
++
++                        for (int i = 0; i < 4; i++)
++                            newTextureAsset.Unknown3[i] = textureAsset.Unknown3[i];
++                        newTextureAsset.SetData(textureAsset.ChunkId, App.AssetManager);
++                        newTextureAsset.AssetNameHash = (uint)Fnv1.HashString(resEntry.Name);
++
++                        textureAsset.Dispose();
++
++                        App.AssetManager.ModifyRes(resRid, newTextureAsset);
++
++                        resEntry.LinkAsset(chunkEntry);
++                        assetEntry.LinkAsset(resEntry);
++                    }
++                }
++            }
++
++            ReleaseBlob(blob);
++
++            if (!bFailed)
++                logger?.Log("Texture " + Path.GetFileName(filePath) + " imported into " + assetEntry.Name);
++            else
++                logger?.LogWarning("Texture import failed for " + assetEntry.Name + ": " + errorMessage);
++
++            return !bFailed;
++        }
++
+         private void UpdateControls()
+         {
+             float newWidth = textureAsset.Width;
+@@ -663,7 +859,7 @@ namespace TexturePlugin
+             logger.Log("Texture successfully exported to " + sfd.FileName);
+         }
+ 
+-        private void GetPixelFormat(TextureUtils.DDSHeader header, out string pixelFormat, out TextureFlags flags)
++        public static void GetPixelFormat(TextureUtils.DDSHeader header, string oldPixelFormat, out string pixelFormat, out TextureFlags flags)
+         {
+             pixelFormat = "Unknown";
+             flags = 0;
+@@ -674,10 +870,10 @@ namespace TexturePlugin
+                 if (header.ddspf.dwFourCC == 0x31545844)
+                 {
+                     pixelFormat = "BC1_UNORM";
+-                    if (textureAsset.PixelFormat.Contains("Normal"))
+-                        pixelFormat = textureAsset.PixelFormat;
+-                    else if (textureAsset.PixelFormat.StartsWith("BC1A"))
+-                        pixelFormat = textureAsset.PixelFormat;
++                    if (oldPixelFormat.Contains("Normal"))
++                        pixelFormat = oldPixelFormat;
++                    else if (oldPixelFormat.StartsWith("BC1A"))
++                        pixelFormat = oldPixelFormat;
+                 }
+ 
+                 // ATI2 or BC5U
+@@ -708,8 +904,8 @@ namespace TexturePlugin
+                         case SharpDX.DXGI.Format.R8G8B8A8_UNorm: pixelFormat = "ARGB8888"; break;
+                         case SharpDX.DXGI.Format.BC1_UNorm:
+                             pixelFormat = "BC1_UNORM";
+-                            if (textureAsset.PixelFormat.Contains("Normal") || textureAsset.PixelFormat.StartsWith("BC1A"))
+-                                pixelFormat = textureAsset.PixelFormat;
++                            if (oldPixelFormat.Contains("Normal") || oldPixelFormat.StartsWith("BC1A"))
++                                pixelFormat = oldPixelFormat;
+                             break;
+                         case SharpDX.DXGI.Format.BC2_UNorm: pixelFormat = "BC2_UNORM"; break;
+                         case SharpDX.DXGI.Format.BC3_UNorm: pixelFormat = "BC3_UNORM"; break;
+@@ -718,7 +914,7 @@ namespace TexturePlugin
+                         case SharpDX.DXGI.Format.BC1_UNorm_SRgb: pixelFormat = "BC1_UNORM"; flags = TextureFlags.SrgbGamma; break;
+                         case SharpDX.DXGI.Format.BC2_UNorm_SRgb: pixelFormat = "BC2_UNORM"; flags = TextureFlags.SrgbGamma; break;
+                         case SharpDX.DXGI.Format.BC3_UNorm_SRgb:
+-                            pixelFormat = (textureAsset.PixelFormat == "BC3A_UNORM") ? textureAsset.PixelFormat : "BC3_UNORM";
++                            pixelFormat = (oldPixelFormat == "BC3A_UNORM") ? oldPixelFormat : "BC3_UNORM";
+                             flags = TextureFlags.SrgbGamma;
+                             break;
+                         case SharpDX.DXGI.Format.BC7_UNorm_SRgb: pixelFormat = "BC7_UNORM"; flags = TextureFlags.SrgbGamma; break;
+@@ -738,7 +934,7 @@ namespace TexturePlugin
+                 else if (header.ddspf.dwFourCC == 0x31545844)
+                 {
+                     pixelFormat = "BC1_UNORM";
+-                    if (textureAsset.PixelFormat == "BC1A_UNORM")
++                    if (oldPixelFormat == "BC1A_UNORM")
+                         pixelFormat = "BC1A_UNORM";
+                 }
+ 
+@@ -760,7 +956,7 @@ namespace TexturePlugin
+                     if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC1_UNorm)
+                     {
+                         pixelFormat = "BC1_UNORM";
+-                        if (textureAsset.PixelFormat == "BC1A_UNORM")
++                        if (oldPixelFormat == "BC1A_UNORM")
+                             pixelFormat = "BC1A_UNORM";
+                     }
+                     else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC3_UNorm)
+@@ -769,7 +965,7 @@ namespace TexturePlugin
+                         pixelFormat = "BC4_UNORM";
+                     else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC5_UNorm)
+                         pixelFormat = "BC5_UNORM";
+-                    else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC1_UNorm_SRgb && textureAsset.PixelFormat == "BC1A_SRGB")
++                    else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC1_UNorm_SRgb && oldPixelFormat == "BC1A_SRGB")
+                         pixelFormat = "BC1A_SRGB";
+                     else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC1_UNorm_SRgb)
+                         pixelFormat = "BC1_SRGB";
+@@ -798,7 +994,7 @@ namespace TexturePlugin
+                     else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.R16_UNorm)
+                     {
+                         pixelFormat = "R16_UNORM";
+-                        if (textureAsset.PixelFormat == "D16_UNORM")
++                        if (oldPixelFormat == "D16_UNORM")
+                             pixelFormat = "D16_UNORM";
+                     }
+                 }

@@ -146,7 +146,7 @@ namespace DuplicationPlugin
             return new PointerRef(r);
         }
 
-        private void DuplicateShoe(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateShoe(FrostyTaskWindow task, string sourceFolder,
             string newShoeName, string destPath)
         {
             string sourceShoeName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);

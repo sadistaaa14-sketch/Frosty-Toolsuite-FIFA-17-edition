@@ -154,7 +154,7 @@ namespace DuplicationPlugin
             return new PointerRef(r);
         }
 
-        private void DuplicateManager(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateManager(FrostyTaskWindow task, string sourceFolder,
             string newManagerName, string destPath)
         {
             string sourceManagerName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);

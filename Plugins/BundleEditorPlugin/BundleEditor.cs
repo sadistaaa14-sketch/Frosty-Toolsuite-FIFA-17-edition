@@ -69,8 +69,17 @@ namespace BundleEditPlugin
             EbxAsset asset = App.AssetManager.GetEbx(entry);
             dynamic meshAsset = asset.RootObject;
 
-            //Add res to BUNDLES AND LINK
+            //Some MeshAssets (dummy/placeholder meshes, e.g. dummyGrassMesh) have an all-zero
+            //MeshSetResource id, meaning there is no backing .res to look up. Bail out early
+            //instead of dereferencing a null ResAssetEntry.
             ResAssetEntry resEntry = App.AssetManager.GetResEntry(meshAsset.MeshSetResource);
+            if (resEntry == null)
+            {
+                base.RemoveFromBundle(entry, bentry);
+                return;
+            }
+
+            //Add res to BUNDLES AND LINK
             resEntry.AddedBundles.Remove(App.AssetManager.GetBundleId(bentry));
             entry.LinkAsset(resEntry);
 
@@ -186,6 +195,84 @@ namespace BundleEditPlugin
         }
     }
 
+    public class RemoveNewWaveExtension : RemoveFromBundleExtension
+    {
+        public override string AssetType => "NewWaveAsset";
+
+        public override void RemoveFromBundle(EbxAssetEntry entry, BundleEntry bentry)
+        {
+            base.RemoveFromBundle(entry, bentry);
+
+            //Mirrors NewWaveExtension.AddToBundle - name-matched res, no chunk involved.
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(entry.Name);
+            if (resEntry != null)
+            {
+                resEntry.AddedBundles.Remove(App.AssetManager.GetBundleId(bentry));
+                entry.LinkAsset(resEntry);
+            }
+        }
+    }
+
+    public class RemoveFifaPhysicsResourceExtension : RemoveFromBundleExtension
+    {
+        public override string AssetType => "FifaPhysicsResourceAsset";
+
+        public override void RemoveFromBundle(EbxAssetEntry entry, BundleEntry bentry)
+        {
+            base.RemoveFromBundle(entry, bentry);
+
+            EbxAsset asset = App.AssetManager.GetEbx(entry);
+            dynamic physicsAsset = asset.RootObject;
+
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(physicsAsset.PhysicsData);
+            if (resEntry != null)
+            {
+                resEntry.AddedBundles.Remove(App.AssetManager.GetBundleId(bentry));
+                entry.LinkAsset(resEntry);
+            }
+        }
+    }
+
+    public class RemoveStaticEnlightenDataExtension : RemoveFromBundleExtension
+    {
+        public override string AssetType => "StaticEnlightenData";
+
+        public override void RemoveFromBundle(EbxAssetEntry entry, BundleEntry bentry)
+        {
+            base.RemoveFromBundle(entry, bentry);
+
+            EbxAsset asset = App.AssetManager.GetEbx(entry);
+            dynamic enlightenAsset = asset.RootObject;
+
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(enlightenAsset.DatabaseResource);
+            if (resEntry != null)
+            {
+                resEntry.AddedBundles.Remove(App.AssetManager.GetBundleId(bentry));
+                entry.LinkAsset(resEntry);
+            }
+        }
+    }
+
+    public class RemoveEnlightenDataAssetExtension : RemoveFromBundleExtension
+    {
+        public override string AssetType => "EnlightenDataAsset";
+
+        public override void RemoveFromBundle(EbxAssetEntry entry, BundleEntry bentry)
+        {
+            base.RemoveFromBundle(entry, bentry);
+
+            EbxAsset asset = App.AssetManager.GetEbx(entry);
+            dynamic enlightenAsset = asset.RootObject;
+
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(enlightenAsset.DatabaseResource);
+            if (resEntry != null)
+            {
+                resEntry.AddedBundles.Remove(App.AssetManager.GetBundleId(bentry));
+                entry.LinkAsset(resEntry);
+            }
+        }
+    }
+
     public class RemoveFromBundleExtension
     {
         public virtual string AssetType => null;
@@ -252,8 +339,18 @@ namespace BundleEditPlugin
             EbxAsset asset = App.AssetManager.GetEbx(entry);
             dynamic meshAsset = asset.RootObject;
 
-            //Add res to BUNDLES AND LINK
+            //Some MeshAssets (dummy/placeholder meshes, e.g. dummyGrassMesh) have an all-zero
+            //MeshSetResource id. GetResEntry(0) returns null, and calling AddToBundle/GetResAs
+            //on that null was the source of the crash - there's nothing to bundle, so just
+            //add the ebx itself and stop here.
             ResAssetEntry resEntry = App.AssetManager.GetResEntry(meshAsset.MeshSetResource);
+            if (resEntry == null)
+            {
+                base.AddToBundle(entry, bentry);
+                return;
+            }
+
+            //Add res to BUNDLES AND LINK
             resEntry.AddToBundle(App.AssetManager.GetBundleId(bentry));
             entry.LinkAsset(resEntry);
 
@@ -362,6 +459,83 @@ namespace BundleEditPlugin
                 ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(soundDataChunk.ChunkId);
                 chunkEntry.AddToBundle(App.AssetManager.GetBundleId(bentry));
                 entry.LinkAsset(chunkEntry);
+            }
+        }
+    }
+
+    public class NewWaveExtension : AddToBundleExtension
+    {
+        public override string AssetType => "NewWaveAsset";
+        public override void AddToBundle(EbxAssetEntry entry, BundleEntry bentry)
+        {
+            base.AddToBundle(entry, bentry);
+
+            //NewWaveAsset doesn't carry a resource id field in the ebx, and there's no chunk
+            //to bundle - the backing .res is matched by name (same path as the ebx itself).
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(entry.Name);
+            if (resEntry != null)
+            {
+                resEntry.AddToBundle(App.AssetManager.GetBundleId(bentry));
+                entry.LinkAsset(resEntry);
+            }
+        }
+    }
+
+    public class FifaPhysicsResourceExtension : AddToBundleExtension
+    {
+        public override string AssetType => "FifaPhysicsResourceAsset";
+        public override void AddToBundle(EbxAssetEntry entry, BundleEntry bentry)
+        {
+            base.AddToBundle(entry, bentry);
+
+            EbxAsset asset = App.AssetManager.GetEbx(entry);
+            dynamic physicsAsset = asset.RootObject;
+
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(physicsAsset.PhysicsData);
+            if (resEntry != null)
+            {
+                resEntry.AddToBundle(App.AssetManager.GetBundleId(bentry));
+                entry.LinkAsset(resEntry);
+            }
+        }
+    }
+
+    public class StaticEnlightenDataExtension : AddToBundleExtension
+    {
+        public override string AssetType => "StaticEnlightenData";
+        public override void AddToBundle(EbxAssetEntry entry, BundleEntry bentry)
+        {
+            base.AddToBundle(entry, bentry);
+
+            EbxAsset asset = App.AssetManager.GetEbx(entry);
+            dynamic enlightenAsset = asset.RootObject;
+
+            //Field is named DatabaseResource here, but it's a resid just like PhysicsData/Resource
+            //on the other single-resource types.
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(enlightenAsset.DatabaseResource);
+            if (resEntry != null)
+            {
+                resEntry.AddToBundle(App.AssetManager.GetBundleId(bentry));
+                entry.LinkAsset(resEntry);
+            }
+        }
+    }
+
+    public class EnlightenDataAssetExtension : AddToBundleExtension
+    {
+        public override string AssetType => "EnlightenDataAsset";
+        public override void AddToBundle(EbxAssetEntry entry, BundleEntry bentry)
+        {
+            base.AddToBundle(entry, bentry);
+
+            EbxAsset asset = App.AssetManager.GetEbx(entry);
+            dynamic enlightenAsset = asset.RootObject;
+
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(enlightenAsset.DatabaseResource);
+            if (resEntry != null)
+            {
+                resEntry.AddToBundle(App.AssetManager.GetBundleId(bentry));
+                entry.LinkAsset(resEntry);
             }
         }
     }

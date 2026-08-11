@@ -146,7 +146,7 @@ namespace DuplicationPlugin
             return new PointerRef(r);
         }
 
-        private void DuplicateAccessory(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateAccessory(FrostyTaskWindow task, string sourceFolder,
             string newAccessoryName, string destPath)
         {
             string sourceAccessoryName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);

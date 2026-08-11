@@ -146,7 +146,7 @@ namespace DuplicationPlugin
             return new PointerRef(r);
         }
 
-        private void DuplicateBall(FrostyTaskWindow task, string sourceFolder,
+        internal void DuplicateBall(FrostyTaskWindow task, string sourceFolder,
             string newBallName, string destPath)
         {
             string sourceBallName = sourceFolder.Substring(sourceFolder.LastIndexOf('/') + 1);

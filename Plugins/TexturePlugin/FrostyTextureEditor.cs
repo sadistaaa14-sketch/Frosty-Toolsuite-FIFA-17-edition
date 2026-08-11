@@ -396,7 +396,7 @@ namespace TexturePlugin
                                 }
                             }
 
-                            GetPixelFormat(header, out string pixelFormat, out TextureFlags baseFlags);
+                            GetPixelFormat(header, textureAsset.PixelFormat, out string pixelFormat, out TextureFlags baseFlags);
 
                             // make sure texture mip maps can be generated
                             if (TextureUtils.IsCompressedFormat(pixelFormat) && textureAsset.MipCount > 1)
@@ -526,6 +526,202 @@ namespace TexturePlugin
                 
                 logger.Log(message);
             }
+        }
+
+        /// <summary>
+        /// Headless single-file import of a 2D texture (PNG/TGA/HDR/DDS) into an existing
+        /// TextureAsset ebx entry, without requiring the interactive editor to be open for
+        /// that asset. Mirrors the TT_2d path of ImportButton_Click above: same dxtex.dll
+        /// conversion, same mip/format handling, same AssetManager calls -- just driven
+        /// from a file path instead of an open-file dialog. Intended for bulk-import
+        /// tooling (e.g. DuplicationPlugin's bulk starhead importer).
+        ///
+        /// Only TT_2d textures are supported: cube/array/volume textures need multiple
+        /// input files with per-face/slice assignment, which doesn't map onto a
+        /// one-file-per-target bulk import.
+        /// </summary>
+        public static bool ImportTexture2D(EbxAssetEntry assetEntry, string filePath, ILogger logger, out string errorMessage)
+        {
+            errorMessage = null;
+
+            if (assetEntry.Type != "TextureAsset" && !TypeLibrary.IsSubClassOf(assetEntry.Type, "TextureAsset"))
+            {
+                errorMessage = "Asset '" + assetEntry.Name + "' is not a TextureAsset (type: " + assetEntry.Type + ")";
+                return false;
+            }
+
+            EbxAsset asset = App.AssetManager.GetEbx(assetEntry);
+            dynamic rootObj = asset.RootObject;
+            ulong resRid = rootObj.Resource;
+
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(resRid);
+            Texture textureAsset = App.AssetManager.GetResAs<Texture>(resEntry);
+
+            if (textureAsset.Type != TextureType.TT_2d)
+            {
+                errorMessage = "Only 2D textures are supported by the bulk importer (this texture is " + textureAsset.Type + ")";
+                return false;
+            }
+
+            string ext = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
+            ImageFormat fmt;
+            switch (ext)
+            {
+                case "dds": fmt = ImageFormat.DDS; break;
+                case "png": fmt = ImageFormat.PNG; break;
+                case "tga": fmt = ImageFormat.TGA; break;
+                case "hdr": fmt = ImageFormat.HDR; break;
+                default:
+                    errorMessage = "Unsupported file extension '." + ext + "' (expected .dds, .png, .tga or .hdr)";
+                    return false;
+            }
+
+            bool textureIsSRGB = textureAsset.PixelFormat.Contains("SRGB") || ((textureAsset.Flags & TextureFlags.SrgbGamma) != 0);
+
+            ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(textureAsset.ChunkId);
+            BlobData blob = new BlobData();
+            bool bFailed = false;
+
+            byte[] rawFile = NativeReader.ReadInStream(new FileStream(filePath, FileMode.Open, FileAccess.Read));
+            MemoryStream memStream;
+
+            if (fmt == ImageFormat.DDS)
+            {
+                memStream = new MemoryStream(rawFile);
+            }
+            else
+            {
+                TextureImportOptions options = new TextureImportOptions
+                {
+                    type = textureAsset.Type,
+                    format = TextureUtils.ToShaderFormat(textureAsset.PixelFormat, (textureAsset.Flags & TextureFlags.SrgbGamma) != 0),
+                    generateMipmaps = textureAsset.MipCount > 1,
+                    mipmapsFilter = 0,
+                    resizeTexture = false,
+                    resizeFilter = 0,
+                    resizeWidth = 0,
+                    resizeHeight = 0
+                };
+                ConvertImageToDDS(rawFile, rawFile.Length, fmt, options, ref blob);
+                memStream = new MemoryStream(blob.Data);
+            }
+
+            using (NativeReader reader = new NativeReader(memStream))
+            {
+                TextureUtils.DDSHeader header = new TextureUtils.DDSHeader();
+                if (!header.Read(reader))
+                {
+                    errorMessage = "Invalid DDS format";
+                    ReleaseBlob(blob);
+                    return false;
+                }
+
+                TextureType type = TextureType.TT_2d;
+                if (header.HasExtendedHeader)
+                {
+                    if (header.ExtendedHeader.resourceDimension == D3D11.ResourceDimension.Texture2D)
+                    {
+                        if ((header.ExtendedHeader.miscFlag & 4) != 0)
+                            type = TextureType.TT_Cube;
+                        else if (header.ExtendedHeader.arraySize > 1)
+                            type = TextureType.TT_2dArray;
+                    }
+                    else if (header.ExtendedHeader.resourceDimension == D3D11.ResourceDimension.Texture3D)
+                        type = TextureType.TT_3d;
+                }
+                else
+                {
+                    if ((header.dwCaps2 & TextureUtils.DDSCaps2.CubeMap) != 0)
+                        type = TextureType.TT_Cube;
+                    else if ((header.dwCaps2 & TextureUtils.DDSCaps2.Volume) != 0)
+                        type = TextureType.TT_3d;
+                }
+
+                if (type != textureAsset.Type)
+                {
+                    errorMessage = "Imported texture must match original texture type. Original texture type is " + textureAsset.Type + ". Imported texture type is " + type;
+                    bFailed = true;
+                }
+
+                if (!bFailed && textureIsSRGB)
+                {
+                    if (!header.HasExtendedHeader || !header.ExtendedHeader.dxgiFormat.ToString().ToLower().Contains("srgb"))
+                    {
+                        errorMessage = "Format must be SRGB variant";
+                        bFailed = true;
+                    }
+                }
+
+                if (!bFailed)
+                {
+                    GetPixelFormat(header, textureAsset.PixelFormat, out string pixelFormat, out TextureFlags baseFlags);
+
+                    if (TextureUtils.IsCompressedFormat(pixelFormat) && textureAsset.MipCount > 1)
+                    {
+                        if (header.dwWidth % 4 != 0 || header.dwHeight % 4 != 0)
+                        {
+                            errorMessage = "Texture width/height must be divisible by 4 for compressed formats requiring mip maps";
+                            bFailed = true;
+                        }
+                    }
+
+                    if (!bFailed)
+                    {
+                        byte[] buffer = new byte[reader.Length - reader.Position];
+                        reader.Read(buffer, 0, (int)(reader.Length - reader.Position));
+
+                        ushort depth = (header.HasExtendedHeader && header.ExtendedHeader.resourceDimension == D3D11.ResourceDimension.Texture2D)
+                                ? (ushort)header.ExtendedHeader.arraySize
+                                : (ushort)1;
+                        if ((header.dwCaps2 & TextureUtils.DDSCaps2.CubeMap) != 0)
+                            depth = 6;
+                        if ((header.dwCaps2 & TextureUtils.DDSCaps2.Volume) != 0)
+                            depth = (ushort)header.dwDepth;
+
+                        Texture newTextureAsset = new Texture(textureAsset.Type, pixelFormat, (ushort)header.dwWidth, (ushort)header.dwHeight, depth) { FirstMip = textureAsset.FirstMip };
+                        if (header.dwMipMapCount <= textureAsset.FirstMip)
+                            newTextureAsset.FirstMip = 0;
+
+                        newTextureAsset.TextureGroup = textureAsset.TextureGroup;
+                        newTextureAsset.CalculateMipData((byte)header.dwMipMapCount, TextureUtils.GetFormatBlockSize(pixelFormat), TextureUtils.IsCompressedFormat(pixelFormat), (uint)buffer.Length);
+                        newTextureAsset.Flags = baseFlags;
+
+                        TextureFlags oldFlags = textureAsset.Flags & ~(TextureFlags.SrgbGamma);
+                        newTextureAsset.Flags |= oldFlags;
+
+                        if (ProfilesLibrary.MustAddChunks && chunkEntry.Bundles.Count == 0 && !chunkEntry.IsAdded)
+                        {
+                            textureAsset.ChunkId = App.AssetManager.AddChunk(buffer, null, (newTextureAsset.Flags & TextureFlags.OnDemandLoaded) != 0 ? null : newTextureAsset);
+                            chunkEntry = App.AssetManager.GetChunkEntry(textureAsset.ChunkId);
+                        }
+                        else
+                        {
+                            App.AssetManager.ModifyChunk(textureAsset.ChunkId, buffer, ((newTextureAsset.Flags & TextureFlags.OnDemandLoaded) != 0 || newTextureAsset.Type != TextureType.TT_2d) ? null : newTextureAsset);
+                        }
+
+                        for (int i = 0; i < 4; i++)
+                            newTextureAsset.Unknown3[i] = textureAsset.Unknown3[i];
+                        newTextureAsset.SetData(textureAsset.ChunkId, App.AssetManager);
+                        newTextureAsset.AssetNameHash = (uint)Fnv1.HashString(resEntry.Name);
+
+                        textureAsset.Dispose();
+
+                        App.AssetManager.ModifyRes(resRid, newTextureAsset);
+
+                        resEntry.LinkAsset(chunkEntry);
+                        assetEntry.LinkAsset(resEntry);
+                    }
+                }
+            }
+
+            ReleaseBlob(blob);
+
+            if (!bFailed)
+                logger?.Log("Texture " + Path.GetFileName(filePath) + " imported into " + assetEntry.Name);
+            else
+                logger?.LogWarning("Texture import failed for " + assetEntry.Name + ": " + errorMessage);
+
+            return !bFailed;
         }
 
         private void UpdateControls()
@@ -663,7 +859,7 @@ namespace TexturePlugin
             logger.Log("Texture successfully exported to " + sfd.FileName);
         }
 
-        private void GetPixelFormat(TextureUtils.DDSHeader header, out string pixelFormat, out TextureFlags flags)
+        public static void GetPixelFormat(TextureUtils.DDSHeader header, string oldPixelFormat, out string pixelFormat, out TextureFlags flags)
         {
             pixelFormat = "Unknown";
             flags = 0;
@@ -674,10 +870,10 @@ namespace TexturePlugin
                 if (header.ddspf.dwFourCC == 0x31545844)
                 {
                     pixelFormat = "BC1_UNORM";
-                    if (textureAsset.PixelFormat.Contains("Normal"))
-                        pixelFormat = textureAsset.PixelFormat;
-                    else if (textureAsset.PixelFormat.StartsWith("BC1A"))
-                        pixelFormat = textureAsset.PixelFormat;
+                    if (oldPixelFormat.Contains("Normal"))
+                        pixelFormat = oldPixelFormat;
+                    else if (oldPixelFormat.StartsWith("BC1A"))
+                        pixelFormat = oldPixelFormat;
                 }
 
                 // ATI2 or BC5U
@@ -708,8 +904,8 @@ namespace TexturePlugin
                         case SharpDX.DXGI.Format.R8G8B8A8_UNorm: pixelFormat = "ARGB8888"; break;
                         case SharpDX.DXGI.Format.BC1_UNorm:
                             pixelFormat = "BC1_UNORM";
-                            if (textureAsset.PixelFormat.Contains("Normal") || textureAsset.PixelFormat.StartsWith("BC1A"))
-                                pixelFormat = textureAsset.PixelFormat;
+                            if (oldPixelFormat.Contains("Normal") || oldPixelFormat.StartsWith("BC1A"))
+                                pixelFormat = oldPixelFormat;
                             break;
                         case SharpDX.DXGI.Format.BC2_UNorm: pixelFormat = "BC2_UNORM"; break;
                         case SharpDX.DXGI.Format.BC3_UNorm: pixelFormat = "BC3_UNORM"; break;
@@ -718,7 +914,7 @@ namespace TexturePlugin
                         case SharpDX.DXGI.Format.BC1_UNorm_SRgb: pixelFormat = "BC1_UNORM"; flags = TextureFlags.SrgbGamma; break;
                         case SharpDX.DXGI.Format.BC2_UNorm_SRgb: pixelFormat = "BC2_UNORM"; flags = TextureFlags.SrgbGamma; break;
                         case SharpDX.DXGI.Format.BC3_UNorm_SRgb:
-                            pixelFormat = (textureAsset.PixelFormat == "BC3A_UNORM") ? textureAsset.PixelFormat : "BC3_UNORM";
+                            pixelFormat = (oldPixelFormat == "BC3A_UNORM") ? oldPixelFormat : "BC3_UNORM";
                             flags = TextureFlags.SrgbGamma;
                             break;
                         case SharpDX.DXGI.Format.BC7_UNorm_SRgb: pixelFormat = "BC7_UNORM"; flags = TextureFlags.SrgbGamma; break;
@@ -738,7 +934,7 @@ namespace TexturePlugin
                 else if (header.ddspf.dwFourCC == 0x31545844)
                 {
                     pixelFormat = "BC1_UNORM";
-                    if (textureAsset.PixelFormat == "BC1A_UNORM")
+                    if (oldPixelFormat == "BC1A_UNORM")
                         pixelFormat = "BC1A_UNORM";
                 }
 
@@ -760,7 +956,7 @@ namespace TexturePlugin
                     if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC1_UNorm)
                     {
                         pixelFormat = "BC1_UNORM";
-                        if (textureAsset.PixelFormat == "BC1A_UNORM")
+                        if (oldPixelFormat == "BC1A_UNORM")
                             pixelFormat = "BC1A_UNORM";
                     }
                     else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC3_UNorm)
@@ -769,7 +965,7 @@ namespace TexturePlugin
                         pixelFormat = "BC4_UNORM";
                     else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC5_UNorm)
                         pixelFormat = "BC5_UNORM";
-                    else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC1_UNorm_SRgb && textureAsset.PixelFormat == "BC1A_SRGB")
+                    else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC1_UNorm_SRgb && oldPixelFormat == "BC1A_SRGB")
                         pixelFormat = "BC1A_SRGB";
                     else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.BC1_UNorm_SRgb)
                         pixelFormat = "BC1_SRGB";
@@ -798,7 +994,7 @@ namespace TexturePlugin
                     else if (header.ExtendedHeader.dxgiFormat == SharpDX.DXGI.Format.R16_UNorm)
                     {
                         pixelFormat = "R16_UNORM";
-                        if (textureAsset.PixelFormat == "D16_UNORM")
+                        if (oldPixelFormat == "D16_UNORM")
                             pixelFormat = "D16_UNORM";
                     }
                 }
