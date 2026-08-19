@@ -40,23 +40,16 @@ namespace Frosty.Core.Converters
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ImageSource> iconCache =
             new System.Collections.Concurrent.ConcurrentDictionary<string, ImageSource>(StringComparer.Ordinal);
 
-        internal static int _callCount = 0;
-        internal static int _missCount = 0;
-        internal static int _cacheHitCount = 0;
-
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {
-            System.Threading.Interlocked.Increment(ref _callCount);
             if (value is AssetEntry entry)
             {
                 string sourceName = entry.Type;
                 if (sourceName != null && iconCache.TryGetValue(sourceName, out ImageSource cached))
                 {
-                    System.Threading.Interlocked.Increment(ref _cacheHitCount);
                     return cached;
                 }
 
-                System.Threading.Interlocked.Increment(ref _missCount);
                 var definition = App.PluginManager.GetAssetDefinition(sourceName);
                 ImageSource result = definition != null ? definition.GetIcon(entry) : FallbackConverter.Convert(sourceName, targetType, parameter, culture) as ImageSource;
 

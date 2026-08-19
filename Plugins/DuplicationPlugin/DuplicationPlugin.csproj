@@ -104,6 +104,36 @@
     <Compile Update="Windows\DuplicateBodyWindow.xaml.cs">
       <DependentUpon>DuplicateBodyWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Update="Windows\DuplicateManagerSuitWindow.xaml.cs">
+      <DependentUpon>DuplicateManagerSuitWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateGenericHeadTexLayerWindow.xaml.cs">
+      <DependentUpon>DuplicateGenericHeadTexLayerWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateJerseyFontWindow.xaml.cs">
+      <DependentUpon>DuplicateJerseyFontWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateKitcmnWindow.xaml.cs">
+      <DependentUpon>DuplicateKitcmnWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateKitNumberWindow.xaml.cs">
+      <DependentUpon>DuplicateKitNumberWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\DuplicateBaseWindow.xaml.cs">
+      <DependentUpon>DuplicateBaseWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\BulkAssetImportWindow.xaml.cs">
+      <DependentUpon>BulkAssetImportWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\BulkExportWindow.xaml.cs">
+      <DependentUpon>BulkExportWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\SkeletonPickerWindow.xaml.cs">
+      <DependentUpon>SkeletonPickerWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Windows\FolderPickerWindow.xaml.cs">
+      <DependentUpon>FolderPickerWindow.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>
@@ -144,6 +174,36 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Update="Windows\DuplicateBodyWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateManagerSuitWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateGenericHeadTexLayerWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateJerseyFontWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateKitcmnWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateKitNumberWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateBaseWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\BulkAssetImportWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\BulkExportWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\SkeletonPickerWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\FolderPickerWindow.xaml">
       <SubType>Designer</SubType>
     </Page>
   </ItemGroup>

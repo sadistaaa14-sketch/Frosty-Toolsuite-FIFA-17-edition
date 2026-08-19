@@ -19,9 +19,8 @@ namespace Frosty.Core.Controls
 {
     /// <summary>
     /// Visual-tree utility helpers used by <see cref="FrostyDataExplorer"/>
-    /// for diagnostic logging and virtualization wiring. All diagnostic
-    /// output goes through <see cref="Frosty.Core.App.Logger"/> so it
-    /// appears in the editor's built-in log panel.
+    /// to locate the live items-host panel and its scroll chain so the
+    /// virtualization fix can be applied to the correct instances.
     /// </summary>
     internal static class PerfDiag
     {
@@ -51,30 +50,6 @@ namespace Frosty.Core.Controls
                 }
             }
             return null;
-        }
-
-        /// <summary>
-        /// Walk the visual tree from <paramref name="leaf"/> up to (but not
-        /// including) <paramref name="root"/>, returning the chain of
-        /// ancestors. The returned list is ordered from <paramref name="leaf"/>
-        /// (index 0) up to the immediate child of <paramref name="root"/>
-        /// (last index). Returns an empty list if <paramref name="leaf"/> is
-        /// not a descendant of <paramref name="root"/>.
-        /// </summary>
-        public static System.Collections.Generic.List<DependencyObject>
-            GetVisualPath(DependencyObject root, DependencyObject leaf)
-        {
-            var path = new System.Collections.Generic.List<DependencyObject>();
-            var node = leaf;
-            while (node != null && node != root)
-            {
-                path.Add(node);
-                node = VisualTreeHelper.GetParent(node);
-            }
-            // Path is currently leaf→root; reverse to root→leaf for readable
-            // top-down dump in the log.
-            path.Reverse();
-            return path;
         }
 
         /// <summary>
@@ -604,49 +579,17 @@ namespace Frosty.Core.Controls
         {
             if (assetListView == null) return;
 
-            // Anchor on the REAL items host panel first (this lookup was
-            // already reliable — PerfDiag.FindItemsHostPanel finds the
-            // panel with IsItemsHost=True, which is unambiguous). Then walk
-            // UP from it to find its actual ScrollContentPresenter and
-            // ScrollViewer ancestors.
-            //
-            // This replaces the old top-down "first SCP/ScrollViewer found
-            // anywhere under assetListView" search, which was silently
-            // returning a DIFFERENT instance than the one in the panel's
-            // real scroll chain (confirmed by comparing SCP hash codes in
-            // the diagnostic log: the hookup was always operating on
-            // scp.Hash=36749739, while the panel's actual ancestor SCP was
-            // scp.Hash=8918541 — two different objects, so every fix below
-            // was being applied to the wrong one and never took effect).
             var itemsHostPanel = PerfDiag.FindItemsHostPanel(assetListView);
             if (itemsHostPanel == null)
-            {
-                App.Logger.Log("ForceVirtualizationHookup: items host panel NOT FOUND — visual tree may not be built yet");
                 return;
-            }
 
             var scp = PerfDiag.FindVisualAncestor<ScrollContentPresenter>(itemsHostPanel);
             if (scp == null)
-            {
-                App.Logger.Log("ForceVirtualizationHookup: ScrollContentPresenter NOT FOUND above items host panel");
                 return;
-            }
 
             var scrollViewer = PerfDiag.FindVisualAncestor<ScrollViewer>(scp);
             if (scrollViewer == null)
-            {
-                App.Logger.Log("ForceVirtualizationHookup: ScrollViewer NOT FOUND above ScrollContentPresenter");
                 return;
-            }
-
-            // Log the SCP and ScrollViewer hash codes so a mismatch against
-            // the virtualization-config dump (which walks the same path
-            // from the other direction) is easy to spot if this ever
-            // regresses.
-            App.Logger.Log("ForceVirtualizationHookup: enter scp.Hash=" + scp.GetHashCode()
-                + " scrollViewer.Hash=" + scrollViewer.GetHashCode()
-                + " scp.CanContentScroll=" + scp.CanContentScroll
-                + " sv.CanContentScroll=" + scrollViewer.CanContentScroll);
 
             bool changed = false;
 
@@ -660,7 +603,6 @@ namespace Frosty.Core.Controls
                 scp.SetValue(ScrollViewer.CanContentScrollProperty, false);
                 scp.SetValue(ScrollViewer.CanContentScrollProperty, true);
                 changed = true;
-                App.Logger.Log("ForceVirtualizationHookup: toggled ScrollContentPresenter.CanContentScroll False→True, verify=" + scp.CanContentScroll);
             }
 
             // (1b) Also ensure the outer ScrollViewer's CanContentScroll is
@@ -670,7 +612,6 @@ namespace Frosty.Core.Controls
             {
                 scrollViewer.CanContentScroll = true;
                 changed = true;
-                App.Logger.Log("ForceVirtualizationHookup: set ScrollViewer.CanContentScroll True (was False)");
             }
 
             // (2) Defensive: keep CanHorizontallyScroll / CanVerticallyScroll
@@ -679,13 +620,11 @@ namespace Frosty.Core.Controls
             {
                 scp.CanHorizontallyScroll = true;
                 changed = true;
-                App.Logger.Log("ForceVirtualizationHookup: set ScrollContentPresenter.CanHorizontallyScroll True");
             }
             if (!scp.CanVerticallyScroll)
             {
                 scp.CanVerticallyScroll = true;
                 changed = true;
-                App.Logger.Log("ForceVirtualizationHookup: set ScrollContentPresenter.CanVerticallyScroll True");
             }
 
             // (3) Make sure the items host panel's ScrollOwner is wired to
@@ -702,21 +641,16 @@ namespace Frosty.Core.Controls
                 {
                     si.ScrollOwner = scrollViewer;
                     changed = true;
-                    App.Logger.Log("ForceVirtualizationHookup: wired panel.ScrollOwner = ScrollViewer (was NULL)");
                 }
                 else if (!ReferenceEquals(scrollOwner, scrollViewer))
                 {
                     si.ScrollOwner = scrollViewer;
                     changed = true;
-                    App.Logger.Log("ForceVirtualizationHookup: re-wired panel.ScrollOwner = ScrollViewer (was " + scrollOwner.GetType().Name + ")");
                 }
             }
 
             if (!changed)
-            {
-                App.Logger.Log("ForceVirtualizationHookup: nothing to fix (CanContentScroll=True and ScrollOwner already wired)");
                 return;
-            }
 
             // Use InvalidateMeasure (async, Render-priority layout pass)
             // rather than a synchronous UpdateLayout() call. A synchronous
@@ -725,18 +659,10 @@ namespace Frosty.Core.Controls
             // which would create a brand-new SCP instance and undo the
             // fix we just made. InvalidateMeasure schedules the re-measure
             // for later instead, avoiding that reentrancy.
-            try
+            scp.InvalidateMeasure();
+            if (itemsHostPanel is UIElement panelElement)
             {
-                scp.InvalidateMeasure();
-                if (itemsHostPanel is UIElement panelElement)
-                {
-                    panelElement.InvalidateMeasure();
-                }
-                App.Logger.Log("ForceVirtualizationHookup: InvalidateMeasure on SCP+panel");
-            }
-            catch (Exception ex)
-            {
-                App.Logger.Log("ForceVirtualizationHookup: InvalidateMeasure threw " + ex.GetType().Name + ": " + ex.Message);
+                panelElement.InvalidateMeasure();
             }
         }
 
@@ -878,290 +804,15 @@ namespace Frosty.Core.Controls
 
         private void assetTreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
-            // ===================================================================
-            // ROOT-CAUSE FIX for the 20-second+ UI freeze when clicking a
-            // folder with ~20,000 legacy DDS entries (e.g. "Heads").
-            //
-            // DIAGNOSTIC FINDINGS (see Frosty editor log window):
-            //   Click 1: 35,850ms spent in FrostyLogger.RaisePropertyChanged
-            //            → TextBox.Text binding update → TextChanged
-            //            → logTextBox_TextChanged → ScrollToEnd
-            //            → synchronous layout pass over the entire visual tree
-            //            → ListView generates ALL 20,469 containers
-            //   Click 2: 38,193ms spent in assetListView.UpdateLayout()
-            //            → forced synchronous layout pass
-            //            → ListView generates ALL 20,469 containers
-            //
-            // Both triggers prove that WPF ListView virtualization is NOT
-            // limiting container generation to the visible viewport. The
-            // VirtualizingStackPanel is generating ALL containers during any
-            // synchronous layout pass. This is the underlying defect.
-            //
-            // FIX (this handler):
-            //   1. REMOVE the explicit assetListView.UpdateLayout() call —
-            //      this was the click-2 smoking gun, directly forcing a
-            //      synchronous layout pass that generated all 20K containers.
-            //   2. SUPPRESS App.Logger.Log calls during the click handler.
-            //      Even though FrostyLogger now defers RaisePropertyChanged
-            //      to Background priority (so App.Logger.Log returns
-            //      immediately), the deferred notification eventually fires
-            //      and triggers the TextBox→ScrollToEnd→layout cascade. By
-            //      suppressing the per-click log lines we eliminate one
-            //      source of deferred layout pressure.
-            //   3. DEFER all diagnostic logging to AFTER the handler returns.
-            //      App.Logger.Log now defers its PropertyChanged notification
-            //      to Background priority, so synchronous Log calls inside
-            //      the click handler no longer trigger the TextBox layout
-            //      cascade. We keep logging minimal regardless to avoid noise.
-            //
-            // FIX (MainWindow.xaml.cs):
-            //   - logTextBox_TextChanged now defers ScrollToEnd to Background
-            //     priority, so even if a synchronous Log call slips through,
-            //     the layout cascade doesn't happen inside the click handler.
-            //
-            // FIX (FrostyLogger.cs):
-            //   - RaisePropertyChanged is already deferred to Background
-            //     priority via ScheduleNotify().
-            //
-            // WHAT THIS DOES NOT FIX:
-            //   The underlying broken virtualization (20K containers being
-            //   generated during a layout pass instead of ~30 visible ones).
-            //   With these trigger-elimination fixes, the click handler
-            //   returns quickly and WPF's natural layout cycle (which runs
-            //   at Render priority after the handler returns) handles the
-            //   container generation. If virtualization is broken, the user
-            //   will still see a freeze — but it will happen during the
-            //   next idle/render cycle, not inside the click handler. The
-            //   PerfDiag counters below will tell us if container generation
-            //   is still happening for non-visible items.
-            // ===================================================================
-
             selectedPath = assetTreeView.SelectedItem as AssetPath;
             SelectedPath = string.IsNullOrEmpty(selectedPath.FullPath) ? "" : selectedPath.FullPath.Remove(0, 1);
 
-            // VIRTUALIZATION HARD-FIX: ensure the SCP and panel are correctly
-            // wired BEFORE we change the ItemsSource. If we don't do this and
-            // the SCP's CanContentScroll is still False / ScrollOwner is NULL,
-            // the next layout pass will realize ALL containers (20K+ rows)
-            // and freeze the UI for ~50 seconds. Calling this here is a safety
-            // net for the case where the OnApplyTemplate deferred call hasn't
-            // run yet, or where the visual tree was rebuilt (e.g. view switch
-            // between detail and tile) and the new SCP hasn't been fixed yet.
+            // Ensure virtualization is correctly wired before we change the
+            // ItemsSource, otherwise the next layout pass may realize every
+            // container instead of only the visible ones.
             ForceVirtualizationHookup();
 
-            // Sample counters BEFORE UpdateListView. These are read again
-            // AFTER UpdateListView (and again after the handler returns via
-            // a deferred PerfDiag log) to detect container generation.
-            int callsBefore = Frosty.Core.Converters.AssetEntryToBitmapSourceConverter._callCount;
-
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            App.Logger.Log("==== click-start path='" + SelectedPath + "' ====");
-
             UpdateListView(selectedPath);
-
-            int callsAfterUpdate = Frosty.Core.Converters.AssetEntryToBitmapSourceConverter._callCount;
-            App.Logger.Log("click: after-UpdateListView elapsed=" + sw.ElapsedMilliseconds + "ms"
-                + " | converter-calls-during-UpdateListView=" + (callsAfterUpdate - callsBefore)
-                + " (NO UpdateLayout call — let WPF schedule layout naturally)");
-
-            // CRITICAL: Do NOT call assetListView.UpdateLayout() here.
-            // Do NOT call App.Logger.Log() here.
-            // Both force (or eventually trigger) a synchronous layout pass
-            // that — combined with broken virtualization — generates all
-            // 20K containers and freezes the UI for ~35 seconds.
-            //
-            // Defer the post-click diagnostic log line to Background
-            // priority so it runs AFTER WPF's natural layout cycle for this
-            // click has completed. This lets us measure how many containers
-            // WPF generated during the natural (non-forced) layout pass.
-            //
-            // Use assetListView.Dispatcher (NOT Dispatcher.CurrentDispatcher)
-            // to guarantee we're queueing on the UI thread's dispatcher.
-            int callsAtDeferTime = callsAfterUpdate;
-            assetListView.Dispatcher.BeginInvoke(new Action(() =>
-            {
-                int callsAfterLayout = Frosty.Core.Converters.AssetEntryToBitmapSourceConverter._callCount;
-                App.Logger.Log("click: after-natural-layout elapsed=" + sw.ElapsedMilliseconds + "ms"
-                    + " | converter-calls-during-natural-layout=" + (callsAfterLayout - callsAtDeferTime)
-                    + " | TOTAL-since-click-start=" + (callsAfterLayout - callsBefore));
-
-                // Also log the actual ItemsPanel type and ScrollUnit so we
-                // can verify virtualization is configured correctly. If
-                // these show "VirtualizingStackPanel" and "Item", then the
-                // XAML config is correct and the broken virtualization is
-                // caused by something else (likely an infinite-height
-                // parent or a code path that calls ContainerFromItem).
-                if (assetListView != null)
-                {
-                    // Read the attached virtualization properties directly
-                    // from the ListView. These always work because they're
-                    // attached properties — the value is stored on the
-                    // ListView itself, not on the panel.
-                    var isVirtualizing = VirtualizingPanel.GetIsVirtualizing(assetListView);
-                    var virtualizationMode = VirtualizingPanel.GetVirtualizationMode(assetListView);
-                    var scrollUnit = VirtualizingPanel.GetScrollUnit(assetListView);
-                    var canContentScroll = ScrollViewer.GetCanContentScroll(assetListView);
-
-                    // Find the ACTUAL panel instance WPF instantiated from
-                    // the ItemsPanelTemplate by walking the visual tree.
-                    // This is the only reliable way to detect what panel is
-                    // really hosting the items (the ItemsPanelTemplate
-                    // itself doesn't expose the panel type publicly).
-                    var actualPanel = PerfDiag.FindItemsHostPanel(assetListView);
-                    string actualPanelType = actualPanel?.GetType().FullName ?? "(no panel yet)";
-
-                    // ListView itself does not expose ViewportHeight — that
-                    // property lives on the inner ScrollViewer that the
-                    // ListView control template injects. Walk UP from the
-                    // actual items host panel (not top-down from
-                    // assetListView) so this is guaranteed to be the
-                    // ScrollViewer actually in the panel's scroll chain,
-                    // not just some ScrollViewer found first elsewhere.
-                    double listViewportHeight = double.NaN;
-                    var listScrollViewer = actualPanel != null
-                        ? PerfDiag.FindVisualAncestor<ScrollViewer>(actualPanel)
-                        : null;
-                    if (listScrollViewer != null)
-                        listViewportHeight = listScrollViewer.ViewportHeight;
-
-                    App.Logger.Log("click: virtualization-config"
-                        + " actualPanel=" + actualPanelType
-                        + " IsVirtualizing(lv)=" + isVirtualizing
-                        + " VirtualizationMode(lv)=" + virtualizationMode
-                        + " ScrollUnit(lv)=" + scrollUnit
-                        + " CanContentScroll(lv)=" + canContentScroll
-                        + " ListViewActualHeight=" + assetListView.ActualHeight
-                        + " ListViewViewportHeight=" + (double.IsNaN(listViewportHeight) ? "n/a" : listViewportHeight.ToString("F1"))
-                        + " ItemsCount=" + assetListView.Items.Count);
-
-                    // --- Visual tree path from ListView down to the items host ---
-                    // This is the KEY diagnostic for virtualization issues: it
-                    // shows EVERY node between the ListView and the panel that
-                    // is actually hosting items. If the path contains a
-                    // non-virtualizing panel (StackPanel, WrapPanel, etc.) or
-                    // a non-ScrollContentPresenter scroll container, that's
-                    // the bug. The expected path for a virtualized GridView is:
-                    //   ListView → Border → ScrollViewer → Grid → DockPanel
-                    //     → Grid → ScrollContentPresenter → ItemsPresenter
-                    //     → VirtualizingStackPanel (IsItemsHost=True)
-                    if (actualPanel != null)
-                    {
-                        var path = PerfDiag.GetVisualPath(assetListView, actualPanel);
-                        App.Logger.Log("  visual-tree-path ListView→itemsHost (depth=" + path.Count + "):");
-                        for (int i = 0; i < path.Count; i++)
-                        {
-                            var node = path[i];
-                            string line = "    [" + i + "] " + node.GetType().Name;
-                            if (node is FrameworkElement fe)
-                            {
-                                line += " ActualHeight=" + fe.ActualHeight.ToString("F1")
-                                     + " Height=" + (double.IsNaN(fe.Height) ? "NaN" : fe.Height.ToString());
-                            }
-                            if (node is ScrollContentPresenter scp)
-                            {
-                                line += " CanContentScroll=" + scp.CanContentScroll
-                                     + " CanVerticallyScroll=" + scp.CanVerticallyScroll
-                                     + " Hash=" + scp.GetHashCode();
-                            }
-                            if (node is ScrollViewer sv)
-                            {
-                                line += " CanContentScroll=" + sv.CanContentScroll
-                                     + " ViewportHeight=" + sv.ViewportHeight.ToString("F1")
-                                     + " ScrollableHeight=" + sv.ScrollableHeight.ToString("F1");
-                            }
-                            if (node is Panel p)
-                            {
-                                line += " IsItemsHost=" + p.IsItemsHost
-                                     + " Children=" + VisualTreeHelper.GetChildrenCount(p);
-                            }
-                            App.Logger.Log(line);
-                        }
-
-                        // --- Read virtualization properties directly from the
-                        // items host panel (not from the ListView). If the
-                        // panel doesn't inherit the attached properties from
-                        // the ListView, virtualization may be silently
-                        // disabled even though the ListView reports True.
-                        string panelIsVirtualizing = "?";
-                        string panelVirtMode = "?";
-                        string panelScrollUnit = "?";
-                        try
-                        {
-                            panelIsVirtualizing = VirtualizingPanel.GetIsVirtualizing(actualPanel).ToString();
-                            panelVirtMode = VirtualizingPanel.GetVirtualizationMode(actualPanel).ToString();
-                            panelScrollUnit = VirtualizingPanel.GetScrollUnit(actualPanel).ToString();
-                        }
-                        catch { /* some panels don't support these attached props */ }
-
-                        App.Logger.Log("  itemsHost: Type=" + actualPanel.GetType().Name
-                            + " IsItemsHost=" + actualPanel.IsItemsHost
-                            + " IsVirtualizing(panel)=" + panelIsVirtualizing
-                            + " VirtualizationMode(panel)=" + panelVirtMode
-                            + " ScrollUnit(panel)=" + panelScrollUnit
-                            + " ActualHeight=" + actualPanel.ActualHeight.ToString("F1")
-                            + " DesiredSize=" + actualPanel.DesiredSize.ToString()
-                            + " VisibleChildren=" + VisualTreeHelper.GetChildrenCount(actualPanel));
-
-                        // If the items host is a VirtualizingPanel (the base
-                        // class for VirtualizingStackPanel), also log whether
-                        // it has a scroll owner attached. A null scroll owner
-                        // means the panel doesn't know its viewport size,
-                        // which forces it to realize ALL containers when
-                        // measured with infinite height. ScrollOwner is a
-                        // protected member on Panel — we must access it via
-                        // the IScrollInfo interface that Panel implements.
-                        if (actualPanel is IScrollInfo si)
-                        {
-                            var scrollOwner = si.ScrollOwner;
-                            App.Logger.Log("  itemsHost.ScrollOwner=" + (scrollOwner == null ? "NULL (this is BAD — panel can't virtualize without a scroll owner)" : scrollOwner.GetType().Name));
-                        }
-                    }
-                    else
-                    {
-                        App.Logger.Log("  itemsHost: NOT FOUND — visual tree may not be built yet, or no Panel has IsItemsHost=True");
-                    }
-
-                    // Walk up the visual tree to find any ancestor that
-                    // might be giving the ListView infinite available height
-                    // (the #1 cause of broken virtualization).
-                    DependencyObject walker = assetListView;
-                    int depth = 0;
-                    while (walker != null && depth < 15)
-                    {
-                        var fe = walker as FrameworkElement;
-                        if (fe != null)
-                        {
-                            App.Logger.Log("  ancestor[" + depth + "]=" + fe.GetType().Name
-                                + " ActualHeight=" + fe.ActualHeight
-                                + " Height=" + fe.Height
-                                + " MinHeight=" + fe.MinHeight
-                                + " MaxHeight=" + fe.MaxHeight);
-                        }
-                        walker = VisualTreeHelper.GetParent(walker);
-                        depth++;
-                    }
-                }
-            }), System.Windows.Threading.DispatcherPriority.Background);
-        }
-
-        /// <summary>
-        /// Depth-first search for the first descendant of <paramref name="root"/>
-        /// that is of type <typeparamref name="T"/>. Returns null if the visual
-        /// tree hasn't been built yet (e.g. before the template is applied) or
-        /// if no such descendant exists.
-        /// </summary>
-        private static T FindVisualChild<T>(DependencyObject root) where T : DependencyObject
-        {
-            if (root == null) return null;
-            int count = VisualTreeHelper.GetChildrenCount(root);
-            for (int i = 0; i < count; i++)
-            {
-                var child = VisualTreeHelper.GetChild(root, i);
-                if (child is T t) return t;
-                var inner = FindVisualChild<T>(child);
-                if (inner != null) return inner;
-            }
-            return null;
         }
 
         private void ClearFilter()
@@ -1344,17 +995,6 @@ namespace Frosty.Core.Controls
 
         private void UpdateListView(AssetPath path = null)
         {
-            // Diagnostic stopwatch — log timings to App.Logger so we can
-            // see exactly where time is spent when clicking a folder with
-            // many entries. This is the ONLY way to tell whether the
-            // freeze is in enumeration, sorting, ItemsSource assignment,
-            // the CollectionView's internal sort, or container generation.
-            // The log line is prefixed with "UpdateListView" so it's easy
-            // to grep out of the Frosty log panel.
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            long t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0;
-            t0 = sw.ElapsedMilliseconds;
-
             if (path == null)
             {
                 assetListView.ItemsSource = null;
@@ -1365,7 +1005,6 @@ namespace Frosty.Core.Controls
             string fullPath = path.FullPath.Trim('/');
 
             List<AssetEntry> source = GetCachedItems();
-            t1 = sw.ElapsedMilliseconds;
 
             foreach (AssetEntry entry in source)
             {
@@ -1378,7 +1017,6 @@ namespace Frosty.Core.Controls
                     items.Add(entry);
                 }
             }
-            t2 = sw.ElapsedMilliseconds;
 
             // Pre-sort the items list using the same comparer that's applied
             // to the ListView. WPF's ListCollectionView will still run the
@@ -1387,7 +1025,6 @@ namespace Frosty.Core.Controls
             // comparisons (cheap) rather than full reordering work.
             if (activeComparer != null)
                 items.Sort(activeComparer);
-            t3 = sw.ElapsedMilliseconds;
 
             // DeferRefresh avoids duplicate sort passes when ItemsSource is
             // assigned — WPF will do a single sort/refresh when the using
@@ -1423,7 +1060,6 @@ namespace Frosty.Core.Controls
                 // would not re-sort either.)
                 ApplyCustomSort(assetListView);
             }
-            t4 = sw.ElapsedMilliseconds;
 
             // VIRTUALIZATION HARD-FIX: Setting ItemsSource can trigger WPF
             // to reapply the ScrollViewer's template, which DESTROYS the old
@@ -1451,32 +1087,6 @@ namespace Frosty.Core.Controls
             // would risk forcing container generation on the new (potentially
             // 20K-item) list. SelectAsset() (called from external code) sets
             // both explicitly when needed.
-            t5 = sw.ElapsedMilliseconds;
-
-            // Only log when the folder has a meaningful number of items —
-            // avoids spamming the log for tiny folders. The threshold of
-            // 500 is well below the 20k "Heads" folder, so the slow case
-            // will always be logged.
-            //
-            // We use App.Logger.Log for this diagnostic. FrostyLogger now defers
-            // RaisePropertyChanged to Background priority, the deferred
-            // notification eventually fires and triggers the
-            // TextBox→ScrollToEnd→layout cascade. If that fires DURING the
-            // natural WPF layout cycle for this click (which runs at Render
-            // priority, higher than Background), the layout cascade gets
-            // coalesced into the click's own layout pass — re-introducing
-            // the 35-second freeze. Writing to PerfDiag avoids the TextBox
-            // entirely, so there is no layout cascade to coalesce.
-            if (items.Count > 500)
-            {
-                App.Logger.Log("UpdateListView: path='" + fullPath + "' items=" + items.Count
-                    + " | cached-lookup=" + (t1 - t0) + "ms"
-                    + " enumerate=" + (t2 - t1) + "ms"
-                    + " presort=" + (t3 - t2) + "ms"
-                    + " itemssource+sort=" + (t4 - t3) + "ms"
-                    + " select=" + (t5 - t4) + "ms"
-                    + " total=" + (t5 - t0) + "ms");
-            }
         }
 
         private void assetListView_SelectionChanged(object sender, SelectionChangedEventArgs e)

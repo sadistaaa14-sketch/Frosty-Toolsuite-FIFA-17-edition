@@ -1,0 +1,50 @@
+<ctrl:FrostyDockableWindow x:Class="DuplicationPlugin.Windows.DuplicateBaseWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ctrl="clr-namespace:Frosty.Controls;assembly=FrostyControls"
+        mc:Ignorable="d"
+        Title="Duplicate Base" Height="180" Width="480" ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/FrostyControls;component/Themes/Generic.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Background="{StaticResource WindowBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition/>
+            <RowDefinition Height="38"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Background="{StaticResource ListBackground}">
+            <StackPanel Margin="5">
+                <DockPanel Margin="0,0,0,5" LastChildFill="True">
+                    <Label Content="Source" FontFamily="Global User Interface" Width="90"/>
+                    <TextBox x:Name="sourceTextBox" Padding="4" FontFamily="Global User Interface"
+                             IsEnabled="False" BorderThickness="1"/>
+                </DockPanel>
+                <DockPanel LastChildFill="True">
+                    <Label Content="New Name" FontFamily="Global User Interface" Width="90"/>
+                    <TextBox x:Name="newNameTextBox" Padding="4" FontFamily="Global User Interface"
+                             BorderThickness="1"
+                             ToolTip="New asset filename (e.g. eyelash_common_alpha_new). It is duplicated into the source folder and registered in base_brt."/>
+                </DockPanel>
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1">
+            <Grid Margin="8">
+                <Button x:Name="cancelButton" Content="Cancel" HorizontalAlignment="Left"
+                        Width="75" Click="CancelButton_Click"/>
+                <Button x:Name="duplicateButton" Content="Duplicate" HorizontalAlignment="Right"
+                        Width="100" Click="DuplicateButton_Click"/>
+            </Grid>
+        </Border>
+    </Grid>
+</ctrl:FrostyDockableWindow>
