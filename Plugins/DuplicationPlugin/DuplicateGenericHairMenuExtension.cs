@@ -182,6 +182,7 @@ namespace DuplicationPlugin
 
             List<EbxAssetEntry> mainAssets = new List<EbxAssetEntry>();
             List<EbxAssetEntry> brtAssets = new List<EbxAssetEntry>();
+            EbxAssetEntry sourceBrtEbxl = null;
             string sourceBrtFolder = null;
 
             foreach (EbxAssetEntry e in App.AssetManager.EnumerateEbx())
@@ -194,9 +195,19 @@ namespace DuplicationPlugin
                     brtAssets.Add(e);
                     sourceBrtFolder = sourceBrtFolder1;
                 }
+                else if (e.Name.Equals(sourceBrtFolder1, StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceBrtEbxl = e;
+                    sourceBrtFolder = sourceBrtFolder1;
+                }
                 else if (path.Equals(sourceBrtFolder2, StringComparison.OrdinalIgnoreCase))
                 {
                     brtAssets.Add(e);
+                    sourceBrtFolder = sourceBrtFolder2;
+                }
+                else if (e.Name.Equals(sourceBrtFolder2, StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceBrtEbxl = e;
                     sourceBrtFolder = sourceBrtFolder2;
                 }
             }
@@ -206,7 +217,8 @@ namespace DuplicationPlugin
                 brtSuffix = "_launch_generic_head_brt";
             string newBrtFolder = newFolder + brtSuffix;
 
-            App.Logger.Log("Found " + mainAssets.Count + " main assets, " + brtAssets.Count + " BRT assets");
+            App.Logger.Log("Found " + mainAssets.Count + " main assets, " + brtAssets.Count + " BRT assets, " +
+                (sourceBrtEbxl != null ? "1 BRT blueprint bundle" : "no BRT blueprint bundle"));
 
             if (mainAssets.Count == 0)
             {
@@ -219,8 +231,15 @@ namespace DuplicationPlugin
             Dictionary<string, string> oldToNewNames = new Dictionary<string, string>();
             List<EbxAssetEntry> allNew = new List<EbxAssetEntry>();
 
+            // Per-asset blueprint bundles (PSD). Same special case as starheads: a
+            // "<asset>_psd_brt" / "_launch_psd_brt" BB EBX in the folder wraps more than
+            // one physical bundle member, so replicate the full source-bundle membership.
+            List<EbxAssetEntry> psdBbs = new List<EbxAssetEntry>();
+            Dictionary<EbxAssetEntry, int> psdBundleIdByBb = new Dictionary<EbxAssetEntry, int>();
+            Dictionary<EbxAssetEntry, int> psdSrcBundleIdByBb = new Dictionary<EbxAssetEntry, int>();
+
             int current = 0;
-            int total = mainAssets.Count + brtAssets.Count;
+            int total = mainAssets.Count + brtAssets.Count + (sourceBrtEbxl != null ? 1 : 0);
 
             foreach (EbxAssetEntry src in mainAssets)
             {
@@ -236,6 +255,18 @@ namespace DuplicationPlugin
                     oldToNewNames[src.Name] = newEntry.Name;
                     allNew.Add(newEntry);
                     App.Logger.Log("  Duplicated: " + src.Name + " -> " + newEntry.Name);
+
+                    if (IsPsdBb(src))
+                    {
+                        int psdBundleId = newEntry.AddedBundles.Count > 0 ? newEntry.AddedBundles[0] : -1;
+                        psdBbs.Add(newEntry);
+                        psdBundleIdByBb[newEntry] = psdBundleId;
+                        psdSrcBundleIdByBb[newEntry] = GetSourceBundleIdForBb(src);
+
+                        DuplicationTool.FixBlueprintBundleName(newEntry, newAssetName);
+                        App.Logger.Log("  PSD blueprint bundle: " + src.Name + " -> " + newEntry.Name +
+                            " (bundle id " + psdBundleId + ", source bundle id " + psdSrcBundleIdByBb[newEntry] + ")");
+                    }
                 }
             }
 
@@ -256,6 +287,76 @@ namespace DuplicationPlugin
                 }
             }
 
+            // Duplicate the BundleRefTableBlueprintBundle EBX. This creates a brand
+            // new blueprint bundle via BlueprintBundleExtension; its id ends up in
+            // newBbEntry.AddedBundles[0].
+            EbxAssetEntry newBbEntry = null;
+            int newBundleId = -1;
+            if (sourceBrtEbxl != null)
+            {
+                current++;
+                string newBbName = newBrtFolder;
+                task.Update("Duplicating " + sourceBrtEbxl.Filename + " (" + current + "/" + total + ")...");
+
+                newBbEntry = DuplicateWithExtension(sourceBrtEbxl, newBbName);
+                if (newBbEntry != null)
+                {
+                    allNew.Add(newBbEntry);
+                    if (newBbEntry.AddedBundles.Count > 0)
+                        newBundleId = newBbEntry.AddedBundles[0];
+
+                    DuplicationTool.FixBlueprintBundleName(newBbEntry, newBbName);
+                    App.Logger.Log("  Duplicated: " + sourceBrtEbxl.Name + " -> " + newBbEntry.Name +
+                        " (bundle id " + newBundleId + ")");
+                }
+            }
+
+            // ── Phase 2.5: Move duplicates into the new blueprint bundle ────────
+            if (newBundleId >= 0)
+            {
+                task.Update("Moving duplicated assets into the new bundle...");
+                MoveAssetsToBundle(allNew, newBundleId);
+            }
+
+            // PSD bundles: put each psd BB back in its own bundle and replicate the
+            // FULL membership of the source psd bundle (more than just the wrapped asset).
+            foreach (EbxAssetEntry bb in psdBbs)
+            {
+                int psdBundleId = psdBundleIdByBb[bb];
+                if (psdBundleId < 0)
+                    continue;
+
+                bb.AddedBundles.Clear();
+                bb.AddedBundles.Add(psdBundleId);
+
+                int srcPsdBundleId = psdSrcBundleIdByBb[bb];
+                if (srcPsdBundleId < 0)
+                {
+                    App.Logger.Log("  PSD bundle " + bb.Name + ": source bundle id unknown; skipping membership copy");
+                    continue;
+                }
+
+                int copied = 0;
+                foreach (EbxAssetEntry src in mainAssets)
+                {
+                    if (IsPsdBb(src))
+                        continue;
+
+                    if (!src.Bundles.Contains(srcPsdBundleId))
+                        continue;
+
+                    if (!oldToNew.TryGetValue(src.Guid, out EbxAssetEntry newEntry))
+                        continue;
+
+                    AddToBundleRecursive(newEntry, psdBundleId, new HashSet<AssetEntry>());
+                    App.Logger.Log("  " + newEntry.Filename + ": added to psd bundle " + psdBundleId);
+                    copied++;
+                }
+
+                if (copied == 0)
+                    App.Logger.Log("  PSD bundle " + bb.Name + ": no source assets found in source bundle " + srcPsdBundleId);
+            }
+
             // ── Phase 3: Fix references ─────────────────────────────────────────
             task.Update("Fixing cross-references...");
             FixCrossReferences(oldToNew, allNew);
@@ -264,7 +365,8 @@ namespace DuplicationPlugin
             if (!Config.Get<bool>("SkipBrtAdd", false))
             {
                 task.Update("Updating BRT entries...");
-                InjectBrtEntries(mainAssets, oldToNewNames);
+                string newBundleRefName = (newBbEntry != null) ? newFolder.ToLower() : null;
+                InjectBrtEntries(mainAssets, oldToNewNames, newBundleRefName);
             }
 
             App.Logger.Log("Generic hair duplication complete (" + allNew.Count + " assets)");
@@ -273,7 +375,8 @@ namespace DuplicationPlugin
         // ─── BRT Injection ──────────────────────────────────────────────────────
 
         private void InjectBrtEntries(List<EbxAssetEntry> sourceAssets,
-            Dictionary<string, string> oldToNewNames)
+            Dictionary<string, string> oldToNewNames,
+            string newBundleRefName)
         {
             Dictionary<string, string> brtPairs = new Dictionary<string, string>();
             foreach (EbxAssetEntry src in sourceAssets)
@@ -307,7 +410,11 @@ namespace DuplicationPlugin
                 {
                     if (brt.ContainsAsset(kvp.Key))
                     {
-                        if (brt.DupeAsset(kvp.Value, kvp.Key))
+                        bool added = !string.IsNullOrEmpty(newBundleRefName)
+                            ? brt.DupeAssetToNewBundle(kvp.Value, kvp.Key, newBundleRefName)
+                            : brt.DupeAsset(kvp.Value, kvp.Key);
+
+                        if (added)
                         {
                             brtModified = true;
                             App.Logger.Log("  BRT " + brtRes.Filename + ": " + kvp.Value);
@@ -374,6 +481,56 @@ namespace DuplicationPlugin
                     }
                 }
             }
+        }
+
+        // ─── Bundle re-pointing ────────────────────────────────────────────────
+
+        private void MoveAssetsToBundle(List<EbxAssetEntry> newEntries, int newBundleId)
+        {
+            HashSet<AssetEntry> visited = new HashSet<AssetEntry>();
+            foreach (EbxAssetEntry e in newEntries)
+                MoveToBundleRecursive(e, newBundleId, visited);
+        }
+
+        private void MoveToBundleRecursive(AssetEntry entry, int newBundleId, HashSet<AssetEntry> visited)
+        {
+            if (entry == null || !visited.Add(entry))
+                return;
+
+            entry.AddedBundles.Clear();
+            entry.AddedBundles.Add(newBundleId);
+
+            foreach (AssetEntry linked in entry.LinkedAssets)
+                MoveToBundleRecursive(linked, newBundleId, visited);
+        }
+
+        private void AddToBundleRecursive(AssetEntry entry, int bundleId, HashSet<AssetEntry> visited)
+        {
+            if (entry == null || !visited.Add(entry))
+                return;
+
+            if (!entry.AddedBundles.Contains(bundleId))
+                entry.AddedBundles.Add(bundleId);
+
+            foreach (AssetEntry linked in entry.LinkedAssets)
+                AddToBundleRecursive(linked, bundleId, visited);
+        }
+
+        private static bool IsPsdBb(EbxAssetEntry e)
+        {
+            return e.Name.EndsWith("_launch_psd_brt", StringComparison.OrdinalIgnoreCase)
+                || e.Name.EndsWith("_psd_brt", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int GetSourceBundleIdForBb(EbxAssetEntry sourceBb)
+        {
+            foreach (BundleEntry be in App.AssetManager.EnumerateBundles())
+            {
+                if (be.Blueprint != null && be.Blueprint.Guid == sourceBb.Guid)
+                    return App.AssetManager.GetBundleId(be);
+            }
+
+            return sourceBb.Bundles.Count > 0 ? sourceBb.Bundles[0] : -1;
         }
 
         // ─── Cross-Reference Fixup (same as starhead) ──────────────────────────

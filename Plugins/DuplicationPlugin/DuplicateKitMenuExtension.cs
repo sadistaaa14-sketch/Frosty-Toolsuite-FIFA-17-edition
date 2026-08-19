@@ -139,23 +139,6 @@ namespace DuplicationPlugin
             return int.TryParse(candidate, out dummy) ? candidate : null;
         }
 
-        /// <summary>
-        /// Finds the bundle ID for launch_sba by scanning all bundles.
-        /// Returns -1 if not found.
-        /// </summary>
-        private static int FindLaunchSbaBundleId()
-        {
-            foreach (BundleEntry be in App.AssetManager.EnumerateBundles())
-            {
-                if (be.Name.Equals("win32/content/common/configs/bundles/launch_sba",
-                    StringComparison.OrdinalIgnoreCase))
-                {
-                    return App.AssetManager.GetBundleId(be);
-                }
-            }
-            return -1;
-        }
-
         internal void DuplicateKit(FrostyTaskWindow task, string sourceFolder,
             string newFolderName, string destPath)
         {
@@ -164,42 +147,30 @@ namespace DuplicationPlugin
             App.Logger.Log("Kit source: " + sourceFolder);
             App.Logger.Log("Kit target: " + newFolder);
 
-            // ── Detect cross-team duplication ───────────────────────────────────
             // Source: .../1_fc_nurnberg_171/home_0_0 → parent = .../1_fc_nurnberg_171
             // Dest:   .../new_team_9999/third_3_0   → parent = .../new_team_9999
             string sourceParent = sourceFolder.Substring(0, sourceFolder.LastIndexOf('/'));
             string destParent = newFolder.Substring(0, newFolder.LastIndexOf('/'));
-            bool isCrossTeam = !sourceParent.Equals(destParent, StringComparison.OrdinalIgnoreCase);
-
-            int launchSbaBundleId = -1;
-            if (isCrossTeam)
-            {
-                App.Logger.Log("Cross-team duplication detected");
-                App.Logger.Log("  Source team folder: " + sourceParent);
-                App.Logger.Log("  Dest team folder:   " + destParent);
-
-                launchSbaBundleId = FindLaunchSbaBundleId();
-                if (launchSbaBundleId < 0)
-                {
-                    App.Logger.Log("ERROR: Could not find launch_sba bundle. Aborting cross-team duplication.");
-                    return;
-                }
-                App.Logger.Log("  launch_sba bundle ID: " + launchSbaBundleId);
-            }
 
             // ── Phase 1: Enumerate ──────────────────────────────────────────────
             task.Update("Finding kit assets...");
 
             List<EbxAssetEntry> sourceAssets = new List<EbxAssetEntry>();
+            EbxAssetEntry sourceBrtEbxl = null;   // the BundleRefTableBlueprintBundle EBX for this kit type
+            string sourceBrtEbxlName = sourceFolder + "_kit_brt";
 
             foreach (EbxAssetEntry e in App.AssetManager.EnumerateEbx())
             {
                 string path = e.Path.Replace('\\', '/');
+                string name = e.Name.Replace('\\', '/');
                 if (path.Equals(sourceFolder, StringComparison.OrdinalIgnoreCase))
                     sourceAssets.Add(e);
+                else if (name.Equals(sourceBrtEbxlName, StringComparison.OrdinalIgnoreCase))
+                    sourceBrtEbxl = e;
             }
 
-            App.Logger.Log("Found " + sourceAssets.Count + " assets in kit folder");
+            App.Logger.Log("Found " + sourceAssets.Count + " assets in kit folder, " +
+                (sourceBrtEbxl != null ? "1 BB EBX" : "no BB EBX"));
 
             if (sourceAssets.Count == 0)
             {
@@ -234,6 +205,14 @@ namespace DuplicationPlugin
 
             Dictionary<string, string> oldToNewNames = new Dictionary<string, string>();
             List<EbxAssetEntry> allNew = new List<EbxAssetEntry>();
+            Dictionary<string, EbxAssetEntry> newEntriesByName = new Dictionary<string, EbxAssetEntry>(StringComparer.OrdinalIgnoreCase);
+
+            // Per-texture blueprint bundles (actor). Kits like Arsenal carry an extra
+            // BundleRefTableBlueprintBundle named "<texture>_actor_brt" inside the kit
+            // folder; the texture it wraps must also live in that extra bundle.
+            List<EbxAssetEntry> actorBbs = new List<EbxAssetEntry>();
+            Dictionary<EbxAssetEntry, int> actorBundleIdByBb = new Dictionary<EbxAssetEntry, int>();
+            Dictionary<EbxAssetEntry, string> actorWrappedSrcByBb = new Dictionary<EbxAssetEntry, string>();
 
             int current = 0;
             int total = sourceAssets.Count;
@@ -261,17 +240,87 @@ namespace DuplicationPlugin
                 EbxAssetEntry newEntry = DuplicateWithExtension(src, newName);
                 if (newEntry != null)
                 {
-                    // Cross-team: move assets into launch_sba so they are always loaded
-                    if (isCrossTeam)
+                    oldToNewNames[src.Name] = newEntry.Name;
+                    newEntriesByName[newEntry.Name] = newEntry;
+                    allNew.Add(newEntry);
+                    App.Logger.Log("  Duplicated: " + src.Name + " -> " + newEntry.Name);
+
+                    // Actor blueprint bundle: "<texture>_actor_brt" EBX inside the kit folder.
+                    if (IsActorBb(src))
                     {
-                        newEntry.AddedBundles.Clear();
-                        newEntry.AddedBundles.Add(launchSbaBundleId);
+                        int actorBundleId = newEntry.AddedBundles.Count > 0 ? newEntry.AddedBundles[0] : -1;
+                        actorBbs.Add(newEntry);
+                        actorBundleIdByBb[newEntry] = actorBundleId;
+                        actorWrappedSrcByBb[newEntry] = StripActorSuffix(src.Name);
+
+                        DuplicationTool.FixBlueprintBundleName(newEntry, newName);
+                        App.Logger.Log("  Actor blueprint bundle: " + src.Name + " -> " + newEntry.Name +
+                            " (bundle id " + actorBundleId + ")");
+                    }
+                }
+            }
+
+            // ── Phase 2.5: Duplicate the kit type's BB EBX → new blueprint bundle ──
+            EbxAssetEntry newBbEntry = null;
+            int newBundleId = -1;
+            if (sourceBrtEbxl != null)
+            {
+                string newBbName = newFolder + "_kit_brt";
+                task.Update("Duplicating " + sourceBrtEbxl.Filename + "...");
+
+                newBbEntry = DuplicateWithExtension(sourceBrtEbxl, newBbName);
+                if (newBbEntry != null)
+                {
+                    allNew.Add(newBbEntry);
+                    if (newBbEntry.AddedBundles.Count > 0)
+                        newBundleId = newBbEntry.AddedBundles[0];
+
+                    // The BB EBX holds a nested BundleRefTableBlueprint whose Name is
+                    // "<root name>_blueprint"; base duplication only renames the root.
+                    EbxAsset newBbAsset = App.AssetManager.GetEbx(newBbEntry);
+                    dynamic newBbRoot = newBbAsset.RootObject;
+                    if (newBbRoot.Blueprint.Type == PointerRefType.Internal && newBbRoot.Blueprint.Internal != null)
+                    {
+                        dynamic bp = newBbRoot.Blueprint.Internal;
+                        bp.Name = newBbName + "_blueprint";
+                        App.AssetManager.ModifyEbx(newBbEntry.Name, newBbAsset);
+                        App.Logger.Log("  Blueprint name -> " + bp.Name);
                     }
 
-                    oldToNewNames[src.Name] = newEntry.Name;
-                    allNew.Add(newEntry);
-                    App.Logger.Log("  Duplicated: " + src.Name + " -> " + newEntry.Name
-                        + (isCrossTeam ? " [launch_sba]" : ""));
+                    App.Logger.Log("  Duplicated: " + sourceBrtEbxl.Name + " -> " + newBbEntry.Name +
+                        " (bundle id " + newBundleId + ")");
+                }
+            }
+
+            // ── Phase 2.6: Move duplicates into the new blueprint bundle ────────
+            if (newBundleId >= 0)
+            {
+                task.Update("Moving duplicated assets into the new bundle...");
+                MoveAssetsToBundle(allNew, newBundleId);
+            }
+
+            // Actor bundles: put each actor BB back in its own bundle and register
+            // the wrapped texture in that bundle too (it lives in BOTH the kit and
+            // the per-texture actor bundle).
+            foreach (EbxAssetEntry bb in actorBbs)
+            {
+                int actorBundleId = actorBundleIdByBb[bb];
+                if (actorBundleId < 0)
+                    continue;
+
+                bb.AddedBundles.Clear();
+                bb.AddedBundles.Add(actorBundleId);
+
+                string wrappedSrc = actorWrappedSrcByBb[bb];
+                if (oldToNewNames.TryGetValue(wrappedSrc, out string wrappedNewName)
+                    && newEntriesByName.TryGetValue(wrappedNewName, out EbxAssetEntry wrappedEntry))
+                {
+                    AddToBundleRecursive(wrappedEntry, actorBundleId, new HashSet<AssetEntry>());
+                    App.Logger.Log("  " + wrappedEntry.Filename + ": added to actor bundle " + actorBundleId);
+                }
+                else
+                {
+                    App.Logger.Log("  Actor bundle " + bb.Name + ": wrapped asset not found for '" + wrappedSrc + "'");
                 }
             }
 
@@ -279,16 +328,61 @@ namespace DuplicationPlugin
             if (!Config.Get<bool>("SkipBrtAdd", false))
             {
                 task.Update("Updating BRT entries...");
-                InjectBrtEntries(sourceAssets, oldToNewNames);
+                string newBundleRefName = (newBbEntry != null) ? newFolder.ToLower() : null;
+                InjectBrtEntries(sourceAssets, oldToNewNames, newBundleRefName);
             }
 
-            App.Logger.Log("Kit duplication complete (" + allNew.Count + " assets)"
-                + (isCrossTeam ? " [cross-team]" : ""));
+            App.Logger.Log("Kit duplication complete (" + allNew.Count + " assets)");
+        }
+
+        private void MoveAssetsToBundle(List<EbxAssetEntry> newEntries, int newBundleId)
+        {
+            HashSet<AssetEntry> visited = new HashSet<AssetEntry>();
+            foreach (EbxAssetEntry e in newEntries)
+                MoveToBundleRecursive(e, newBundleId, visited);
+        }
+
+        private void MoveToBundleRecursive(AssetEntry entry, int newBundleId, HashSet<AssetEntry> visited)
+        {
+            if (entry == null || !visited.Add(entry))
+                return;
+
+            entry.AddedBundles.Clear();
+            entry.AddedBundles.Add(newBundleId);
+
+            foreach (AssetEntry linked in entry.LinkedAssets)
+                MoveToBundleRecursive(linked, newBundleId, visited);
+        }
+
+        private void AddToBundleRecursive(AssetEntry entry, int bundleId, HashSet<AssetEntry> visited)
+        {
+            if (entry == null || !visited.Add(entry))
+                return;
+
+            if (!entry.AddedBundles.Contains(bundleId))
+                entry.AddedBundles.Add(bundleId);
+
+            foreach (AssetEntry linked in entry.LinkedAssets)
+                AddToBundleRecursive(linked, bundleId, visited);
+        }
+
+        private static bool IsActorBb(EbxAssetEntry e)
+        {
+            return e.Name.EndsWith("_actor_brt", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string StripActorSuffix(string name)
+        {
+            if (name.EndsWith("_actor_brt", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - "_actor_brt".Length);
+            return name;
         }
 
         private void InjectBrtEntries(List<EbxAssetEntry> sourceAssets,
-            Dictionary<string, string> oldToNewNames)
+            Dictionary<string, string> oldToNewNames,
+            string newBundleRefName)
         {
+            bool useNewBundle = !string.IsNullOrEmpty(newBundleRefName);
             Dictionary<string, string> brtPairs = new Dictionary<string, string>();
             foreach (EbxAssetEntry src in sourceAssets)
             {
@@ -321,7 +415,11 @@ namespace DuplicationPlugin
                 {
                     if (brt.ContainsAsset(kvp.Key))
                     {
-                        if (brt.DupeAsset(kvp.Value, kvp.Key))
+                        bool added = useNewBundle
+                            ? brt.DupeAssetToNewBundle(kvp.Value, kvp.Key, newBundleRefName)
+                            : brt.DupeAsset(kvp.Value, kvp.Key);
+
+                        if (added)
                         {
                             brtModified = true;
                             App.Logger.Log("  BRT " + brtRes.Filename + ": " + kvp.Value);

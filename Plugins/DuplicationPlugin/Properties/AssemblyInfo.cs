@@ -39,4 +39,5 @@ using static DuplicationPlugin.DuplicationTool;
 [assembly: RegisterMenuExtension(typeof(DuplicateShoeMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateAccessoryMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateBodyScaleMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(DuplicateBodyMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(BulkImportStarheadsMenuExtension))]

@@ -89,7 +89,15 @@ namespace DuplicationPlugin
 
                 // Add new bundle
                 BundleEntry oldBundle = App.AssetManager.GetBundleEntry(newEntry.AddedBundles[0]);
+                string oldSuperName = (oldBundle != null && App.AssetManager.GetSuperBundle(oldBundle.SuperBundleId) != null)
+                    ? App.AssetManager.GetSuperBundle(oldBundle.SuperBundleId).Name
+                    : "<unknown>";
+                App.Logger.Log("BlueprintBundleExtension: source bundle='{0}' super='{1}'",
+                    oldBundle != null ? oldBundle.Name : "<null>", oldSuperName);
+
                 BundleEntry newBundle = App.AssetManager.AddBundle("win32/" + newName.ToLower(), BundleType.BlueprintBundle, oldBundle.SuperBundleId);
+                App.Logger.Log("BlueprintBundleExtension: new bundle='{0}' super='{1}' (superBundleId={2})",
+                    newBundle.Name, App.AssetManager.GetSuperBundle(newBundle.SuperBundleId).Name, newBundle.SuperBundleId);
 
                 newEntry.AddedBundles.Clear();
                 newEntry.AddedBundles.Add(App.AssetManager.GetBundleId(newBundle));
@@ -605,6 +613,26 @@ namespace DuplicationPlugin
             {
                 App.Logger.Log(name + " already has a res files");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// A BundleRefTableBlueprintBundle EBX has a nested BundleRefTableBlueprint
+        /// (reached through the root's Blueprint pointer) whose Name is
+        /// "&lt;root name&gt;_blueprint". Base duplication only renames the root object,
+        /// so this nested name still carries the source name and the new bundle would
+        /// be registered under the wrong blueprint. Fix it to match the new bundle.
+        /// </summary>
+        public static void FixBlueprintBundleName(EbxAssetEntry bbEntry, string newBbName)
+        {
+            EbxAsset newBbAsset = App.AssetManager.GetEbx(bbEntry);
+            dynamic newBbRoot = newBbAsset.RootObject;
+            if (newBbRoot.Blueprint.Type == PointerRefType.Internal && newBbRoot.Blueprint.Internal != null)
+            {
+                dynamic bp = newBbRoot.Blueprint.Internal;
+                bp.Name = newBbName + "_blueprint";
+                App.AssetManager.ModifyEbx(bbEntry.Name, newBbAsset);
+                App.Logger.Log("  Blueprint name -> " + bp.Name);
             }
         }
 

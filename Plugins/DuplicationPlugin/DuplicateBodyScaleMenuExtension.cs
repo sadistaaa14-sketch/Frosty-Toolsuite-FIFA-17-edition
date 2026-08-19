@@ -175,14 +175,21 @@ namespace DuplicationPlugin
 
             // Duplicate BlueprintBundle (creates new Frosty bundle automatically
             // via BlueprintBundleExtension since type is BundleRefTableBlueprintBundle)
+            EbxAssetEntry newBb = null;
+            int newBundleId = -1;
             if (sourceBb != null)
             {
                 task.Update("Duplicating " + sourceBbName + "...");
-                EbxAssetEntry newBb = DuplicateWithExtension(sourceBb, newBbPath);
+                newBb = DuplicateWithExtension(sourceBb, newBbPath);
                 if (newBb != null)
                 {
                     allNew.Add(newBb);
-                    App.Logger.Log("  Duplicated: " + sourceBb.Name + " -> " + newBb.Name);
+                    if (newBb.AddedBundles.Count > 0)
+                        newBundleId = newBb.AddedBundles[0];
+
+                    DuplicationTool.FixBlueprintBundleName(newBb, newBbPath);
+                    App.Logger.Log("  Duplicated: " + sourceBb.Name + " -> " + newBb.Name +
+                        " (bundle id " + newBundleId + ")");
                 }
             }
             else
@@ -190,11 +197,18 @@ namespace DuplicationPlugin
                 App.Logger.Log("  WARNING: No BlueprintBundle found for " + sourceBbName);
             }
 
+            // ── Phase 2.5: Move duplicates into the new blueprint bundle ────────
+            if (newBundleId >= 0)
+            {
+                task.Update("Moving duplicated assets into the new bundle...");
+                MoveAssetsToBundle(allNew, newBundleId);
+            }
+
             // ── Phase 3: BRT injection ──────────────────────────────────────────
             if (!Config.Get<bool>("SkipBrtAdd", false) && oldToNewNames.Count > 0)
             {
                 task.Update("Updating BRT entries...");
-                InjectBrtEntries(sourceMain, oldToNewNames);
+                InjectBrtEntries(sourceMain, oldToNewNames, newMainPath.ToLower());
             }
 
             App.Logger.Log("Body scale duplication complete (" + allNew.Count + " assets)");
@@ -203,7 +217,8 @@ namespace DuplicationPlugin
         // ─── BRT Injection ──────────────────────────────────────────────────────
 
         private void InjectBrtEntries(EbxAssetEntry sourceMain,
-            Dictionary<string, string> oldToNewNames)
+            Dictionary<string, string> oldToNewNames,
+            string newBundleRefName)
         {
             // Only the main BodyBuilderDataAsset is in the BRT
             Dictionary<string, string> brtPairs = new Dictionary<string, string>();
@@ -234,7 +249,11 @@ namespace DuplicationPlugin
                 {
                     if (brt.ContainsAsset(kvp.Key))
                     {
-                        if (brt.DupeAsset(kvp.Value, kvp.Key))
+                        bool added = !string.IsNullOrEmpty(newBundleRefName)
+                            ? brt.DupeAssetToNewBundle(kvp.Value, kvp.Key, newBundleRefName)
+                            : brt.DupeAsset(kvp.Value, kvp.Key);
+
+                        if (added)
                         {
                             brtModified = true;
                             App.Logger.Log("  BRT " + brtRes.Filename + ": " + kvp.Value);
@@ -248,6 +267,27 @@ namespace DuplicationPlugin
                     App.Logger.Log("  Saved BRT: " + brtRes.Name);
                 }
             }
+        }
+
+        // ─── Bundle re-pointing ────────────────────────────────────────────────
+
+        private void MoveAssetsToBundle(List<EbxAssetEntry> newEntries, int newBundleId)
+        {
+            HashSet<AssetEntry> visited = new HashSet<AssetEntry>();
+            foreach (EbxAssetEntry e in newEntries)
+                MoveToBundleRecursive(e, newBundleId, visited);
+        }
+
+        private void MoveToBundleRecursive(AssetEntry entry, int newBundleId, HashSet<AssetEntry> visited)
+        {
+            if (entry == null || !visited.Add(entry))
+                return;
+
+            entry.AddedBundles.Clear();
+            entry.AddedBundles.Add(newBundleId);
+
+            foreach (AssetEntry linked in entry.LinkedAssets)
+                MoveToBundleRecursive(linked, newBundleId, visited);
         }
     }
 }

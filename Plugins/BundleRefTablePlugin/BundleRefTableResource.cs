@@ -17,9 +17,17 @@ namespace BundleRefTablePlugin
 
         public ModifiedBundleRefTableResource modResource = null;
 
+        // TEMPORARY A/B TEST: when true, the new bundle ref is still written into
+        // the BRT, but the duplicated-asset lookups keep pointing at the SOURCE
+        // bundle ref (Messi) instead of the new one. Set false to restore the
+        // re-pointing behaviour.
+        public static bool A_B_TEST_LOOKUPS_AT_SOURCE_REF = false;
+
         // Parsed data (for ContainsAsset lookups)
         public List<AssetLookup> assetLookups;
         public List<Asset> assets;
+        public List<BundleRef> bundleRefs;
+        public List<BundleInfo> bundles;
 
         // Raw binary preserved from Read() — SaveBytes works on this directly
         private byte[] rawData;
@@ -48,6 +56,19 @@ namespace BundleRefTablePlugin
         {
             public string Name { get; set; }
             public string Path { get; set; }
+        }
+
+        public class BundleRef
+        {
+            public string Name { get; set; }
+            public string Path { get; set; }
+            public uint BundleIndex { get; set; }
+        }
+
+        public class BundleInfo
+        {
+            public string Name { get; set; }
+            public uint ParentIndex { get; set; }
         }
 
         public BundleRefTableResource()
@@ -122,6 +143,38 @@ namespace BundleRefTablePlugin
                     Path = ReadCStr(rawData, (int)pp)
                 });
             }
+
+            // Parse bundle refs (name, path, bundle index)
+            bundleRefs = new List<BundleRef>();
+            long brStart = (long)brPtr;
+            for (int i = 0; i < brCount; i++)
+            {
+                long off = brStart + i * 24;
+                ulong np = BitConverter.ToUInt64(rawData, (int)off);
+                ulong pp = BitConverter.ToUInt64(rawData, (int)off + 8);
+                ulong bp = BitConverter.ToUInt64(rawData, (int)off + 16);
+                bundleRefs.Add(new BundleRef
+                {
+                    Name = ReadCStr(rawData, (int)np),
+                    Path = ReadCStr(rawData, (int)pp),
+                    BundleIndex = (uint)((bp - bundlesPtr) / 16)
+                });
+            }
+
+            // Parse bundles (name, parent index)
+            bundles = new List<BundleInfo>();
+            long bundlesStart = (long)bundlesPtr;
+            for (int i = 0; i < bundleCountActual; i++)
+            {
+                long off = bundlesStart + i * 16;
+                ulong np = BitConverter.ToUInt64(rawData, (int)off);
+                ulong pp = BitConverter.ToUInt64(rawData, (int)off + 8);
+                bundles.Add(new BundleInfo
+                {
+                    Name = ReadCStr(rawData, (int)np),
+                    ParentIndex = (uint)((pp - bundlesPtr) / 16)
+                });
+            }
         }
 
         /// <summary>
@@ -135,6 +188,38 @@ namespace BundleRefTablePlugin
         {
             if (rawData == null)
                 throw new InvalidOperationException("No raw BRT data available");
+
+            // ── 0. Sort newly-added assets to match the original per-player
+            // (path, name) ordering, and remap lookup asset indices accordingly.
+            int origAssetCount0 = (int)assetCount;
+            int newAssetCount0 = assets.Count - origAssetCount0;
+            if (newAssetCount0 > 0)
+            {
+                Asset[] newAssetRefs = new Asset[newAssetCount0];
+                for (int i = 0; i < newAssetCount0; i++)
+                    newAssetRefs[i] = assets[origAssetCount0 + i];
+
+                assets.Sort(origAssetCount0, newAssetCount0, Comparer<Asset>.Create((a, b) =>
+                {
+                    int cmp = string.CompareOrdinal(a.Path, b.Path);
+                    return cmp != 0 ? cmp : string.CompareOrdinal(a.Name, b.Name);
+                }));
+
+                Dictionary<uint, uint> remap = new Dictionary<uint, uint>();
+                for (int i = 0; i < newAssetCount0; i++)
+                {
+                    uint oldIdx = (uint)(origAssetCount0 + i);
+                    int newIdx = assets.IndexOf(newAssetRefs[i], origAssetCount0);
+                    if (newIdx >= 0)
+                        remap[oldIdx] = (uint)newIdx;
+                }
+
+                for (int i = 0; i < assetLookups.Count; i++)
+                {
+                    if (remap.TryGetValue(assetLookups[i].AssetIndex, out uint newIdx))
+                        assetLookups[i].AssetIndex = newIdx;
+                }
+            }
 
             // ── 1. Find string table boundaries ─────────────────────────
             // Strings start at stored offset 0x50 (file 0x60)
@@ -155,10 +240,34 @@ namespace BundleRefTablePlugin
             Dictionary<string, int> newStringOffsets = new Dictionary<string, int>();
 
             int newAssetStartIndex = (int)assetCount; // original asset count
+            // Emit new strings in the original BRT layout: a new asset's path first,
+            // followed by its (sorted) names.
+            string lastPath = null;
             for (int i = newAssetStartIndex; i < assets.Count; i++)
             {
                 string name = assets[i].Name;
                 string path = assets[i].Path;
+                if (path != lastPath)
+                {
+                    if (!HasString(rawData, path, strStart, brtNameStart) && !newStringSet.Contains(path))
+                    {
+                        newStrings.Add(path);
+                        newStringSet.Add(path);
+                    }
+                    lastPath = path;
+                }
+                if (!HasString(rawData, name, strStart, brtNameStart) && !newStringSet.Contains(name))
+                {
+                    newStrings.Add(name);
+                    newStringSet.Add(name);
+                }
+            }
+
+            // New bundle ref strings (name/path) and new bundle strings (name)
+            for (int i = (int)brCount; i < bundleRefs.Count; i++)
+            {
+                string name = bundleRefs[i].Name;
+                string path = bundleRefs[i].Path;
                 if (!HasString(rawData, name, strStart, brtNameStart) && !newStringSet.Contains(name))
                 {
                     newStrings.Add(name);
@@ -168,6 +277,15 @@ namespace BundleRefTablePlugin
                 {
                     newStrings.Add(path);
                     newStringSet.Add(path);
+                }
+            }
+            for (int i = (int)bundleCountActual; i < bundles.Count; i++)
+            {
+                string name = bundles[i].Name;
+                if (!HasString(rawData, name, strStart, brtNameStart) && !newStringSet.Contains(name))
+                {
+                    newStrings.Add(name);
+                    newStringSet.Add(name);
                 }
             }
 
@@ -208,9 +326,10 @@ namespace BundleRefTablePlugin
             };
 
             // ── 5. Section layout ───────────────────────────────────────
-            int newBrCount = (int)brCount;
+            int newBrCount = bundleRefs.Count;
             int newAssetCount = assets.Count;
             int newAlCount = assetLookups.Count;
+            int newBundleCount = bundles.Count;
 
             int strtabResStart = 0x50;
             int newBrRes = strtabResStart + strtabPadded.Length;
@@ -219,11 +338,11 @@ namespace BundleRefTablePlugin
             int alEndRes = newAlRes + (newAlCount * 12);
             int alPadLen2 = (16 - (alEndRes % 16)) % 16;
             int newBundlesRes = alEndRes + alPadLen2;
-            int newRelocRes = newBundlesRes + ((int)bundleCountActual * 16);
+            int newRelocRes = newBundlesRes + (newBundleCount * 16);
 
             // ── 6. Build sections from raw data + new entries ───────────
 
-            // Bundle Refs (unchanged, just update pointers)
+            // Bundle Refs (original + new)
             byte[] newBrBytes = new byte[newBrCount * 24];
             for (int i = 0; i < brCount; i++)
             {
@@ -234,6 +353,18 @@ namespace BundleRefTablePlugin
                 ulong oldBundlePtr = BitConverter.ToUInt64(rawData, srcOff + 16);
                 uint bi = (uint)(oldBundlePtr - bundlesPtr) / 16;
                 ulong p2 = (ulong)newBundlesRes + bi * 16;
+
+                int dstOff = i * 24;
+                WriteU64(newBrBytes, dstOff, p0);
+                WriteU64(newBrBytes, dstOff + 8, p1);
+                WriteU64(newBrBytes, dstOff + 16, p2);
+            }
+            // Append new bundle refs
+            for (int i = (int)brCount; i < bundleRefs.Count; i++)
+            {
+                ulong p0 = (ulong)GetStringPtr(rawData, bundleRefs[i].Name, strStart, brtNameStart, newStringOffsets);
+                ulong p1 = (ulong)GetStringPtr(rawData, bundleRefs[i].Path, strStart, brtNameStart, newStringOffsets);
+                ulong p2 = (ulong)newBundlesRes + bundleRefs[i].BundleIndex * 16;
 
                 int dstOff = i * 24;
                 WriteU64(newBrBytes, dstOff, p0);
@@ -278,14 +409,24 @@ namespace BundleRefTablePlugin
             // AL padding
             byte[] alPad = new byte[alPadLen2];
 
-            // Bundles (unchanged, just update pointers)
-            byte[] newBundlesBytes = new byte[(int)bundleCountActual * 16];
+            // Bundles (original + new)
+            byte[] newBundlesBytes = new byte[newBundleCount * 16];
             for (int i = 0; i < bundleCountActual; i++)
             {
                 int srcOff = (int)bundlesPtr + i * 16;
                 ulong p0 = updatePtr(BitConverter.ToUInt64(rawData, srcOff));
                 uint parentIdx = (uint)(BitConverter.ToUInt64(rawData, srcOff + 8) - bundlesPtr) / 16;
                 ulong p1 = (ulong)newBundlesRes + parentIdx * 16;
+
+                int dstOff = i * 16;
+                WriteU64(newBundlesBytes, dstOff, p0);
+                WriteU64(newBundlesBytes, dstOff + 8, p1);
+            }
+            // Append new bundles
+            for (int i = (int)bundleCountActual; i < bundles.Count; i++)
+            {
+                ulong p0 = (ulong)GetStringPtr(rawData, bundles[i].Name, strStart, brtNameStart, newStringOffsets);
+                ulong p1 = (ulong)newBundlesRes + bundles[i].ParentIndex * 16;
 
                 int dstOff = i * 16;
                 WriteU64(newBundlesBytes, dstOff, p0);
@@ -307,7 +448,7 @@ namespace BundleRefTablePlugin
                 uint b = (uint)(newAssetsRes + i * 16);
                 reloc.Add(b); reloc.Add(b + 8);
             }
-            for (int i = 0; i < bundleCountActual; i++)
+            for (int i = 0; i < newBundleCount; i++)
             {
                 uint b = (uint)(newBundlesRes + i * 16);
                 reloc.Add(b); reloc.Add(b + 8);
@@ -347,9 +488,52 @@ namespace BundleRefTablePlugin
         {
             modResource = inModResource as ModifiedBundleRefTableResource;
 
+            // First materialise any new blueprint bundles + bundle refs (the
+            // duplicated player gets its own bundle instead of reusing the
+            // source's), and remember each new bundle ref index by name.
+            // Two bundle-ref shapes:
+            //  - Style A (folder ref): ref.Name = folder, ref.Path = "". A new asset at
+            //    "<folder>/<name>" is matched by its folder.
+            //  - Style B (per-asset ref, e.g. _psd_brt / _actor_brt): ref.Name = asset
+            //    name, ref.Path = folder. A new asset at "<folder>/<name>" is matched by
+            //    its full path.
+            Dictionary<string, uint> refIndexByFolder = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, uint> refIndexByFullPath = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+            if (modResource != null)
+            {
+                foreach (BundleRefAddition add in modResource.BundleRefAdditions)
+                {
+                    uint idx = AddBundleRef(add.BundleRefName, add.BundleRefPath, add.BundleIndex);
+
+                    string folder = string.IsNullOrEmpty(add.BundleRefPath) ? add.BundleRefName : add.BundleRefPath;
+                    refIndexByFolder[folder] = idx;
+
+                    if (!string.IsNullOrEmpty(add.BundleRefPath))
+                        refIndexByFullPath[add.BundleRefPath + "/" + add.BundleRefName] = idx;
+                }
+            }
+
             foreach (KeyValuePair<string, string> kvp in modResource.DuplicationDict)
             {
-                AddDupeEntry(kvp.Key, kvp.Value);
+                // A duplicated asset lives under "<new player path>/<name>"; if that
+                // path has a new bundle ref, point the lookup at it. Otherwise fall
+                // back to the source's bundle ref (legacy behaviour).
+                uint? refIdx = null;
+                if (!A_B_TEST_LOOKUPS_AT_SOURCE_REF)
+                {
+                    if (refIndexByFullPath.TryGetValue(kvp.Key, out uint fullFound))
+                    {
+                        refIdx = fullFound;
+                    }
+                    else
+                    {
+                        int slash = kvp.Key.LastIndexOf('/');
+                        if (slash > 0 && refIndexByFolder.TryGetValue(kvp.Key.Substring(0, slash), out uint folderFound))
+                            refIdx = folderFound;
+                    }
+                }
+
+                AddDupeEntry(kvp.Key, kvp.Value, refIdx);
             }
         }
 
@@ -377,6 +561,91 @@ namespace BundleRefTablePlugin
             return modResource.AddAsset(newAssetPath, existingAssetPath);
         }
 
+        /// <summary>
+        /// Records a duplication that should live in a brand new blueprint bundle
+        /// rather than reusing the source asset's bundle ref. The bundle/ref are
+        /// materialised later in ApplyModifiedResource (at mod launch).
+        /// </summary>
+        public bool DupeAssetToNewBundle(string newAssetPath, string existingAssetPath,
+            string newBundleRefName)
+        {
+            if (modResource == null)
+                modResource = new ModifiedBundleRefTableResource();
+
+            uint bundleIndex = GetSourceBundleIndex(existingAssetPath, out string sourceRefName, out string sourceRefPath);
+
+            // Style A (folder ref): the source ref carries the whole folder in Name and
+            // an empty Path, so the new ref mirrors the folder name.
+            //
+            // Style B (per-asset ref, e.g. _psd_brt / _actor_brt): the source ref carries
+            // the asset NAME in Name and the folder in Path. The new ref must do the
+            // same, so derive both from the new asset path.
+            string newRefName;
+            string newRefPath;
+            if (string.IsNullOrEmpty(sourceRefPath))
+            {
+                newRefName = newBundleRefName;
+                newRefPath = "";
+            }
+            else
+            {
+                int slash = newAssetPath.LastIndexOf('/');
+                newRefName = newAssetPath.Substring(slash + 1);
+                newRefPath = newAssetPath.Substring(0, slash);
+            }
+
+            modResource.AddBundleRefAddition(newRefName, newRefPath, bundleIndex);
+
+            return modResource.AddAsset(newAssetPath, existingAssetPath);
+        }
+
+        /// <summary>
+        /// Returns the parent bundle index of the bundle that the given existing
+        /// asset's bundle ref points to ("the parent of the source bundle").
+        /// </summary>
+        public uint GetSourceBundleIndex(string existingAssetPath, out string sourceRefName, out string sourceRefPath)
+        {
+            sourceRefName = "";
+            sourceRefPath = "";
+            uint oldHash = BRTUtils.Fnv1Hash32(existingAssetPath);
+            foreach (AssetLookup lookup in assetLookups)
+            {
+                if (lookup.Hash == oldHash)
+                {
+                    uint refIdx = lookup.BundleRefIndex;
+                    if (refIdx < bundleRefs.Count)
+                    {
+                        sourceRefName = bundleRefs[(int)refIdx].Name;
+                        sourceRefPath = bundleRefs[(int)refIdx].Path;
+                        return bundleRefs[(int)refIdx].BundleIndex;
+                    }
+                    break;
+                }
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// Adds (or reuses) a new bundle + bundle ref and returns the bundle ref
+        /// index. The new bundle is the duplicated BundleRefTableBlueprintBundle
+        /// content path, parented under the source bundle's parent.
+        /// </summary>
+        public uint AddBundleRef(string bundleRefName, string bundleRefPath, uint bundleIndex)
+        {
+            for (int i = 0; i < bundleRefs.Count; i++)
+            {
+                if (bundleRefs[i].Name.Equals(bundleRefName, StringComparison.OrdinalIgnoreCase)
+                    && bundleRefs[i].Path.Equals(bundleRefPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    bundleRefs[i].BundleIndex = bundleIndex;
+                    return (uint)i;
+                }
+            }
+
+            bundleRefs.Add(new BundleRef { Name = bundleRefName, Path = bundleRefPath, BundleIndex = bundleIndex });
+            return (uint)(bundleRefs.Count - 1);
+        }
+
         public bool RevertDupe(string newAssetPath)
         {
             if (modResource == null)
@@ -385,7 +654,7 @@ namespace BundleRefTablePlugin
             return modResource.RemoveAsset(newAssetPath);
         }
 
-        public bool AddDupeEntry(string newAssetPath, string existingAssetPath)
+        public bool AddDupeEntry(string newAssetPath, string existingAssetPath, uint? bundleRefIndex = null)
         {
             uint oldHash = BRTUtils.Fnv1Hash32(existingAssetPath);
             uint newHashFull = BRTUtils.Fnv1Hash32(newAssetPath);
@@ -406,7 +675,7 @@ namespace BundleRefTablePlugin
             {
                 if (assetLookups[i].Hash == oldHash)
                 {
-                    uint bri = assetLookups[i].BundleRefIndex;
+                    uint bri = bundleRefIndex ?? assetLookups[i].BundleRefIndex;
 
                     Asset newAsset = new Asset();
                     newAsset.Name = newAssetPath.Substring(newAssetPath.LastIndexOf("/") + 1);
@@ -542,6 +811,13 @@ namespace BundleRefTablePlugin
         }
     }
 
+    public class BundleRefAddition
+    {
+        public string BundleRefName;
+        public string BundleRefPath;
+        public uint BundleIndex;
+    }
+
     public class ModifiedBundleRefTableResource : ModifiedResource
     {
         // App.AssetManager is only populated inside the Frosty Editor process. FrostyModExecutor
@@ -553,8 +829,10 @@ namespace BundleRefTablePlugin
         private static readonly object s_assetManagerLock = new object();
 
         public Dictionary<string, string> DuplicationDict { get { return newAssetMapping; } }
+        public List<BundleRefAddition> BundleRefAdditions { get { return bundleRefAdditions; } }
 
         private Dictionary<string, string> newAssetMapping = new Dictionary<string, string>();
+        private List<BundleRefAddition> bundleRefAdditions = new List<BundleRefAddition>();
 
         public bool AddAsset(string newAsset, string oldAsset)
         {
@@ -574,6 +852,25 @@ namespace BundleRefTablePlugin
                 return true;
             }
             return false;
+        }
+
+        public void AddBundleRefAddition(string bundleRefName, string bundleRefPath, uint bundleIndex)
+        {
+            foreach (BundleRefAddition add in bundleRefAdditions)
+            {
+                if (add.BundleRefName.Equals(bundleRefName, StringComparison.OrdinalIgnoreCase)
+                    && add.BundleRefPath.Equals(bundleRefPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    add.BundleIndex = bundleIndex;
+                    return;
+                }
+            }
+            bundleRefAdditions.Add(new BundleRefAddition
+            {
+                BundleRefName = bundleRefName,
+                BundleRefPath = bundleRefPath,
+                BundleIndex = bundleIndex
+            });
         }
 
         public override void ReadInternal(NativeReader reader)
@@ -622,7 +919,24 @@ namespace BundleRefTablePlugin
                 }
             }
 
-            FileLogger.Log("    BRT.ReadInternal: done, total pairs={0}", newAssetMapping.Count);
+            // bundle ref additions (new blueprint bundles). Older mods end here.
+            if (reader.Position < reader.Length)
+            {
+                int version = reader.ReadInt();
+                int brCount = reader.ReadInt();
+                for (int i = 0; i < brCount; i++)
+                {
+                    string refName = reader.ReadNullTerminatedString();
+                    string refPath = (version >= 1) ? reader.ReadNullTerminatedString() : "";
+                    uint bundleIndex = reader.ReadUInt();
+                    AddBundleRefAddition(refName, refPath, bundleIndex);
+                    FileLogger.Log("    BRT.ReadInternal bundleRef [{0}/{1}]: ref='{2}' path='{3}' bundleIndex={4}",
+                        i + 1, brCount, refName, refPath, bundleIndex);
+                }
+            }
+
+            FileLogger.Log("    BRT.ReadInternal: done, total pairs={0}, bundleRefAdditions={1}",
+                newAssetMapping.Count, bundleRefAdditions.Count);
         }
 
         public override void SaveInternal(NativeWriter writer)
@@ -632,6 +946,17 @@ namespace BundleRefTablePlugin
             {
                 writer.WriteNullTerminatedString(key);
                 writer.WriteNullTerminatedString(newAssetMapping[key]);
+            }
+
+            // Bundle-ref additions: version 1 adds the Path field (Style-B per-asset
+            // bundle refs). Legacy mods (version 0) stored only Name + BundleIndex.
+            writer.Write(1);
+            writer.Write(bundleRefAdditions.Count);
+            foreach (BundleRefAddition add in bundleRefAdditions)
+            {
+                writer.WriteNullTerminatedString(add.BundleRefName);
+                writer.WriteNullTerminatedString(add.BundleRefPath ?? "");
+                writer.Write(add.BundleIndex);
             }
         }
     }

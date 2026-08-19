@@ -181,6 +181,7 @@ namespace DuplicationPlugin
 
             List<EbxAssetEntry> mainAssets = new List<EbxAssetEntry>();
             List<EbxAssetEntry> brtAssets = new List<EbxAssetEntry>();
+            EbxAssetEntry sourceBrtEbxl = null;
             string sourceBrtFolder = null;
 
             foreach (EbxAssetEntry e in App.AssetManager.EnumerateEbx())
@@ -193,9 +194,19 @@ namespace DuplicationPlugin
                     brtAssets.Add(e);
                     sourceBrtFolder = sourceBrtFolder1;
                 }
+                else if (e.Name.Equals(sourceBrtFolder1, StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceBrtEbxl = e;
+                    sourceBrtFolder = sourceBrtFolder1;
+                }
                 else if (path.Equals(sourceBrtFolder2, StringComparison.OrdinalIgnoreCase))
                 {
                     brtAssets.Add(e);
+                    sourceBrtFolder = sourceBrtFolder2;
+                }
+                else if (e.Name.Equals(sourceBrtFolder2, StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceBrtEbxl = e;
                     sourceBrtFolder = sourceBrtFolder2;
                 }
             }
@@ -206,7 +217,8 @@ namespace DuplicationPlugin
                 brtSuffix = "_launch_manager_brt";
             string newBrtFolder = newFolder + brtSuffix;
 
-            App.Logger.Log("Found " + mainAssets.Count + " main assets, " + brtAssets.Count + " BRT assets");
+            App.Logger.Log("Found " + mainAssets.Count + " main assets, " + brtAssets.Count + " BRT assets, " +
+                (sourceBrtEbxl != null ? "1 BRT blueprint bundle" : "no BRT blueprint bundle"));
 
             if (mainAssets.Count == 0)
             {
@@ -220,7 +232,7 @@ namespace DuplicationPlugin
             List<EbxAssetEntry> allNew = new List<EbxAssetEntry>();
 
             int current = 0;
-            int total = mainAssets.Count + brtAssets.Count;
+            int total = mainAssets.Count + brtAssets.Count + (sourceBrtEbxl != null ? 1 : 0);
 
             foreach (EbxAssetEntry src in mainAssets)
             {
@@ -256,6 +268,37 @@ namespace DuplicationPlugin
                 }
             }
 
+            // Duplicate the BundleRefTableBlueprintBundle EBX. This creates a brand
+            // new blueprint bundle via BlueprintBundleExtension; its id ends up in
+            // newBbEntry.AddedBundles[0].
+            EbxAssetEntry newBbEntry = null;
+            int newBundleId = -1;
+            if (sourceBrtEbxl != null)
+            {
+                current++;
+                string newBbName = newBrtFolder;
+                task.Update("Duplicating " + sourceBrtEbxl.Filename + " (" + current + "/" + total + ")...");
+
+                newBbEntry = DuplicateWithExtension(sourceBrtEbxl, newBbName);
+                if (newBbEntry != null)
+                {
+                    allNew.Add(newBbEntry);
+                    if (newBbEntry.AddedBundles.Count > 0)
+                        newBundleId = newBbEntry.AddedBundles[0];
+
+                    DuplicationTool.FixBlueprintBundleName(newBbEntry, newBbName);
+                    App.Logger.Log("  Duplicated: " + sourceBrtEbxl.Name + " -> " + newBbEntry.Name +
+                        " (bundle id " + newBundleId + ")");
+                }
+            }
+
+            // ── Phase 2.5: Move duplicates into the new blueprint bundle ────────
+            if (newBundleId >= 0)
+            {
+                task.Update("Moving duplicated assets into the new bundle...");
+                MoveAssetsToBundle(allNew, newBundleId);
+            }
+
             // ── Phase 3: Fix references ─────────────────────────────────────────
             task.Update("Fixing cross-references...");
             FixCrossReferences(oldToNew, allNew);
@@ -264,7 +307,8 @@ namespace DuplicationPlugin
             if (!Config.Get<bool>("SkipBrtAdd", false))
             {
                 task.Update("Updating BRT entries...");
-                InjectBrtEntries(mainAssets, oldToNewNames);
+                string newBundleRefName = (newBbEntry != null) ? newFolder.ToLower() : null;
+                InjectBrtEntries(mainAssets, oldToNewNames, newBundleRefName);
             }
 
             App.Logger.Log("Manager duplication complete (" + allNew.Count + " assets)");
@@ -273,7 +317,8 @@ namespace DuplicationPlugin
         // ─── BRT Injection ──────────────────────────────────────────────────────
 
         private void InjectBrtEntries(List<EbxAssetEntry> sourceAssets,
-            Dictionary<string, string> oldToNewNames)
+            Dictionary<string, string> oldToNewNames,
+            string newBundleRefName)
         {
             Dictionary<string, string> brtPairs = new Dictionary<string, string>();
             foreach (EbxAssetEntry src in sourceAssets)
@@ -307,7 +352,11 @@ namespace DuplicationPlugin
                 {
                     if (brt.ContainsAsset(kvp.Key))
                     {
-                        if (brt.DupeAsset(kvp.Value, kvp.Key))
+                        bool added = !string.IsNullOrEmpty(newBundleRefName)
+                            ? brt.DupeAssetToNewBundle(kvp.Value, kvp.Key, newBundleRefName)
+                            : brt.DupeAsset(kvp.Value, kvp.Key);
+
+                        if (added)
                         {
                             brtModified = true;
                             App.Logger.Log("  BRT " + brtRes.Filename + ": " + kvp.Value);
@@ -374,6 +423,27 @@ namespace DuplicationPlugin
                     }
                 }
             }
+        }
+
+        // ─── Bundle re-pointing ────────────────────────────────────────────────
+
+        private void MoveAssetsToBundle(List<EbxAssetEntry> newEntries, int newBundleId)
+        {
+            HashSet<AssetEntry> visited = new HashSet<AssetEntry>();
+            foreach (EbxAssetEntry e in newEntries)
+                MoveToBundleRecursive(e, newBundleId, visited);
+        }
+
+        private void MoveToBundleRecursive(AssetEntry entry, int newBundleId, HashSet<AssetEntry> visited)
+        {
+            if (entry == null || !visited.Add(entry))
+                return;
+
+            entry.AddedBundles.Clear();
+            entry.AddedBundles.Add(newBundleId);
+
+            foreach (AssetEntry linked in entry.LinkedAssets)
+                MoveToBundleRecursive(linked, newBundleId, visited);
         }
 
         // ─── Cross-Reference Fixup ──────────────────────────────────────────────

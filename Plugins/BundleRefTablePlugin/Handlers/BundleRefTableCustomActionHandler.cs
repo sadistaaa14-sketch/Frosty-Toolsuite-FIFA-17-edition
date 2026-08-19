@@ -92,6 +92,13 @@ namespace BundleRefTablePlugin.Handlers
                     oldTable.AddAsset(key, newTable.DuplicationDict[key]);
                 }
 
+                foreach (BundleRefAddition add in newTable.BundleRefAdditions)
+                {
+                    oldTable.AddBundleRefAddition(add.BundleRefName, add.BundleRefPath, add.BundleIndex);
+                    FileLogger.Log("  BRT.Load: merging bundleRef: '{0}' path='{1}' -> bundle {2}",
+                        add.BundleRefName, add.BundleRefPath, add.BundleIndex);
+                }
+
                 FileLogger.Log("  BRT.Load: merged table now has {0} pairs", oldTable.DuplicationDict.Count);
                 return oldTable;
             }
@@ -137,6 +144,20 @@ namespace BundleRefTablePlugin.Handlers
 
                 byte[] savedBytes = resource.SaveBytes();
                 FileLogger.Log("  BRT.Modify: SaveBytes done — size={0}", savedBytes?.Length ?? 0);
+
+                // Dump the modified BRT binary to the user's Downloads directory for inspection
+                try
+                {
+                    string downloadsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+                    string safeName = origEntry.Name.Replace('/', '_').Replace('\\', '_');
+                    string dumpPath = Path.Combine(downloadsDir, string.Format("BRT_{0}_{1}.bin", safeName, DateTime.Now.ToString("yyyyMMdd_HHmmss_fff")));
+                    File.WriteAllBytes(dumpPath, savedBytes);
+                    FileLogger.Log("  BRT.Modify: dumped modified BRT to {0}", dumpPath);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log("  BRT.Modify: failed to dump modified BRT: {0}", ex.Message);
+                }
 
                 origEntry.OriginalSize = savedBytes.Length;
                 outData = Utils.CompressFile(savedBytes);

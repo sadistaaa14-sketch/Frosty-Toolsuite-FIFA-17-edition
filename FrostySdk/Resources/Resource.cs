@@ -19,7 +19,12 @@ namespace FrostySdk.Resources
 
         public virtual void Read(NativeReader reader, AssetManager am, ResAssetEntry entry, ModifiedResource modifiedData)
         {
-            resMeta = entry.ResMeta;
+            // Copy the res meta instead of aliasing it. Resource implementations
+            // (MeshSet, AtlasTexture, ShaderBlockDepot, BundleRefTableResource, ...)
+            // rewrite resMeta in place during SaveBytes() to update the relocation
+            // offset/size header. Without a copy, that rewrite corrupts the base
+            // asset entry's ResMeta because both hold the same array by reference.
+            resMeta = entry.ResMeta != null ? (byte[])entry.ResMeta.Clone() : null;
             resRid = entry.ResRid;
 
         }
