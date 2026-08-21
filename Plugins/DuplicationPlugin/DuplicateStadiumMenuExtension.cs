@@ -329,6 +329,16 @@ namespace DuplicationPlugin
             task.Update("Adding shared assets to new bundles...");
             AddSharedAssetsToNewBundles(pairs, oldFolder, oldNameOnly);
 
+            // 6. Add the new stadium as a sublevel entry in the StadiumCollectionSLM
+            //    sublevel map so the game knows about it at runtime.
+            task.Update("Registering in SLM map...");
+            AddToSLM(newFolder);
+
+            // 7. Add the new stadium to the contentmanager prefab so it appears in
+            //    the game's stadium selection.
+            task.Update("Adding to contentmanager...");
+            AddToContentManager(newFolder, oldFolder);
+
             App.Logger.Log($"Stadium duplication complete: {duplicated.Count} assets duplicated");
 
             // Written last so it includes the pointer-remap debug captured in phase 3.
@@ -1098,6 +1108,176 @@ namespace DuplicationPlugin
             {
                 App.Logger.Log($"  Failed to add linked assets for {member.Name}: {ex.Message}");
             }
+        }
+
+        // ─── SLM map registration ──────────────────────────────────────────
+
+        /// <summary>
+        /// Adds a new SubLevelDefItem to the StadiumCollectionSLM sublevel map
+        /// so the game engine knows about the new stadium at runtime.
+        /// </summary>
+        private static void AddToSLM(string newFolder)
+        {
+            const string slmPath = "content/common/Logic/DSub/StadiumCollectionSLM";
+
+            EbxAssetEntry slmEntry = App.AssetManager.GetEbxEntry(slmPath);
+            if (slmEntry == null)
+            {
+                App.Logger.Log($"SLM entry not found: {slmPath}");
+                return;
+            }
+
+            EbxAsset slmAsset = App.AssetManager.GetEbx(slmEntry);
+            dynamic root = slmAsset.RootObject;
+
+            // Extract numeric stadium ID from folder name (e.g. "aaaaa_499" -> 499).
+            int underscore = newFolder.LastIndexOf('_');
+            if (underscore <= 0 || !int.TryParse(newFolder.Substring(underscore + 1), out int stadiumId))
+            {
+                App.Logger.Log($"Failed to extract numeric stadium ID from folder name: {newFolder}");
+                return;
+            }
+
+            string subWorldPath = $"content/worlds/stadiums/{newFolder}/{newFolder}";
+
+            // Check if an entry for this stadium already exists.
+            foreach (dynamic item in root.SublevelItems)
+            {
+                string existing = (string)item.SubWorldName;
+                if (existing != null && existing.Equals(subWorldPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    App.Logger.Log($"SLM already has entry: {subWorldPath}");
+                    return;
+                }
+            }
+
+            dynamic newItem = TypeLibrary.CreateObject("SubLevelDefItem");
+            newItem.KeyId = stadiumId;
+            newItem.SubWorldName = new CString(subWorldPath);
+            // SubWorldData stays as Null pointer (the default).
+
+            root.SublevelItems.Add(newItem);
+            App.AssetManager.ModifyEbx(slmPath, slmAsset);
+
+            App.Logger.Log($"Added SLM entry: {subWorldPath} (KeyId=0x{stadiumId:X8})");
+        }
+
+        // ─── ContentManager registration ─────────────────────────────────────
+
+        /// <summary>
+        /// Clones the source stadium's SubWorldReferenceObjectData from the
+        /// contentmanager prefab, rewires the BundleName to the new stadium,
+        /// and adds it to the prefab so the new stadium appears in-game.
+        /// </summary>
+        private static void AddToContentManager(string newFolder, string oldFolder)
+        {
+            const string cmPath = "fifa/fifagame/fifagame_contentmanager_genprefab";
+
+            EbxAssetEntry cmEntry = App.AssetManager.GetEbxEntry(cmPath);
+            if (cmEntry == null)
+            {
+                App.Logger.Log($"ContentManager entry not found: {cmPath}");
+                return;
+            }
+
+            EbxAsset cmAsset = App.AssetManager.GetEbx(cmEntry);
+            dynamic root = cmAsset.RootObject;
+
+            string oldBundleName = $"content/worlds/stadiums/{oldFolder}/{oldFolder}";
+            string newBundleName = $"content/worlds/stadiums/{newFolder}/{newFolder}";
+
+            // PrefabBlueprint.Objects is a list of internal PointerRefs, so walk
+            // the asset's raw object list and match SubWorldReferenceObjectData by
+            // its BundleName field.
+            object sourceObj = null;
+            foreach (object obj in cmAsset.Objects)
+            {
+                if (obj.GetType().Name != "SubWorldReferenceObjectData")
+                    continue;
+                string bn = (string)((dynamic)obj).BundleName;
+                if (bn != null && bn.Equals(oldBundleName, StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceObj = obj;
+                    break;
+                }
+            }
+
+            if (sourceObj == null)
+            {
+                App.Logger.Log($"ContentManager: source stadium not found in prefab ({oldBundleName})");
+                return;
+            }
+
+            // Check if an entry for the new stadium already exists.
+            foreach (object obj in cmAsset.Objects)
+            {
+                if (obj.GetType().Name != "SubWorldReferenceObjectData")
+                    continue;
+                string bn = (string)((dynamic)obj).BundleName;
+                if (bn != null && bn.Equals(newBundleName, StringComparison.OrdinalIgnoreCase))
+                {
+                    App.Logger.Log($"ContentManager already has entry: {newBundleName}");
+                    return;
+                }
+            }
+
+            // Deep-clone the source object by serializing the entire contentmanager
+            // asset and deserializing it to obtain a full copy, then extracting the
+            // matching object from the copy.  This is simpler than property-by-
+            // property cloning and handles all nested structs (Parents, Transform,
+            // HeapInfo, etc.) automatically.
+            object clone = null;
+            try
+            {
+                AssetClassGuid sourceGuid = ((dynamic)sourceObj).GetInstanceGuid();
+
+                byte[] buf;
+                using (EbxBaseWriter writer = EbxBaseWriter.CreateWriter(new MemoryStream(), EbxWriteFlags.DoNotSort))
+                {
+                    writer.WriteAsset(cmAsset);
+                    buf = writer.ToByteArray();
+                }
+
+                using (EbxReader reader = EbxReader.CreateReader(new MemoryStream(buf)))
+                {
+                    EbxAsset copy = reader.ReadAsset<EbxAsset>();
+                    foreach (object o in copy.Objects)
+                    {
+                        if (((dynamic)o).GetInstanceGuid() == sourceGuid)
+                        {
+                            clone = o;
+                            break;
+                        }
+                    }
+                }
+
+                if (clone == null)
+                {
+                    App.Logger.Log("ContentManager: failed to locate cloned object in deserialized copy");
+                    return;
+                }
+
+                // Assign a fresh instance GUID so it does not collide with the
+                // source object; AssetManager.AddObject will fill in InternalId.
+                ((dynamic)clone).SetInstanceGuid(new AssetClassGuid(Guid.NewGuid(), -1));
+
+                // Rewrite the BundleName to point at the new stadium.
+                ((dynamic)clone).BundleName = new CString(newBundleName);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.Log($"ContentManager: clone failed: {ex.Message}");
+                return;
+            }
+
+            // Register the cloned object in the contentmanager asset, then append an
+            // internal PointerRef to the PrefabBlueprint.Objects array.
+            cmAsset.AddObject(clone);
+            root.Objects.Add(new PointerRef(clone));
+
+            App.AssetManager.ModifyEbx(cmPath, cmAsset);
+
+            App.Logger.Log($"Added contentmanager entry: {newBundleName}");
         }
 
         // ─── Path / name utilities ───────────────────────────────────────────
