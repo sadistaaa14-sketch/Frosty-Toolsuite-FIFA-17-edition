@@ -520,6 +520,106 @@ namespace DuplicationPlugin
 
         #endregion
 
+        #region --Single-resource assets--
+
+        public class FifaPhysicsResourceExtension : DuplicateAssetExtension
+        {
+            public override string AssetType => "FifaPhysicsResourceAsset";
+
+            public override EbxAssetEntry DuplicateAsset(EbxAssetEntry entry, string newName, bool createNew, Type newType)
+            {
+                EbxAssetEntry newEntry = base.DuplicateAsset(entry, newName, createNew, newType);
+                EbxAsset oldAsset = App.AssetManager.GetEbx(entry);
+                EbxAsset newAsset = App.AssetManager.GetEbx(newEntry);
+
+                ResAssetEntry resEntry = App.AssetManager.GetResEntry(((dynamic)oldAsset.RootObject).PhysicsData);
+                if (resEntry != null)
+                {
+                    ResAssetEntry newResEntry = DuplicateRes(resEntry, newName, ResourceType.FifaPhysicsResourceData);
+                    if (newResEntry != null)
+                    {
+                        ((dynamic)newAsset.RootObject).PhysicsData = newResEntry.ResRid;
+                        newEntry.LinkAsset(newResEntry);
+                        App.AssetManager.ModifyEbx(newEntry.Name, newAsset);
+                    }
+                }
+                return newEntry;
+            }
+        }
+
+        public class StaticEnlightenDataExtension : DuplicateAssetExtension
+        {
+            public override string AssetType => "StaticEnlightenData";
+
+            public override EbxAssetEntry DuplicateAsset(EbxAssetEntry entry, string newName, bool createNew, Type newType)
+            {
+                EbxAssetEntry newEntry = base.DuplicateAsset(entry, newName, createNew, newType);
+                EbxAsset oldAsset = App.AssetManager.GetEbx(entry);
+                EbxAsset newAsset = App.AssetManager.GetEbx(newEntry);
+
+                ResAssetEntry resEntry = App.AssetManager.GetResEntry(((dynamic)oldAsset.RootObject).DatabaseResource);
+                if (resEntry != null)
+                {
+                    ResAssetEntry newResEntry = DuplicateRes(resEntry, newName, ResourceType.EnlightenStaticDatabase);
+                    if (newResEntry != null)
+                    {
+                        ((dynamic)newAsset.RootObject).DatabaseResource = newResEntry.ResRid;
+                        newEntry.LinkAsset(newResEntry);
+                        App.AssetManager.ModifyEbx(newEntry.Name, newAsset);
+                    }
+                }
+                return newEntry;
+            }
+        }
+
+        public class EnlightenDataAssetExtension : DuplicateAssetExtension
+        {
+            public override string AssetType => "EnlightenDataAsset";
+
+            public override EbxAssetEntry DuplicateAsset(EbxAssetEntry entry, string newName, bool createNew, Type newType)
+            {
+                EbxAssetEntry newEntry = base.DuplicateAsset(entry, newName, createNew, newType);
+                EbxAsset oldAsset = App.AssetManager.GetEbx(entry);
+                EbxAsset newAsset = App.AssetManager.GetEbx(newEntry);
+
+                ResAssetEntry resEntry = App.AssetManager.GetResEntry(((dynamic)oldAsset.RootObject).DatabaseResource);
+                if (resEntry != null)
+                {
+                    ResAssetEntry newResEntry = DuplicateRes(resEntry, newName, ResourceType.EnlightenDatabase);
+                    if (newResEntry != null)
+                    {
+                        ((dynamic)newAsset.RootObject).DatabaseResource = newResEntry.ResRid;
+                        newEntry.LinkAsset(newResEntry);
+                        App.AssetManager.ModifyEbx(newEntry.Name, newAsset);
+                    }
+                }
+                return newEntry;
+            }
+        }
+
+        public class NewWaveExtension : DuplicateAssetExtension
+        {
+            public override string AssetType => "NewWaveAsset";
+
+            public override EbxAssetEntry DuplicateAsset(EbxAssetEntry entry, string newName, bool createNew, Type newType)
+            {
+                EbxAssetEntry newEntry = base.DuplicateAsset(entry, newName, createNew, newType);
+
+                // NewWaveAsset carries no resource id field; the backing .res is
+                // matched by name (same path as the EBX itself).
+                ResAssetEntry resEntry = App.AssetManager.GetResEntry(entry.Name);
+                if (resEntry != null)
+                {
+                    ResAssetEntry newResEntry = DuplicateRes(resEntry, newName, ResourceType.NewWaveResource);
+                    if (newResEntry != null)
+                        newEntry.LinkAsset(newResEntry);
+                }
+                return newEntry;
+            }
+        }
+
+        #endregion
+
         public class DuplicateAssetExtension
         {
             public virtual string AssetType => null;

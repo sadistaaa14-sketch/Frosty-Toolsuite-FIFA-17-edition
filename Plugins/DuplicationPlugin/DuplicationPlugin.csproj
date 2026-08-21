@@ -122,6 +122,9 @@
     <Compile Update="Windows\DuplicateBaseWindow.xaml.cs">
       <DependentUpon>DuplicateBaseWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Update="Windows\DuplicateStadiumWindow.xaml.cs">
+      <DependentUpon>DuplicateStadiumWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Update="Windows\BulkAssetImportWindow.xaml.cs">
       <DependentUpon>BulkAssetImportWindow.xaml</DependentUpon>
     </Compile>
@@ -192,6 +195,9 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Update="Windows\DuplicateBaseWindow.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Windows\DuplicateStadiumWindow.xaml">
       <SubType>Designer</SubType>
     </Page>
     <Page Update="Windows\BulkAssetImportWindow.xaml">
