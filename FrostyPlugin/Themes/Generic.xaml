@@ -201,6 +201,10 @@
                                 <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource baseTreeViewItemStyle}">
                                     <Setter Property="IsExpanded" Value="{Binding Path=IsExpanded, Mode=TwoWay}"/>
                                     <Setter Property="IsSelected" Value="{Binding Path=IsSelected, Mode=TwoWay}"/>
+                                    <!-- Folders use the same context menu as the assets in the list below.
+                                         The MainWindow handler for the menu's Opened event disables the entries
+                                         that only apply to assets, and hides those contributed by plugins. -->
+                                    <Setter Property="ContextMenu" Value="{Binding Path=AssetContextMenu, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:FrostyDataExplorer}}}"/>
                                 </Style>
                             </TreeView.ItemContainerStyle>
                             <TreeView.ItemTemplate>

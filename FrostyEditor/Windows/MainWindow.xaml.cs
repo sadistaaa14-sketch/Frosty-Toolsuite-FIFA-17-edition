@@ -1,6 +1,7 @@
 ﻿using Bookmarks = Frosty.Core.Bookmarks;
 using Frosty.Controls;
 using Frosty.Core;
+using Frosty.Core.Bulk;
 using Frosty.Core.Commands;
 using Frosty.Core.Controls;
 using Frosty.Core.Converters;
@@ -223,6 +224,10 @@ namespace FrostyEditor
 
         private void LoadDataExplorerMenuItemExtensions()
         {
+            // Keep plugin contributions visually separate from the editor's own entries.
+            if (App.PluginManager.DataExplorerContextMenuExtensions.Any())
+                dataExplorer.AssetContextMenu.Items.Add(new Separator());
+
             foreach (var contextItemExtension in App.PluginManager.DataExplorerContextMenuExtensions)
             {
                 MenuItem contextMenuItem = new MenuItem
@@ -921,16 +926,174 @@ namespace FrostyEditor
 
         // context menu callbacks
 
+        // The folder the currently open asset context menu was raised from ("" is the root
+        // folder, meaning every asset). Null when the menu could not be resolved to a folder.
+        // Populated by assetContextMenu_Opened, which runs while the menu is still open, and
+        // read by the bulk import/export commands when they are clicked.
+        private string contextMenuFolder;
+
+        // The explorer whose context menu was opened, so the bulk commands act on the right one.
+        private FrostyDataExplorer contextMenuExplorer;
+
+        // The asset the context menu was raised on, or null when it was raised on a folder.
+        private AssetEntry contextMenuAsset;
+
+
+        /// <summary>
+        /// Runs each time an asset context menu opens and enables only the entries that can
+        /// actually do something for whatever the menu was raised on. The same menu is shown for
+        /// assets in the list and for folder nodes in the tree, and single-asset commands
+        /// (open/revert/export/import/duplicate, copy id) make no sense for a folder - so they
+        /// are disabled rather than being left to silently do nothing.
+        /// </summary>
+        private void assetContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            ContextMenu menu = sender as ContextMenu;
+            if (menu == null)
+                return;
+
+            contextMenuExplorer = (menu.Tag as string) == "legacy" ? legacyExplorer : dataExplorer;
+
+            // PlacementTarget is the ListViewItem / TreeViewItem the menu was raised from. Its
+            // data context is an AssetEntry for list rows and an AssetPath for tree nodes.
+            FrameworkElement target = menu.PlacementTarget as FrameworkElement;
+            AssetEntry asset = target?.DataContext as AssetEntry;
+            bool onFolder = target is TreeViewItem;
+            contextMenuAsset = asset;
+
+            if (onFolder)
+            {
+                // The tree node was selected by the right-click, so the explorer's SelectedPath
+                // is already up to date. It is "" for the root node.
+                contextMenuFolder = contextMenuExplorer.SelectedPath ?? "";
+            }
+            else
+            {
+                contextMenuFolder = asset?.Path;
+            }
+
+            int chunkCount = asset != null ? AssetReferenceUtils.GetChunkIds(asset).Count : 0;
+            ulong resId = AssetReferenceUtils.GetResId(asset);
+
+            // Bulk actions operate on a folder. When the menu was raised on a file we use the
+            // folder that file lives in - but a file sitting at the root level must not fall back
+            // to "every asset in the game", so the commands stay disabled in that case.
+            bool bulkEnabled = contextMenuFolder != null && (onFolder || contextMenuFolder.Length != 0);
+
+            foreach (object obj in menu.Items)
+            {
+                if (!(obj is MenuItem item))
+                    continue;
+
+                switch (item.Tag as string)
+                {
+                    case "asset":
+                        item.IsEnabled = asset != null;
+                        break;
+                    case "chunk":
+                        item.IsEnabled = chunkCount != 0;
+                        item.Header = chunkCount > 1
+                            ? "Copy Chunk Ids (" + chunkCount + ")"
+                            : "Copy Chunk Id";
+                        break;
+                    case "res":
+                        item.IsEnabled = resId != 0;
+                        break;
+                    case "folder":
+                        item.IsEnabled = bulkEnabled;
+                        break;
+                    default:
+                        // Untagged entries are contributed by plugins (see
+                        // LoadDataExplorerMenuItemExtensions) and act on the selected asset, which
+                        // does not exist when the menu was raised on a folder node in the tree.
+                        // They are hidden rather than disabled because these items carry a Command,
+                        // and a command requery would put IsEnabled straight back to true.
+                        if (item.Tag == null)
+                            item.Visibility = asset != null ? Visibility.Visible : Visibility.Collapsed;
+                        break;
+                }
+            }
+
+            // Hiding the plugin items leaves the separator that groups them with nothing after
+            // it, which would show as a stray line at the bottom of the menu. A separator is only
+            // worth showing while the item directly below it is visible.
+            bool visibleItemBelow = false;
+            for (int i = menu.Items.Count - 1; i >= 0; i--)
+            {
+                if (menu.Items[i] is MenuItem itemBelow)
+                {
+                    visibleItemBelow = itemBelow.Visibility == Visibility.Visible;
+                }
+                else if (menu.Items[i] is Separator separator)
+                {
+                    separator.Visibility = visibleItemBelow ? Visibility.Visible : Visibility.Collapsed;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Copies the chunk id(s) associated with the asset the context menu was raised on.
+        /// </summary>
+        private void contextMenuCopyChunkId_Click(object sender, RoutedEventArgs e)
+        {
+            AssetEntry entry = contextMenuAsset;
+            if (entry == null)
+                return;
+
+            List<Guid> chunkIds = AssetReferenceUtils.GetChunkIds(entry);
+            if (chunkIds.Count == 0)
+            {
+                // Say which of the two reasons it is: an asset that names no chunk at all, or one
+                // that names chunks this profile does not have (localized audio lives in per-language
+                // bundles, so a profile without that bundle has no chunk to copy).
+                string reason = AssetReferenceUtils.ExplainNoChunks(entry as EbxAssetEntry);
+                if (string.IsNullOrEmpty(reason))
+                    App.Logger.Log("Asset '{0}' has no associated chunk.", entry.Name);
+                else
+                    App.Logger.Log("Asset '{0}' has no associated chunk: {1}", entry.Name, reason);
+                return;
+            }
+
+            string text = string.Join(Environment.NewLine, chunkIds.Select(id => AssetReferenceUtils.FormatChunkId(id)));
+            Clipboard.SetText(text);
+            App.Logger.Log("Copied {0} chunk id(s) for '{1}' to the clipboard.", chunkIds.Count, entry.Name);
+        }
+
+        /// <summary>
+        /// Copies the resource id of the asset the context menu was raised on.
+        /// </summary>
+        private void contextMenuCopyResId_Click(object sender, RoutedEventArgs e)
+        {
+            AssetEntry entry = contextMenuAsset;
+            if (entry == null)
+                return;
+
+            ulong resId = AssetReferenceUtils.GetResId(entry);
+            if (resId == 0)
+            {
+                App.Logger.Log("Asset '{0}' is not a resource, so it has no resource id.", entry.Name);
+                return;
+            }
+
+            Clipboard.SetText(AssetReferenceUtils.FormatResId(resId));
+            App.Logger.Log("Copied resource id of '{0}' to the clipboard.", entry.Name);
+        }
+
         private void contextMenuOpen_Click(object sender, RoutedEventArgs e)
         {
-            if (m_currentExplorer.SelectedAsset == null)
+            // Always act on the explorer whose menu was opened - m_currentExplorer tracks the
+            // selected tab, which is not necessarily the same thing.
+            FrostyDataExplorer explorer = contextMenuExplorer ?? m_currentExplorer;
+            AssetEntry entry = contextMenuAsset ?? explorer?.SelectedAsset;
+            if (entry == null)
                 return;
-            OpenAsset(m_currentExplorer.SelectedAsset, m_currentExplorer == dataExplorer);
+
+            OpenAsset(entry, explorer == dataExplorer);
         }
 
         private void contextMenuRevert_Click(object sender, RoutedEventArgs e)
         {
-            AssetEntry entry = m_currentExplorer.SelectedAsset;
+            AssetEntry entry = contextMenuAsset ?? (contextMenuExplorer ?? m_currentExplorer)?.SelectedAsset;
             if (entry == null || !entry.IsModified)
                 return;
 
@@ -953,6 +1116,9 @@ namespace FrostyEditor
         private void contextMenuImportAsset_Click(object sender, RoutedEventArgs e)
         {
             LegacyFileEntry selectedAsset = legacyExplorer.SelectedAsset as LegacyFileEntry;
+            if (selectedAsset == null)
+                return;
+
             FrostyOpenFileDialog ofd = new FrostyOpenFileDialog("Open Legacy file", "*." + selectedAsset.Type + " (Legacy Files)|*." + selectedAsset.Type, "FifaLegacy");
 
             if (ofd.ShowDialog())
@@ -998,38 +1164,58 @@ namespace FrostyEditor
             legacyExplorer.RefreshItems();
         }
 
+        /// <summary>
+        /// Confirms a folder-wide bulk export when the target is the root folder - which means
+        /// "every asset in the game" rather than the handful the user can see in the tree - so a
+        /// mis-click on the root node cannot kick off a multi-gigabyte export by accident.
+        /// </summary>
+        private bool ConfirmRootFolderBulkExport(string folderPrefix, int count, string what)
+        {
+            if (folderPrefix.Length != 0)
+                return true;
+
+            return FrostyMessageBox.Show(
+                "The root folder is selected, so this exports all " + count + " " + what + " in the game.\n\nContinue?",
+                "Bulk Export", MessageBoxButton.YesNo) == MessageBoxResult.Yes;
+        }
+
+        /// <summary>
+        /// Exports every legacy file under the folder the context menu was raised on, preserving the
+        /// sub-directory structure relative to that folder.
+        ///
+        /// The folder is the tree node that was right-clicked, or - when a file was right-clicked -
+        /// the folder that file lives in. Right-clicking the root node exports every legacy file.
+        /// </summary>
         private void contextMenuBulkExportFolder_Click(object sender, RoutedEventArgs e)
         {
-            LegacyFileEntry selectedAsset = legacyExplorer.SelectedAsset as LegacyFileEntry;
-            if (selectedAsset == null)
-                return;
-
-            // use the selected asset's directory as the folder prefix to export
-            string folderPrefix = selectedAsset.Path;
-            if (string.IsNullOrEmpty(folderPrefix))
+            string folderPrefix = contextMenuFolder;
+            if (folderPrefix == null)
             {
-                App.Logger.Log("Selected asset is at the root level — select an asset inside a folder.");
+                App.Logger.Log("Bulk Export: right-click a folder in the tree, or a legacy file inside a folder.");
                 return;
             }
 
-            // ensure prefix ends with / for clean matching
-            if (!folderPrefix.EndsWith("/"))
-                folderPrefix += "/";
+            // "" (root) matches every legacy file; otherwise match the folder itself and, because
+            // of the trailing slash, everything underneath it.
+            string match = folderPrefix.Length == 0 ? "" : folderPrefix + "/";
 
             // collect all legacy entries that live under this folder (including subfolders)
             List<LegacyFileEntry> toExport = new List<LegacyFileEntry>();
             foreach (AssetEntry entry in App.AssetManager.EnumerateCustomAssets("legacy"))
             {
                 LegacyFileEntry lfe = entry as LegacyFileEntry;
-                if (lfe != null && lfe.Name.StartsWith(folderPrefix, StringComparison.OrdinalIgnoreCase))
+                if (lfe != null && lfe.Name.StartsWith(match, StringComparison.OrdinalIgnoreCase))
                     toExport.Add(lfe);
             }
 
             if (toExport.Count == 0)
             {
-                App.Logger.Log("No legacy files found under folder: {0}", folderPrefix);
+                App.Logger.Log("No legacy files found under folder: {0}", folderPrefix.Length == 0 ? "[root]" : folderPrefix);
                 return;
             }
+
+            if (!ConfirmRootFolderBulkExport(folderPrefix, toExport.Count, "legacy files"))
+                return;
 
             // pick output directory
             using (var fbd = new System.Windows.Forms.FolderBrowserDialog())
@@ -1040,7 +1226,7 @@ namespace FrostyEditor
 
                 string outputRoot = fbd.SelectedPath;
 
-                FrostyTaskWindow.Show("Bulk Exporting Legacy Folder", folderPrefix, (task) =>
+                FrostyTaskWindow.Show("Bulk Exporting Legacy Folder", folderPrefix.Length == 0 ? "[root]" : folderPrefix, (task) =>
                 {
                     App.AssetManager.SendManagerCommand("legacy", "SetCacheModeEnabled", true);
 
@@ -1054,7 +1240,7 @@ namespace FrostyEditor
                         try
                         {
                             // preserve subdirectory structure relative to the selected folder
-                            string relativePath = lfe.Name.Substring(folderPrefix.Length);
+                            string relativePath = lfe.Name.Substring(match.Length);
                             string outPath = System.IO.Path.Combine(outputRoot, relativePath.Replace('/', '\\'));
 
                             string dir = System.IO.Path.GetDirectoryName(outPath);
@@ -1092,35 +1278,41 @@ namespace FrostyEditor
         /// <summary>
         /// Bulk-imports every file in a user-selected folder into the Legacy Explorer.
         /// For each file:
-        ///   - The relative path from the chosen folder becomes the target legacy
-        ///     asset name (e.g. "data\kit\kit_001.dds" -> "data/kit/kit_001.dds").
-        ///   - If a legacy asset with that name already exists, the file's bytes
-        ///     are imported into it (ModifyCustomAsset).
-        ///   - If no such asset exists, the currently-selected legacy asset is
-        ///     duplicated to the new name (DuplicateAsset), then the file's bytes
-        ///     are imported into the new asset. This mirrors the behaviour of the
-        ///     existing "Duplicate" context menu item, which uses the selected
-        ///     asset as the source.
-        /// Subdirectory structure is preserved and the folder is scanned
-        /// recursively. Existing asset lookup is case-insensitive (matching the
-        /// behaviour of the existing "Bulk Export Folder" command), but when a
-        /// match is found the EXISTING entry's canonical name is used for the
-        /// modify call so the case stays correct.
+        ///   - If a legacy asset whose bare filename matches the file already exists
+        ///     anywhere in the project, the file's bytes are imported into it
+        ///     (ModifyCustomAsset).
+        ///   - Otherwise the file is duplicated - from the asset the context menu was
+        ///     raised on when it was raised on a file, or from the first asset in the
+        ///     target folder with the same extension when it was raised on a folder.
+        ///     The new asset is created in the target folder under the file's name.
+        /// Subdirectory structure inside the chosen folder is ignored on purpose (matching
+        /// is by bare filename), and the folder is scanned recursively. Existing asset
+        /// lookup is case-insensitive, but when a match is found the EXISTING entry's
+        /// canonical name is used for the modify call so the case stays correct.
         /// </summary>
         private void contextMenuBulkImportFolder_Click(object sender, RoutedEventArgs e)
         {
-            // The selected legacy asset is the duplication template for files
-            // whose name doesn't already exist in the project.
-            LegacyFileEntry templateAsset = legacyExplorer.SelectedAsset as LegacyFileEntry;
-            if (templateAsset == null)
+            // The folder decides where files that don't exist yet get created; it is the tree
+            // node that was right-clicked, or the folder of the file that was right-clicked.
+            string folderPrefix = contextMenuFolder;
+            if (folderPrefix == null)
             {
-                App.Logger.Log("Bulk Import: select a legacy asset first — it will be used as the duplication template for files that don't already exist.");
+                App.Logger.Log("Bulk Import: right-click a folder in the tree, or a legacy file inside a folder.");
                 return;
             }
 
+            // Duplication template. When the menu was raised on a file, that file is the template
+            // (this is the long-standing behaviour and it lets the user pick exactly which asset to
+            // clone). When the menu was raised on a folder there is no file to clone, so every new
+            // file instead clones an existing asset in the target folder with the same extension.
+            LegacyFileEntry explicitTemplate = contextMenuAsset as LegacyFileEntry;
+
             using (var fbd = new System.Windows.Forms.FolderBrowserDialog())
             {
-                fbd.Description = "Select a folder containing the files to bulk-import. Each file is matched against existing legacy assets by filename; matches are modified in place, others are duplicated from '" + templateAsset.Name + "' (and placed in the same folder as that template).";
+                fbd.Description = "Select a folder containing the files to bulk-import. Existing assets are matched by filename and modified in place; other files are duplicated"
+                    + (explicitTemplate != null
+                        ? " from '" + explicitTemplate.Name + "'."
+                        : " from an existing asset of the same type in '" + (folderPrefix.Length == 0 ? "[root]" : folderPrefix) + "'.");
                 if (fbd.ShowDialog() != System.Windows.Forms.DialogResult.OK)
                     return;
 
@@ -1146,22 +1338,22 @@ namespace FrostyEditor
                     return;
                 }
 
-                // Build a case-insensitive lookup of existing legacy asset names
-                // keyed by BARE filename (the last segment of the canonical name,
-                // e.g. "p20801.dds" for "data/ui/imgAssets/heads/p20801.dds").
+                // Build case-insensitive lookups of existing legacy assets: one keyed by the full
+                // name (so a file can be matched inside the folder being imported into) and one
+                // keyed by BARE filename (the last segment of the canonical name, e.g. "p20801.dds"
+                // for "data/ui/imgAssets/heads/p20801.dds").
                 //
-                // Bulk import is filesystem-layout-agnostic: it ignores the
-                // directory structure inside the user's input folder and matches
-                // files against existing legacy assets by bare filename only.
-                // When a match is found we reuse the existing entry's canonical
-                // name as the modify target so the case-sensitive FNV1 hash
-                // matches.
+                // Bulk import ignores the directory structure inside the user's input folder and
+                // matches files by name, so the exported layout can be re-arranged freely. When a
+                // match is found we reuse the existing entry's canonical name as the modify target
+                // so the case-sensitive FNV1 hash matches.
                 //
-                // Note: multiple legacy assets can share the same bare filename
-                // across different directories. The last one wins — if the user
-                // needs to target a specific one they should use single-asset
-                // import instead.
+                // Note: multiple legacy assets can share the same bare filename across different
+                // directories. The last one wins — if the user needs to target a specific one they
+                // should use single-asset import, or import into that asset's folder.
                 Dictionary<string, LegacyFileEntry> existingByBareName =
+                    new Dictionary<string, LegacyFileEntry>(StringComparer.OrdinalIgnoreCase);
+                Dictionary<string, LegacyFileEntry> existingByFullName =
                     new Dictionary<string, LegacyFileEntry>(StringComparer.OrdinalIgnoreCase);
                 foreach (AssetEntry entry in App.AssetManager.EnumerateCustomAssets("legacy"))
                 {
@@ -1171,10 +1363,16 @@ namespace FrostyEditor
                         int lastSlash = lfe.Name.LastIndexOf('/');
                         string bare = lastSlash == -1 ? lfe.Name : lfe.Name.Substring(lastSlash + 1);
                         existingByBareName[bare] = lfe;
+                        existingByFullName[lfe.Name] = lfe;
                     }
                 }
                 App.Logger.Log("Bulk Import: existing legacy assets indexed by bare filename: {0}",
                     existingByBareName.Count);
+
+                // Templates resolved by file extension for the folder-template case, cached so a
+                // bulk import of thousands of files does not rescan the asset list per file.
+                Dictionary<string, LegacyFileEntry> extensionTemplates =
+                    new Dictionary<string, LegacyFileEntry>(StringComparer.OrdinalIgnoreCase);
 
                 FrostyTaskWindow.Show("Bulk Importing Legacy Folder", inputRoot, (task) =>
                 {
@@ -1222,35 +1420,61 @@ namespace FrostyEditor
                             // Decide whether to duplicate or just modify.
                             //
                             // Match priority:
-                            //   1. Bare-filename match (file's name matches an
-                            //      existing entry's last path segment, case-insensitively).
-                            //      Reuse the existing entry's canonical name so the
-                            //      case-sensitive FNV1 hash matches.
-                            //   2. No match — duplicate from the template. The new
-                            //      entry's name is built from the TEMPLATE asset's
-                            //      directory path + the file's bare filename, so it
-                            //      appears in the same folder as the template in
-                            //      the Legacy Explorer.
+                            //   1. An asset with the file's name in the folder the import is
+                            //      aimed at. This is the obvious intent when the user picks a
+                            //      folder, and it stops a file being written into a different
+                            //      folder that happens to contain an asset of the same name.
+                            //   2. A bare-filename match anywhere in the project (the original
+                            //      behaviour, kept so right-clicking a file still targets it).
+                            //   Either way the existing entry's canonical name is reused so the
+                            //   case-sensitive FNV1 hash matches.
+                            //   3. No match - duplicate from the template.
                             string targetName;
                             LegacyFileEntry matchEntry = null;
-                            if (existingByBareName.TryGetValue(fileBare, out matchEntry))
+                            string folderScopedName = folderPrefix.Length == 0 ? fileBare : folderPrefix + "/" + fileBare;
+
+                            if (existingByFullName.TryGetValue(folderScopedName, out matchEntry))
                             {
-                                // Found an existing entry whose bare filename matches.
-                                // Reuse its canonical name so FNV1 hash matches.
                                 targetName = matchEntry.Name;
-                                App.Logger.Log("Bulk Import: modify  '{0}' (bare-name match on '{1}', {2} bytes)",
+                                App.Logger.Log("Bulk Import: modify  '{0}' (name match in {1}, {2} bytes)",
+                                    targetName, folderPrefix.Length == 0 ? "[root]" : folderPrefix, buffer.Length);
+                                modified++;
+                            }
+                            else if (existingByBareName.TryGetValue(fileBare, out matchEntry))
+                            {
+                                targetName = matchEntry.Name;
+                                App.Logger.Log("Bulk Import: modify  '{0}' (bare-name match on '{1}' elsewhere in the project, {2} bytes)",
                                     targetName, fileBare, buffer.Length);
                                 modified++;
                             }
                             else
                             {
-                                // No match — duplicate from the template. Build the
-                                // new asset's name from the template's directory +
-                                // the file's bare filename.
-                                string templateDir = templateAsset.Path;
-                                targetName = string.IsNullOrEmpty(templateDir)
+                                // No existing asset - duplicate from a template instead. The new
+                                // asset's name is the target folder plus the file's bare filename,
+                                // so it shows up in the folder the user right-clicked.
+                                string fileExtension = System.IO.Path.GetExtension(fileBare);
+                                if (fileExtension.StartsWith("."))
+                                    fileExtension = fileExtension.Substring(1);
+
+                                LegacyFileEntry templateAsset = explicitTemplate;
+                                if (templateAsset == null)
+                                {
+                                    templateAsset = FindBulkImportTemplate(
+                                        folderPrefix, fileExtension, extensionTemplates);
+                                }
+
+                                if (templateAsset == null)
+                                {
+                                    App.Logger.Log(
+                                        "Bulk Import: !! no template for '{0}' - '{1}' has no counterpart in {2} to duplicate from; skipped.",
+                                        fileBare, fileExtension, folderPrefix.Length == 0 ? "[root]" : folderPrefix);
+                                    failed++;
+                                    continue;
+                                }
+
+                                targetName = folderPrefix.Length == 0
                                     ? fileBare
-                                    : templateDir + "/" + fileBare;
+                                    : folderPrefix + "/" + fileBare;
 
                                 App.Logger.Log("Bulk Import: dup     '{0}' -> '{1}' ({2} bytes)",
                                     templateAsset.Name, targetName, buffer.Length);
@@ -1267,10 +1491,11 @@ namespace FrostyEditor
                                     failed++;
                                     continue;
                                 }
-                                // Register the new entry under bare name so
-                                // subsequent files that collide go through modify.
+                                // Register the new entry so subsequent files that collide go
+                                // through modify instead of trying to duplicate again.
                                 string newBare = targetName.Substring(targetName.LastIndexOf('/') + 1);
                                 existingByBareName[newBare] = newEntry;
+                                existingByFullName[targetName] = newEntry;
                                 duplicated++;
                             }
 
@@ -1319,6 +1544,35 @@ namespace FrostyEditor
         }
 
 
+        /// <summary>
+        /// Finds an existing legacy asset under <paramref name="folderPrefix"/> that can act as the
+        /// duplication template for a file of the given extension. Results, including misses, are
+        /// cached in <paramref name="cache"/> keyed by extension.
+        /// </summary>
+        private LegacyFileEntry FindBulkImportTemplate(string folderPrefix, string extension, Dictionary<string, LegacyFileEntry> cache)
+        {
+            string key = extension ?? "";
+            if (cache.TryGetValue(key, out LegacyFileEntry cached))
+                return cached;
+
+            string match = folderPrefix.Length == 0 ? "" : folderPrefix + "/";
+            LegacyFileEntry found = null;
+            foreach (AssetEntry entry in App.AssetManager.EnumerateCustomAssets("legacy"))
+            {
+                LegacyFileEntry lfe = entry as LegacyFileEntry;
+                if (lfe == null || !lfe.Name.StartsWith(match, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (string.Equals(lfe.Type, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    found = lfe;
+                    break;
+                }
+            }
+
+            cache[key] = found;
+            return found;
+        }
+
         private void contextMenuExportAsset_Click(object sender, RoutedEventArgs e)
         {
             if (legacyExplorer.SelectedAssets.Count == 0)
@@ -1361,6 +1615,8 @@ namespace FrostyEditor
         private void contextMenuImportEbx_Click(object sender, RoutedEventArgs e)
         {
             EbxAssetEntry entry = dataExplorer.SelectedAsset as EbxAssetEntry;
+            if (entry == null)
+                return;
 
             AssetDefinition assetDefinition = App.PluginManager.GetAssetDefinition(entry.Type) ?? new AssetDefinition();
 
@@ -1445,6 +1701,121 @@ namespace FrostyEditor
                 {
                     App.Logger.Log("Exported {0} to {1}", entry.Name, sfd.FileName);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Exports everything under the folder the context menu was raised on. What gets written is
+        /// chosen first in the bulk export options window - ebx as xml and/or bin, meshes, textures,
+        /// chunks and resources - and the work is done by the shared bulk exporter, so this command
+        /// and the Chunk/Res Editor commands do the same thing.
+        /// </summary>
+        private void contextMenuBulkExportEbxFolder_Click(object sender, RoutedEventArgs e)
+        {
+            string folderPrefix = contextMenuFolder;
+            if (folderPrefix == null)
+            {
+                App.Logger.Log("Bulk Export: right-click a folder in the tree, or an asset inside a folder.");
+                return;
+            }
+
+            string match = folderPrefix.Length == 0 ? "" : folderPrefix + "/";
+
+            int assetCount = 0;
+            foreach (EbxAssetEntry entry in App.AssetManager.EnumerateEbx())
+            {
+                if (entry.Name.StartsWith(match, StringComparison.OrdinalIgnoreCase))
+                    assetCount++;
+            }
+
+            if (assetCount == 0)
+            {
+                App.Logger.Log("No assets found under folder: {0}", folderPrefix.Length == 0 ? "[root]" : folderPrefix);
+                return;
+            }
+
+            // The asset tree can export all of it - ebx, meshes, textures, chunks and resources - and
+            // the options come before the folder picker, so a run the user cancels never leaves a
+            // folder chosen for nothing. The last choices are kept, which makes a repeat run two clicks.
+            BulkExportOptionsWindow optionsWindow = new BulkExportOptionsWindow(BulkOptionDefaults.Export, BulkScope.All);
+            if (optionsWindow.ShowDialog() != true)
+                return;
+
+            BulkOptions options = optionsWindow.Options;
+
+            if (!ConfirmRootFolderBulkExport(folderPrefix, assetCount, "assets"))
+                return;
+
+            using (var fbd = new System.Windows.Forms.FolderBrowserDialog())
+            {
+                fbd.Description = "Select the output folder for the bulk export (" + assetCount + " assets)";
+                if (fbd.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+                    return;
+
+                string outputRoot = fbd.SelectedPath;
+                string description = options.Describe("Bulk export");
+
+                FrostyTaskWindow.Show("Bulk Exporting Folder", folderPrefix.Length == 0 ? "[root]" : folderPrefix, (task) =>
+                {
+                    BulkResult result = AssetBulkExporter.Run(folderPrefix, options, outputRoot, task);
+
+                    App.Logger.Log("{0} -> {1}: {2}", description, outputRoot, result.Describe());
+                    foreach (string message in result.Messages)
+                        App.Logger.Log("  {0}", message);
+
+                    // The log window is the only other place these notes go, and it is gone once the
+                    // editor closes. A report beside the output is what makes a run that wrote no
+                    // chunk answerable afterwards - including by someone who did not run it.
+                    string reportPath = BulkReport.PathFor(outputRoot);
+                    if (BulkReport.Write(reportPath, BulkReport.Text("Bulk export", folderPrefix, outputRoot, description, result, result.Details)))
+                        App.Logger.Log("run report: {0}", reportPath);
+                }, true, BulkContext.TaskCancel);
+            }
+        }
+
+        /// <summary>
+        /// Imports the files in a user-selected folder into the assets under the folder the context
+        /// menu was raised on, reading whatever the bulk import options window was set to (ebx as xml
+        /// and/or bin, meshes, textures, chunks and resources). Files are matched to existing assets
+        /// by name - preferring a match inside the folder being imported into - and files with no
+        /// matching asset are reported and skipped: bulk import never invents new assets, because an
+        /// asset's type and guid cannot be inferred from a data file alone.
+        /// </summary>
+        private void contextMenuBulkImportEbxFolder_Click(object sender, RoutedEventArgs e)
+        {
+            string folderPrefix = contextMenuFolder;
+            if (folderPrefix == null)
+            {
+                App.Logger.Log("Bulk Import: right-click a folder in the tree, or an asset inside a folder.");
+                return;
+            }
+
+            // The asset tree can do all of it: ebx, meshes, textures, chunks and resources.
+            BulkImportOptionsWindow optionsWindow = new BulkImportOptionsWindow(BulkOptionDefaults.Import, BulkScope.All);
+            if (optionsWindow.ShowDialog() != true)
+                return;
+
+            BulkOptions options = optionsWindow.Options;
+
+            using (var fbd = new System.Windows.Forms.FolderBrowserDialog())
+            {
+                fbd.Description = "Select the folder to bulk-import from. Files are matched against existing assets by name and imported into them.";
+                if (fbd.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+                    return;
+
+                string inputRoot = fbd.SelectedPath;
+                string description = options.Describe("Bulk import");
+
+                FrostyTaskWindow.Show("Bulk Importing Folder", folderPrefix.Length == 0 ? "[root]" : folderPrefix, (task) =>
+                {
+                    BulkResult result = AssetBulkImporter.Run(folderPrefix, options, inputRoot, task);
+
+                    App.Logger.Log("{0} <- {1}: {2}", description, inputRoot, result.Describe());
+                    foreach (string message in result.Messages)
+                        App.Logger.Log("  {0}", message);
+                }, true, BulkContext.TaskCancel);
+
+                dataExplorer.RefreshAll();
             }
         }
 

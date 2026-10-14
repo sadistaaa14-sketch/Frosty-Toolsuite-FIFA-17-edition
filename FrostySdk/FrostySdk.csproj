@@ -108,6 +108,8 @@
     <Compile Include="IO\DbWriter.cs" />
     <Compile Include="IO\EbxReader.cs" />
     <Compile Include="IO\EbxWriter.cs" />
+    <Compile Include="IO\EbxXmlApplier.cs" />
+    <Compile Include="IO\EbxXmlReader.cs" />
     <Compile Include="IO\EbxXmlWriter.cs" />
     <Compile Include="IO\NativeReader.cs" />
     <Compile Include="DbObject.cs" />

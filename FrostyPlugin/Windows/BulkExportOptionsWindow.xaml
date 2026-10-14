@@ -1,0 +1,136 @@
+<ctrl:FrostyDockableWindow x:Class="Frosty.Core.Windows.BulkExportOptionsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ctrl="clr-namespace:Frosty.Controls;assembly=FrostyControls"
+        xmlns:local="clr-namespace:Frosty.Core.Windows"
+        mc:Ignorable="d"
+        Title="Bulk Export Options" Height="620" Width="700" ResizeMode="NoResize"
+        ShowInTaskbar="False" WindowStartupLocation="CenterScreen"
+        FontFamily="Global User Interface" FontSize="14"
+        TextOptions.TextFormattingMode="Display">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/FrostyControls;component/Themes/Generic.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <local:LeafNameConverter x:Key="leafName"/>
+
+            <!-- The walkthrough line under a category. It is the size of the rest of the text and at
+                 full strength on purpose: this dialog is read, not glanced at. -->
+            <Style x:Key="noteStyle" TargetType="{x:Type TextBlock}">
+                <Setter Property="Margin" Value="30,3,10,0"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="LineHeight" Value="18"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+                <Setter Property="Foreground" Value="{StaticResource FontColor}"/>
+            </Style>
+
+            <Style x:Key="rowLabelStyle" TargetType="{x:Type TextBlock}">
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="Foreground" Value="{StaticResource FontColor}"/>
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <!-- The colour is set here rather than left to the theme: its TextBlock style declares none, so
+         every line of description used to render black on this dark panel and could not be read. -->
+    <Grid Background="{StaticResource WindowBackground}" TextElement.Foreground="{StaticResource FontColor}">
+        <Grid.RowDefinitions>
+            <RowDefinition/>
+            <RowDefinition Height="46"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{StaticResource ListBackground}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="12,8,12,12">
+
+                    <!-- ebx assets: the asset itself, in one or both forms -->
+                    <StackPanel x:Name="ebxRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="exportEbxCheckBox" Content="Ebx assets" Margin="6,3,0,0"/>
+                        <StackPanel Margin="30,3,0,0">
+                            <CheckBox x:Name="exportEbxXmlCheckBox" Content="as .xml  (readable text, imports back)" Margin="0,5,0,0"/>
+                            <CheckBox x:Name="exportEbxBinCheckBox" Content="as .bin  (the raw asset, opaque)" Margin="0,5,0,0"/>
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="An ebx asset with no form ticked is not written at all."/>
+                    </StackPanel>
+
+                    <!-- mesh assets, and the model format they come out in -->
+                    <StackPanel x:Name="meshRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="exportMeshCheckBox" Content="Mesh assets" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Writes each mesh as a model file you can open in Blender or 3ds Max."/>
+                        <StackPanel Orientation="Horizontal" Margin="30,7,0,0">
+                            <TextBlock Text="Format" Style="{StaticResource rowLabelStyle}"/>
+                            <ComboBox x:Name="meshFormatComboBox" Width="200" Margin="12,0,0,0">
+                                <ComboBoxItem Content="FBX (binary)" Tag="fbx"/>
+                                <ComboBoxItem Content="FBX (ASCII text)" Tag="fbx-ascii"/>
+                                <ComboBoxItem Content="Wavefront OBJ" Tag="obj"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- texture assets, and every image format to write them in -->
+                    <StackPanel x:Name="textureRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="exportTextureCheckBox" Content="Texture assets" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Writes each texture as an image instead of the ebx that points at it. Tick every format you want - a run writes all of them."/>
+                        <StackPanel Orientation="Horizontal" Margin="30,7,0,0">
+                            <TextBlock Text="Formats" Style="{StaticResource rowLabelStyle}" Margin="0,0,12,0"/>
+                            <CheckBox x:Name="textureDdsCheckBox" Content=".dds" Margin="0,0,16,0"/>
+                            <CheckBox x:Name="texturePngCheckBox" Content=".png" Margin="0,0,16,0"/>
+                            <CheckBox x:Name="textureTgaCheckBox" Content=".tga" Margin="0,0,16,0"/>
+                            <CheckBox x:Name="textureHdrCheckBox" Content=".hdr"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel x:Name="chunkRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="exportChunkCheckBox" Content="Chunks" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Writes the chunks the folder's assets read their bytes from, named after the chunk id. Large folders produce a lot of data, so this is off by default."/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="resRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="exportResCheckBox" Content="Resource files" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Writes the resources under the folder (the resource header followed by the resource data)."/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="skeletonRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="skeletonAutoCheckBox" Content="Work the skeleton out from the asset's folder" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Player meshes get the player skeleton, balls and crowd their own, and a trophy its own folder's skeleton. Use the picker below when you want one specific skeleton instead."/>
+                        <StackPanel Orientation="Horizontal" Margin="30,7,0,0">
+                            <TextBlock Text="Skeleton" Style="{StaticResource rowLabelStyle}"/>
+                            <ComboBox x:Name="skeletonComboBox" Width="420" Margin="12,0,0,0">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Converter={StaticResource leafName}}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock x:Name="hintLabel" Margin="6,6,10,4" TextWrapping="Wrap" FontSize="13" LineHeight="18"
+                               Foreground="{StaticResource FontColor}"
+                               Text="Ebx .xml is the only form that can be imported back losslessly; .bin is the raw asset and can only be imported as .bin. Mesh and texture files are matched by name when importing, and .obj is written but cannot be read back."/>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.Row="1">
+            <Grid Margin="10">
+                <Button x:Name="cancelButton" Content="Cancel" HorizontalAlignment="Left"
+                        Width="90" IsCancel="True" Click="CancelButton_Click"/>
+                <Button x:Name="okButton" Content="OK" HorizontalAlignment="Right"
+                        Width="120" IsDefault="True" Click="OkButton_Click"/>
+            </Grid>
+        </Border>
+    </Grid>
+</ctrl:FrostyDockableWindow>

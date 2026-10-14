@@ -441,6 +441,8 @@ namespace Frosty.Core.Controls
             assetListView = GetTemplateChild(PART_AssetListView) as ListView;
 
             assetTreeView.SelectedItemChanged += assetTreeView_SelectedItemChanged;
+            assetTreeView.PreviewMouseRightButtonDown += AssetTreeView_PreviewMouseRightButtonDown;
+            assetListView.PreviewMouseRightButtonDown += AssetListView_PreviewMouseRightButtonDown;
             filterTextBox.KeyUp += FilterTextBox_KeyUp;
             filterTextBox.LostFocus += FilterTextBox_LostFocus;
             assetListView.SelectionChanged += assetListView_SelectionChanged;
@@ -800,6 +802,60 @@ namespace Frosty.Core.Controls
         public void FocusFilter()
         {
             filterTextBox.Focus();
+        }
+
+        /// <summary>
+        /// Right-clicking a tree node selects it. WPF does not select on right-click by default,
+        /// so without this the context menu would act on whatever asset happened to be selected
+        /// in the list instead of on the folder the user actually clicked.
+        /// </summary>
+        private void AssetTreeView_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            TreeViewItem item = FindAncestor<TreeViewItem>(e.OriginalSource as DependencyObject);
+            if (item != null)
+                item.IsSelected = true;
+        }
+
+        /// <summary>
+        /// Right-clicking a list item selects it (unless it is already part of the current
+        /// multi-selection, which must be preserved).
+        /// </summary>
+        private void AssetListView_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            ListViewItem item = FindAncestor<ListViewItem>(e.OriginalSource as DependencyObject);
+            if (item == null || item.IsSelected)
+                return;
+
+            // Keep an existing multi-selection intact when the user right-clicks one of the
+            // already-selected rows, but replace the selection otherwise.
+            if (MultiSelect)
+                assetListView.SelectedItems.Clear();
+
+            // Select the container rather than assigning Item to SelectedItem: SelectedItem takes
+            // the underlying data object, not the generated container.
+            item.IsSelected = true;
+        }
+
+        /// <summary>
+        /// Walks the visual (falling back to logical) tree upwards from <paramref name="start"/>,
+        /// returning the first ancestor of type <typeparamref name="T"/>. Unlike
+        /// <see cref="PerfDiag.FindVisualAncestor{T}"/>, this tolerates <paramref name="start"/> being
+        /// a non-visual object (for example a Run inside a TextBlock), which mouse event sources
+        /// frequently are.
+        /// </summary>
+        private static T FindAncestor<T>(DependencyObject start) where T : DependencyObject
+        {
+            DependencyObject node = start;
+            while (node != null)
+            {
+                if (node is T match)
+                    return match;
+
+                node = (node is Visual || node is System.Windows.Media.Media3D.Visual3D)
+                    ? VisualTreeHelper.GetParent(node)
+                    : LogicalTreeHelper.GetParent(node);
+            }
+            return null;
         }
 
         private void assetTreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)

@@ -112,6 +112,7 @@
   <ItemGroup>
     <Compile Include="App.cs" />
     <Compile Include="AssetDefinition.cs" />
+    <Compile Include="AssetReferenceUtils.cs" />
     <Compile Include="Attributes\PluginAuthorAttribute.cs" />
     <Compile Include="Attributes\PluginDisplayNameAttribute.cs" />
     <Compile Include="Attributes\PluginNotValidForProfileAttribute.cs" />
@@ -133,6 +134,10 @@
     <Compile Include="Attributes\RegisterThirdPartyDllAttribute.cs" />
     <Compile Include="Attributes\RegisterTypeOverrideAttribute.cs" />
     <Compile Include="Attributes\RegisterUserShaderAttribute.cs" />
+    <Compile Include="Bulk\AssetBulkExporter.cs" />
+    <Compile Include="Bulk\AssetBulkImporter.cs" />
+    <Compile Include="Bulk\BulkOptions.cs" />
+    <Compile Include="Bulk\BulkReport.cs" />
     <Compile Include="Controls\FrostyExceptionBox.cs" />
     <Compile Include="Controls\VirtualizingTilePanel.cs" />
     <Compile Include="Converters\AssetEntryToBitmapSourceConverter.cs" />
@@ -261,6 +266,12 @@
     <Compile Include="Windows\AssetInstancesWindow.xaml.cs">
       <DependentUpon>AssetInstancesWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Windows\BulkExportOptionsWindow.xaml.cs">
+      <DependentUpon>BulkExportOptionsWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\BulkImportOptionsWindow.xaml.cs">
+      <DependentUpon>BulkImportOptionsWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Windows\ClassSelector.xaml.cs">
       <DependentUpon>ClassSelector.xaml</DependentUpon>
     </Compile>
@@ -305,6 +316,14 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Windows\AssetInstancesWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Windows\BulkExportOptionsWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Windows\BulkImportOptionsWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

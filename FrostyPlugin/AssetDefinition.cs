@@ -1,5 +1,6 @@
 ﻿using Frosty.Core.Attributes;
 using Frosty.Core.Controls;
+using Frosty.Core.Windows;
 using FrostySdk;
 using FrostySdk.Ebx;
 using FrostySdk.Interfaces;
@@ -109,6 +110,7 @@ namespace Frosty.Core
         {
             importTypes.Add(new AssetImportType("bin", "Binary File (Data Only)"));
             importTypes.Add(new AssetImportType("bin", "Binary File"));
+            importTypes.Add(new AssetImportType("xml", "XML File"));
         }
 
         /// <summary>
@@ -180,7 +182,53 @@ namespace Frosty.Core
                 ImportFromBin(entry, path, filterType.Description.Contains("Data Only"));
                 return true;
             }
+
+            if (filterType.Extension == "xml")
+            {
+                ImportFromXml(entry, path);
+                return true;
+            }
+
             return false;
+        }
+
+        /// <summary>
+        /// Exports the asset without asking the user anything.
+        ///
+        /// Bulk export calls this instead of <see cref="Export"/> so that a run over a whole folder
+        /// cannot raise one settings dialog per asset - several asset types ask for settings there,
+        /// which is impossible from the background thread a bulk run works on. The base
+        /// implementation simply exports; types that need settings override this to use the values
+        /// they already have in the configuration.
+        /// </summary>
+        /// <param name="entry">The asset to export.</param>
+        /// <param name="path">The file to write.</param>
+        /// <param name="filterType">The format to write.</param>
+        /// <param name="task">The task window of the bulk run, or null when there is none.</param>
+        /// <returns>True when something was written.</returns>
+        public virtual bool ExportSilent(EbxAssetEntry entry, string path, string filterType, FrostyTaskWindow task)
+        {
+            return Export(entry, path, filterType);
+        }
+
+        /// <summary>
+        /// Imports into the asset without asking the user anything, the counterpart of
+        /// <see cref="ExportSilent"/>. The base implementation is <see cref="Import"/>.
+        /// </summary>
+        /// <param name="entry">The asset to import into.</param>
+        /// <param name="path">The file to read.</param>
+        /// <param name="filterType">The extension of the file, e.g. "bin", "xml", "fbx".</param>
+        /// <param name="task">The task window of the bulk run, or null when there is none.</param>
+        /// <returns>True when the asset was modified.</returns>
+        public virtual bool ImportSilent(EbxAssetEntry entry, string path, string filterType, FrostyTaskWindow task)
+        {
+            // Raw ebx is imported as "Binary File (Data Only)", which keeps the asset's own file and
+            // instance guids. A bulk import must never re-identify the asset from the file: a .bin
+            // taken from another asset would otherwise leave the two sharing a file guid.
+            if (filterType == "bin")
+                return Import(entry, path, new AssetImportType("bin", "Binary File (Data Only)"));
+
+            return Import(entry, path, new AssetImportType(filterType, ""));
         }
 
         // exports the asset to xml
@@ -242,6 +290,46 @@ namespace Frosty.Core
 
                 App.AssetManager.ModifyEbx(entry.Name, newAsset);
             }
+        }
+
+        // imports the asset from an xml dump written by "Export as .xml"
+        private void ImportFromXml(EbxAssetEntry entry, string path)
+        {
+            List<EbxXmlClassNode> nodes;
+            try
+            {
+                nodes = EbxXmlReader.ParseFile(path);
+            }
+            catch (System.Exception ex)
+            {
+                App.Logger.LogError("Cannot import {0}: {1}", entry.Name, ex.Message);
+                return;
+            }
+
+            EbxAsset asset = App.AssetManager.GetEbx(entry);
+            if (asset == null)
+            {
+                App.Logger.LogError("Cannot import {0}: the asset could not be loaded", entry.Name);
+                return;
+            }
+
+            // The asset is the template: the dump is matched onto its objects and only the fields the
+            // file mentions are written, so a dump this build only partly understands still leaves a
+            // valid asset behind instead of a half-built one.
+            EbxXmlApplyResult result = EbxXmlApplier.Apply(asset.Objects, nodes, App.AssetManager);
+            if (!result.RootMatched)
+            {
+                App.Logger.LogError("Cannot import {0}: {1} does not describe this asset", entry.Name, System.IO.Path.GetFileName(path));
+                return;
+            }
+
+            App.AssetManager.ModifyEbx(entry.Name, asset);
+
+            App.Logger.Log("Imported {0} into {1} ({2} objects, {3} properties, {4} skipped)",
+                System.IO.Path.GetFileName(path), entry.Name, result.ObjectsApplied, result.PropertiesApplied, result.Skipped);
+
+            foreach (string warning in result.Warnings)
+                App.Logger.Log("  xml import: {0}", warning);
         }
     }
 }

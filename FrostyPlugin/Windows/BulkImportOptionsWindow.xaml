@@ -1,0 +1,117 @@
+<ctrl:FrostyDockableWindow x:Class="Frosty.Core.Windows.BulkImportOptionsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ctrl="clr-namespace:Frosty.Controls;assembly=FrostyControls"
+        xmlns:local="clr-namespace:Frosty.Core.Windows"
+        mc:Ignorable="d"
+        Title="Bulk Import Options" Height="580" Width="700" ResizeMode="NoResize"
+        ShowInTaskbar="False" WindowStartupLocation="CenterScreen"
+        FontFamily="Global User Interface" FontSize="14"
+        TextOptions.TextFormattingMode="Display">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/FrostyControls;component/Themes/Generic.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <local:LeafNameConverter x:Key="leafName"/>
+
+            <Style x:Key="noteStyle" TargetType="{x:Type TextBlock}">
+                <Setter Property="Margin" Value="30,3,10,0"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="LineHeight" Value="18"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+                <Setter Property="Foreground" Value="{StaticResource FontColor}"/>
+            </Style>
+
+            <Style x:Key="rowLabelStyle" TargetType="{x:Type TextBlock}">
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="Foreground" Value="{StaticResource FontColor}"/>
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <!-- The colour is set here rather than left to the theme: its TextBlock style declares none, so
+         every line of description used to render black on this dark panel and could not be read. -->
+    <Grid Background="{StaticResource WindowBackground}" TextElement.Foreground="{StaticResource FontColor}">
+        <Grid.RowDefinitions>
+            <RowDefinition/>
+            <RowDefinition Height="46"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{StaticResource ListBackground}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="12,8,12,12">
+
+                    <!-- ebx assets, read back from one or both forms -->
+                    <StackPanel x:Name="ebxRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="importEbxCheckBox" Content="Ebx assets" Margin="6,3,0,0"/>
+                        <StackPanel Margin="30,3,0,0">
+                            <CheckBox x:Name="importEbxXmlCheckBox" Content="from .xml files  (written by 'export as .xml')" Margin="0,5,0,0"/>
+                            <CheckBox x:Name="importEbxBinCheckBox" Content="from .bin files  (written by 'export as .bin')" Margin="0,5,0,0"/>
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="A .xml file is matched onto the asset it describes: only the fields the file mentions are written, so a dump from another build still leaves a valid asset."/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="meshRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="importMeshCheckBox" Content="Mesh assets" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Reads .fbx files back into the mesh of the same name. Wavefront OBJ files cannot be read back."/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="textureRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="importTextureCheckBox" Content="Texture assets" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Reads .dds, .png, .tga and .hdr files back into the texture of the same name. The image must match the texture's size and format."/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="chunkRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="importChunkCheckBox" Content="Chunks" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Reads .chunk files whose name is the chunk id they belong to."/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="resRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="importResCheckBox" Content="Resource files" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Reads .res files (the resource header followed by the resource data) back into the resources they came from."/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="skeletonRow" Margin="0,0,0,12">
+                        <CheckBox x:Name="skeletonAutoCheckBox" Content="Work the skeleton out from the asset's folder" Margin="6,3,0,0"/>
+                        <TextBlock Style="{StaticResource noteStyle}"
+                                   Text="Player meshes get the player skeleton, balls and crowd their own, and a trophy its own folder's skeleton. Use the picker below when you want one specific skeleton instead."/>
+                        <StackPanel Orientation="Horizontal" Margin="30,7,0,0">
+                            <TextBlock Text="Skeleton" Style="{StaticResource rowLabelStyle}"/>
+                            <ComboBox x:Name="skeletonComboBox" Width="420" Margin="12,0,0,0">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Converter={StaticResource leafName}}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock x:Name="hintLabel" Margin="6,6,10,4" TextWrapping="Wrap" FontSize="13" LineHeight="18"
+                               Foreground="{StaticResource FontColor}"
+                               Text="Files are matched to the assets already in the folder you right-clicked, by name - nothing new is ever created, and anything with no match is reported and skipped."/>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.Row="1">
+            <Grid Margin="10">
+                <Button x:Name="cancelButton" Content="Cancel" HorizontalAlignment="Left"
+                        Width="90" IsCancel="True" Click="CancelButton_Click"/>
+                <Button x:Name="okButton" Content="OK" HorizontalAlignment="Right"
+                        Width="120" IsDefault="True" Click="OkButton_Click"/>
+            </Grid>
+        </Border>
+    </Grid>
+</ctrl:FrostyDockableWindow>

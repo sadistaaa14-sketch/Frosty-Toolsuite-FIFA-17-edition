@@ -1081,8 +1081,10 @@
                                                              SelectionChanged="dataExplorer_SelectionChanged"
                                                              BookmarkContext="Asset Bookmarks">
                                         <core:FrostyDataExplorer.AssetContextMenu>
-                                            <ContextMenu>
+                                            <ContextMenu Tag="ebx"
+                                                         Opened="assetContextMenu_Opened">
                                                 <MenuItem Header="Open"
+                                                          Tag="asset"
                                                           Click="contextMenuOpen_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/OpenAsset.png"
@@ -1090,6 +1092,7 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="Revert"
+                                                          Tag="asset"
                                                           Click="contextMenuRevert_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Revert.png"
@@ -1097,6 +1100,7 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="Export"
+                                                          Tag="asset"
                                                           Click="contextMenuExportEbx_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Export.png"
@@ -1104,14 +1108,45 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="Import"
+                                                          Tag="asset"
                                                           Click="contextMenuImportEbx_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Import.png"
                                                                RenderOptions.BitmapScalingMode="Fant" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
-
-                                                
+                                                <Separator />
+                                                <MenuItem Header="Copy Chunk Id"
+                                                          Tag="chunk"
+                                                          Click="contextMenuCopyChunkId_Click">
+                                                    <MenuItem.Icon>
+                                                        <Image Source="/FrostyCore;component/Images/Copy.png"
+                                                               RenderOptions.BitmapScalingMode="Fant" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="Copy Res Id"
+                                                          Tag="res"
+                                                          Click="contextMenuCopyResId_Click">
+                                                    <MenuItem.Icon>
+                                                        <Image Source="/FrostyCore;component/Images/Copy.png"
+                                                               RenderOptions.BitmapScalingMode="Fant" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <Separator />                                                <MenuItem Header="Bulk Export Folder..."
+                                                         Tag="folder"
+                                                         Click="contextMenuBulkExportEbxFolder_Click">
+                                                    <MenuItem.Icon>
+                                                        <Image Source="/FrostyEditor;component/Images/Export.png"
+                                                               RenderOptions.BitmapScalingMode="Fant" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>                                                <MenuItem Header="Bulk Import Folder..."
+                                                         Tag="folder"
+                                                         Click="contextMenuBulkImportEbxFolder_Click">
+                                                    <MenuItem.Icon>
+                                                        <Image Source="/FrostyEditor;component/Images/Import.png"
+                                                               RenderOptions.BitmapScalingMode="Fant" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                             </ContextMenu>
                                         </core:FrostyDataExplorer.AssetContextMenu>
                                     </core:FrostyDataExplorer>
@@ -1129,8 +1164,10 @@
                                                              MultiSelect="True"
                                                              BookmarkContext="Legacy Bookmarks">
                                         <core:FrostyDataExplorer.AssetContextMenu>
-                                            <ContextMenu>
+                                            <ContextMenu Tag="legacy"
+                                                         Opened="assetContextMenu_Opened">
                                                 <MenuItem Header="Open"
+                                                          Tag="asset"
                                                           Click="contextMenuOpen_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/OpenAsset.png"
@@ -1138,6 +1175,7 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="Revert"
+                                                          Tag="asset"
                                                           Click="contextMenuRevert_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Revert.png"
@@ -1145,6 +1183,7 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="Export"
+                                                          Tag="asset"
                                                           Click="contextMenuExportAsset_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Export.png"
@@ -1152,6 +1191,7 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="Import"
+                                                          Tag="asset"
                                                           Click="contextMenuImportAsset_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Import.png"
@@ -1160,6 +1200,7 @@
                                                 </MenuItem>
 
                                                 <MenuItem Header="Duplicate"
+                                                          Tag="asset"
                                                           Click="contextMenuDuplicateAsset_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Add.png"
@@ -1167,7 +1208,25 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <Separator />
+                                                <MenuItem Header="Copy Chunk Id"
+                                                          Tag="chunk"
+                                                          Click="contextMenuCopyChunkId_Click">
+                                                    <MenuItem.Icon>
+                                                        <Image Source="/FrostyCore;component/Images/Copy.png"
+                                                               RenderOptions.BitmapScalingMode="Fant" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="Copy Res Id"
+                                                          Tag="res"
+                                                          Click="contextMenuCopyResId_Click">
+                                                    <MenuItem.Icon>
+                                                        <Image Source="/FrostyCore;component/Images/Copy.png"
+                                                               RenderOptions.BitmapScalingMode="Fant" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <Separator />
                                                 <MenuItem Header="Bulk Export Folder"
+                                                          Tag="folder"
                                                           Click="contextMenuBulkExportFolder_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Export.png"
@@ -1175,6 +1234,7 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="Bulk Import Folder"
+                                                          Tag="folder"
                                                           Click="contextMenuBulkImportFolder_Click">
                                                     <MenuItem.Icon>
                                                         <Image Source="/FrostyEditor;component/Images/Import.png"

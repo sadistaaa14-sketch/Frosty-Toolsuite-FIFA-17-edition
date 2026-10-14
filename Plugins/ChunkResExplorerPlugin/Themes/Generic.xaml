@@ -21,6 +21,9 @@
                         <local:FrostyChunkImportCommand x:Key="FrostyChunkImportCommand"/>
                         <local:FrostyChunkRevertCommand x:Key="FrostyChunkRevertCommand"/>
                         <local:FrostyChunkRightClickCommand x:Key="FrostyChunkRightClickCommand"/>
+                        <local:FrostyChunkBulkExportCommand x:Key="FrostyChunkBulkExportCommand"/>
+                        <local:FrostyChunkBulkImportCommand x:Key="FrostyChunkBulkImportCommand"/>
+                        <local:FrostyChunkCopyIdCommand x:Key="FrostyChunkCopyIdCommand"/>
                     </ControlTemplate.Resources>
                     <Grid Background="{StaticResource ControlBackground}">
                         <Grid Margin="2">
@@ -42,6 +45,30 @@
                                 <TextBox Grid.Row="1" x:Name="PART_ChunkFilter" BorderThickness="1" Margin="1" VerticalContentAlignment="Center"/>
 
                                 <ListBox Grid.Row="2" x:Name="PART_ChunksListBox" Tag="{Binding RelativeSource={RelativeSource AncestorType={x:Type local:FrostyChunkResEditor}}}">
+                                    <!-- The rows carry the full menu below, but a right-click on the empty space of
+                                         the list (or on a list that the filter emptied) hits the ListBox itself.
+                                         Only the folder-wide commands are offered there, because Export/Import/
+                                         Revert/Copy need the chunk the menu was raised on. -->
+                                    <ListBox.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Bulk Export Chunks" Command="{StaticResource FrostyChunkBulkExportCommand}">
+                                                <MenuItem.CommandParameter>
+                                                    <Binding Path="PlacementTarget.Tag" RelativeSource="{RelativeSource AncestorType={x:Type ContextMenu}}"/>
+                                                </MenuItem.CommandParameter>
+                                                <MenuItem.Icon>
+                                                    <Image Source="/FrostyEditor;component/Images/Export.png" Opacity="0.5"/>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="Bulk Import Chunks" Command="{StaticResource FrostyChunkBulkImportCommand}">
+                                                <MenuItem.CommandParameter>
+                                                    <Binding Path="PlacementTarget.Tag" RelativeSource="{RelativeSource AncestorType={x:Type ContextMenu}}"/>
+                                                </MenuItem.CommandParameter>
+                                                <MenuItem.Icon>
+                                                    <Image Source="/FrostyEditor;component/Images/Import.png" Opacity="0.5"/>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                        </ContextMenu>
+                                    </ListBox.ContextMenu>
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="{x:Type ListBoxItem}">
                                             <Setter Property="HorizontalContentAlignment" Value="{Binding HorizontalContentAlignment, RelativeSource={RelativeSource AncestorType={x:Type ItemsControl}}}"/>
@@ -100,6 +127,32 @@
                                                                 <Image Source="/FrostyEditor;component/Images/Revert.png" Opacity="0.5"/>
                                                             </MenuItem.Icon>
                                                         </MenuItem>
+                                                        <Separator/>
+                                                        <MenuItem Header="Copy Chunk Id" Command="{StaticResource FrostyChunkCopyIdCommand}">
+                                                            <MenuItem.CommandParameter>
+                                                                <Binding Path="PlacementTarget.DataContext" RelativeSource="{RelativeSource AncestorType={x:Type ContextMenu}}"/>
+                                                            </MenuItem.CommandParameter>
+                                                            <MenuItem.Icon>
+                                                                <Image Source="/FrostyCore;component/Images/Copy.png" Opacity="0.5"/>
+                                                            </MenuItem.Icon>
+                                                        </MenuItem>
+                                                        <Separator/>
+                                                        <MenuItem Header="Bulk Export Chunks" Command="{StaticResource FrostyChunkBulkExportCommand}">
+                                                            <MenuItem.CommandParameter>
+                                                                <Binding Path="PlacementTarget.Tag" RelativeSource="{RelativeSource AncestorType={x:Type ContextMenu}}"/>
+                                                            </MenuItem.CommandParameter>
+                                                            <MenuItem.Icon>
+                                                                <Image Source="/FrostyEditor;component/Images/Export.png" Opacity="0.5"/>
+                                                            </MenuItem.Icon>
+                                                        </MenuItem>
+                                                        <MenuItem Header="Bulk Import Chunks" Command="{StaticResource FrostyChunkBulkImportCommand}">
+                                                            <MenuItem.CommandParameter>
+                                                                <Binding Path="PlacementTarget.Tag" RelativeSource="{RelativeSource AncestorType={x:Type ContextMenu}}"/>
+                                                            </MenuItem.CommandParameter>
+                                                            <MenuItem.Icon>
+                                                                <Image Source="/FrostyEditor;component/Images/Import.png" Opacity="0.5"/>
+                                                            </MenuItem.Icon>
+                                                        </MenuItem>
                                                     </ContextMenu>
                                                 </Setter.Value>
                                             </Setter>
@@ -148,6 +201,28 @@
                                             <MenuItem x:Name="PART_RevertMenuItem" Header="Revert">
                                                 <MenuItem.Icon>
                                                     <Image Source="/FrostyEditor;component/Images/Revert.png" Opacity="0.5"/>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <Separator/>
+                                            <MenuItem x:Name="PART_ResCopyChunkIdMenuItem" Header="Copy Chunk Id">
+                                                <MenuItem.Icon>
+                                                    <Image Source="/FrostyCore;component/Images/Copy.png" Opacity="0.5"/>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="PART_ResCopyResIdMenuItem" Header="Copy Res Id">
+                                                <MenuItem.Icon>
+                                                    <Image Source="/FrostyCore;component/Images/Copy.png" Opacity="0.5"/>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <Separator/>
+                                            <MenuItem x:Name="PART_ResBulkExportMenuItem" Header="Bulk Export Res">
+                                                <MenuItem.Icon>
+                                                    <Image Source="/FrostyEditor;component/Images/Export.png" Opacity="0.5"/>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="PART_ResBulkImportMenuItem" Header="Bulk Import Res">
+                                                <MenuItem.Icon>
+                                                    <Image Source="/FrostyEditor;component/Images/Import.png" Opacity="0.5"/>
                                                 </MenuItem.Icon>
                                             </MenuItem>
                                         </ContextMenu>
