@@ -13,7 +13,18 @@
         <ResourceDictionary Source="/FrostyControls;component/Themes/Generic.xaml"/>
     </ResourceDictionary.MergedDictionaries>
 
-    <!-- FrostySoundDataEditor -->
+    <!--
+        FrostySoundDataEditor.
+
+        The list is the working surface and it can hold seven thousand clips behind one shared chunk, so the
+        panel is built to keep it cheap and quiet:
+
+          * the rows are virtualized with recycling and their columns have fixed widths, because a column
+            that is asked to size itself from its content is re-measured for every realized row - which is
+            what made a bank of thousands freeze the editor;
+          * there is one waveform, for the selected clip, instead of a rendered image inside every row;
+          * every line about the open asset or the selected clip is one line, so the list keeps the space.
+    -->
     <Style TargetType="{x:Type local:FrostySoundDataEditor}">
         <Setter Property="Template">
             <Setter.Value>
@@ -27,96 +38,176 @@
                         <ctrl:FrostyDockablePanel Grid.Column="0" Title="" TitleBarVisible="False">
                             <Grid>
                                 <Grid.RowDefinitions>
-                                    <RowDefinition Height="26"/>
+                                    <RowDefinition Height="28"/>
+                                    <RowDefinition Height="18"/>
                                     <RowDefinition Height="*"/>
+                                    <RowDefinition Height="96"/>
+                                    <RowDefinition Height="24"/>
                                 </Grid.RowDefinitions>
 
+                                <!-- Row 0: playback, the filter, and how many clips are listed -->
                                 <Border Margin="1">
-                                    <DockPanel>
-                                        <Border Background="{StaticResource ControlBackground}" Margin="0">
-                                            <StackPanel VerticalAlignment="Center" Orientation="Horizontal" Margin="6,0,6,0">
-                                                <StackPanel.Resources>
-                                                    <conv:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
-                                                </StackPanel.Resources>
-                                                <Button x:Name="PART_PlayButton" Width="22" Height="22" Margin="0" ToolTip="Play" IsEnabled="False">
-                                                    <Button.Content>
-                                                        <Image Grid.Column="0" Width="14" Source="/FrostyEditor;component/Images/Play.png"/>
-                                                    </Button.Content>
-                                                </Button>
-                                                <Button x:Name="PART_StopButton" Width="22" Height="22" Margin="2,0,0,0" ToolTip="Stop" IsEnabled="False">
-                                                    <Button.Content>
-                                                        <Image Grid.Column="0" Width="14" Source="/FrostyEditor;component/Images/Stop.png"/>
-                                                    </Button.Content>
-                                                </Button>
-                                                <Slider Margin="8,0,0,0" x:Name="PART_VolumeSlider" VerticalAlignment="Center" Minimum="0" Maximum="100" LargeChange="20" SmallChange="2" IsSnapToTickEnabled="True" TickFrequency="1" Width="160"/>
-                                            </StackPanel>
-                                        </Border>
+                                    <DockPanel LastChildFill="True">
+                                        <TextBlock x:Name="PART_TrackCountText" DockPanel.Dock="Right" Margin="8,0,10,0"
+                                                   VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.6"
+                                                   Text="0 clips" ToolTip="How many clips are listed, of how many the bank holds"/>
+                                        <StackPanel VerticalAlignment="Center" Orientation="Horizontal" Margin="6,0,6,0">
+                                            <Button x:Name="PART_PlayButton" Width="22" Height="22" Margin="0" ToolTip="Play the selected clip" IsEnabled="False">
+                                                <Button.Content>
+                                                    <Image Grid.Column="0" Width="14" Source="/FrostyEditor;component/Images/Play.png"/>
+                                                </Button.Content>
+                                            </Button>
+                                            <Button x:Name="PART_StopButton" Width="22" Height="22" Margin="2,0,0,0" ToolTip="Stop playback" IsEnabled="False">
+                                                <Button.Content>
+                                                    <Image Grid.Column="0" Width="14" Source="/FrostyEditor;component/Images/Stop.png"/>
+                                                </Button.Content>
+                                            </Button>
+                                            <!--
+                                                The commands a modder uses most, as buttons. They used to exist only in
+                                                the list's right-click menu, which is where a command goes to be
+                                                undiscoverable; Edit opens that same menu, so there is still one set of
+                                                edit commands and one place to change them.
+                                            -->
+                                            <Button x:Name="PART_AddClipButton" Height="22" Margin="12,0,0,0" Padding="6,0,6,0"
+                                                    Content="Add Clip" IsEnabled="False"
+                                                    ToolTip="Add a clip to this asset from an audio file" ToolTipService.ShowOnDisabled="True"/>
+                                            <Button x:Name="PART_DeleteClipButton" Height="22" Margin="4,0,0,0" Padding="6,0,6,0"
+                                                    Content="Delete Clip" IsEnabled="False"
+                                                    ToolTip="Remove the selected clip and its audio" ToolTipService.ShowOnDisabled="True"/>
+                                            <Button x:Name="PART_ImportButton" Height="22" Margin="4,0,0,0" Padding="6,0,6,0"
+                                                    Content="Import" IsEnabled="False"
+                                                    ToolTip="Replace the selected clip's audio with an audio file" ToolTipService.ShowOnDisabled="True"/>
+                                            <Button x:Name="PART_ExportButton" Height="22" Margin="4,0,0,0" Padding="6,0,6,0"
+                                                    Content="Export" IsEnabled="False"
+                                                    ToolTip="Export the selected clip as a WAV file" ToolTipService.ShowOnDisabled="True"/>
+                                            <Button x:Name="PART_EditMenuButton" Height="22" Margin="8,0,0,0" Padding="6,0,6,0"
+                                                    Content="Edit &#9662;"
+                                                    ToolTip="Undo, normalize, gain, fades, trim, reverse, rename and copy: every command for the selected clip"/>
+                                            <Slider Margin="10,0,0,0" x:Name="PART_VolumeSlider" VerticalAlignment="Center" Minimum="0" Maximum="100" LargeChange="20" SmallChange="2" IsSnapToTickEnabled="True" TickFrequency="1" Width="110" ToolTip="Playback volume"/>
+                                            <TextBox x:Name="PART_SearchBox" MinWidth="140" Margin="14,0,0,0" VerticalAlignment="Center"
+                                                     ToolTip="Filter the clips: part of a name, a team, a codec or a clip number"/>
+                                        </StackPanel>
                                     </DockPanel>
                                 </Border>
 
-                                <ListView x:Name="PART_TracksListBox" Grid.Row="1" ItemsSource="{Binding Path=TracksList, RelativeSource={RelativeSource AncestorType={x:Type local:FrostySoundDataEditor}}}">
+                                <!-- Row 1: what is open, in one line -->
+                                <Border Grid.Row="1" Background="{StaticResource ControlBackground}" Margin="1,0,1,0">
+                                    <TextBlock x:Name="PART_BankSummary" Margin="8,0" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" Opacity="0.6"
+                                               Text="" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+                                </Border>
+
+                                <!-- Row 2: the clips -->
+                                <ListView x:Name="PART_TracksListBox" Grid.Row="2" BorderThickness="0,1,0,1"
+                                          ItemsSource="{Binding Path=TracksList, RelativeSource={RelativeSource AncestorType={x:Type local:FrostySoundDataEditor}}}"
+                                          VirtualizingStackPanel.IsVirtualizing="True"
+                                          VirtualizingStackPanel.VirtualizationMode="Recycling"
+                                          ScrollViewer.CanContentScroll="True"
+                                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                          SelectionMode="Single">
+                                    <ListView.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <VirtualizingStackPanel/>
+                                        </ItemsPanelTemplate>
+                                    </ListView.ItemsPanel>
                                     <ListView.ContextMenu>
                                         <ContextMenu>
-                                            <MenuItem x:Name="PART_SoundExportMenuItem" Header="Export">
+                                            <MenuItem Header="Edit">
+                                                <MenuItem x:Name="PART_SoundEditUndoMenuItem" Header="Undo Edit"/>
+                                                <Separator/>
+                                                <MenuItem x:Name="PART_SoundEditNormalizeMenuItem" Header="Normalize"/>
+                                                <MenuItem x:Name="PART_SoundEditGainMenuItem" Header="Gain..."/>
+                                                <Separator/>
+                                                <MenuItem x:Name="PART_SoundEditFadeInMenuItem" Header="Fade In..."/>
+                                                <MenuItem x:Name="PART_SoundEditFadeOutMenuItem" Header="Fade Out..."/>
+                                                <Separator/>
+                                                <MenuItem x:Name="PART_SoundEditTrimRangeMenuItem" Header="Trim To Range..."/>
+                                                <MenuItem x:Name="PART_SoundEditTrimSilenceMenuItem" Header="Trim Silence..."/>
+                                                <MenuItem x:Name="PART_SoundEditReverseMenuItem" Header="Reverse"/>
+                                            </MenuItem>
+                                            <Separator/>
+                                            <MenuItem x:Name="PART_SoundCopyNameMenuItem" Header="Copy Name"/>
+                                            <MenuItem x:Name="PART_SoundCopyKeysMenuItem" Header="Copy Keys"/>
+                                            <MenuItem x:Name="PART_SoundRenameMenuItem" Header="Rename Clip..."/>
+                                            <Separator/>
+                                            <MenuItem x:Name="PART_SoundExportMenuItem" Header="Export Clip">
                                                 <MenuItem.Icon>
                                                     <Image Source="/FrostyEditor;component/Images/Export.png" Opacity="0.5"/>
                                                 </MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem x:Name="PART_SoundImportMenuItem" Header="Import">
+                                            <MenuItem x:Name="PART_SoundExportAllMenuItem" Header="Export All Clips...">
+                                                <MenuItem.Icon>
+                                                    <Image Source="/FrostyEditor;component/Images/Export.png" Opacity="0.5"/>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="PART_SoundImportMenuItem" Header="Import Into Clip">
                                                 <MenuItem.Icon>
                                                     <Image Source="/FrostyEditor;component/Images/Import.png" Opacity="0.5"/>
                                                 </MenuItem.Icon>
                                             </MenuItem>
                                             <Separator/>
-                                            <MenuItem x:Name="PART_SoundAddTrackMenuItem" Header="Add Track">
+                                            <MenuItem x:Name="PART_SoundAddTrackMenuItem" Header="Add Clip">
                                                 <MenuItem.Icon>
                                                     <Image Source="/FrostyEditor;component/Images/Import.png" Opacity="0.5"/>
                                                 </MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem x:Name="PART_SoundDeleteTrackMenuItem" Header="Delete Track"/>
-                                            <MenuItem x:Name="PART_SoundDeleteAllExceptMenuItem" Header="Keep First N Tracks..."/>
+                                            <MenuItem x:Name="PART_SoundDeleteTrackMenuItem" Header="Delete Clip"/>
+                                            <MenuItem x:Name="PART_SoundDeleteAllExceptMenuItem" Header="Keep First N Clips..."/>
                                         </ContextMenu>
                                     </ListView.ContextMenu>
                                     <ListView.View>
-                                        <ctrl:FrostyAutoSizedGridView>
-                                            <ctrl:FrostyAutoSizedGridView.Columns>
-                                                <GridViewColumn Header="Details">
-                                                    <GridViewColumn.CellTemplate>
-                                                        <DataTemplate>
-                                                            <Grid Height="80">
-                                                                <StackPanel Orientation="Vertical" VerticalAlignment="Center">
-                                                                    <TextBlock Text="{Binding Path=Name}" VerticalAlignment="Center" FontWeight="Bold"/>
-                                                                    <TextBlock Text="{Binding Path=Duration, StringFormat=N2}" VerticalAlignment="Center"/>
-                                                                    <TextBlock VerticalAlignment="Center">
-                                                                        <TextBlock.Text>
-                                                                            <Binding Path="SampleRate">
-                                                                                <Binding.StringFormat>{0} Hz</Binding.StringFormat>
-                                                                            </Binding>
-                                                                        </TextBlock.Text>
-                                                                    </TextBlock>
-                                                                    <TextBlock Text="{Binding Path=Codec}" VerticalAlignment="Center" Opacity="0.5"/>
-                                                                    <TextBlock Text="{Binding Path=Language}" VerticalAlignment="Center" Opacity="0.5"/>
-                                                                </StackPanel>
-                                                            </Grid>
-                                                        </DataTemplate>
-                                                    </GridViewColumn.CellTemplate>
-                                                </GridViewColumn>
-                                                <GridViewColumn Header="WaveForm">
-                                                    <GridViewColumn.CellTemplate>
-                                                        <DataTemplate>
-                                                            <Grid>
-                                                                <Image Source="{Binding Path=WaveForm}" Width="800"/>
-                                                                <Canvas Width="800" Height="80">
-                                                                    <Line X1="{Binding Path=Progress}" X2="{Binding Path=Progress}" Y1="0" Y2="80" StrokeThickness="1" Stroke="White" RenderOptions.EdgeMode="Aliased" SnapsToDevicePixels="True"/>
-                                                                </Canvas>
-                                                            </Grid>
-                                                        </DataTemplate>
-                                                    </GridViewColumn.CellTemplate>
-                                                </GridViewColumn>
-                                            </ctrl:FrostyAutoSizedGridView.Columns>
-                                        </ctrl:FrostyAutoSizedGridView>
+                                        <GridView>
+                                            <GridViewColumn Header="#" Width="52" DisplayMemberBinding="{Binding Path=Index}"/>
+                                            <GridViewColumn Header="Name" Width="300">
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding Path=Name}" VerticalAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Path=Detail}"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                            <GridViewColumn Header="Time" Width="80"
+                                                            DisplayMemberBinding="{Binding Path=Duration, StringFormat={}{0:0.00}s}"/>
+                                            <GridViewColumn Header="Codec" Width="90" DisplayMemberBinding="{Binding Path=Codec}"/>
+                                            <!--
+                                                Which row of its key's block the clip is ("1 of 2"), when the bank
+                                                files more than one clip under the same selection key: the place in
+                                                the block is what tells such clips apart. Empty when the key finds
+                                                one clip.
+                                            -->
+                                            <GridViewColumn Header="Variation" Width="120" DisplayMemberBinding="{Binding Path=Variation}"/>
+                                            <GridViewColumn Header="Key" Width="180">
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding Path=KeyText}" VerticalAlignment="Center" Opacity="0.55"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Path=KeyText}"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
+                                        </GridView>
                                     </ListView.View>
                                 </ListView>
+
+                                <!-- Row 3: the selected clip's waveform, and where playback is -->
+                                <Border Grid.Row="3" Background="{StaticResource ControlBackground}" Margin="1,0,1,0">
+                                    <Canvas x:Name="PART_WaveFormCanvas" ClipToBounds="True" Background="Transparent">
+                                        <Image x:Name="PART_WaveFormImage" Stretch="Fill" Canvas.Top="0" Canvas.Left="0"/>
+                                        <Line x:Name="PART_ProgressLine" Y1="0" Y2="96" X1="0" X2="0" StrokeThickness="1"
+                                              Stroke="White" RenderOptions.EdgeMode="Aliased" SnapsToDevicePixels="True"/>
+                                    </Canvas>
+                                </Border>
+
+                                <!-- Row 4: what the selected clip is -->
+                                <Border Grid.Row="4" Background="{StaticResource ControlBackground}" Margin="1,0,1,1">
+                                    <DockPanel LastChildFill="True" Margin="6,0,6,0">
+                                        <Button x:Name="PART_PrevTrackButton" DockPanel.Dock="Left" Width="24" Height="20" Margin="0,0,2,0"
+                                                VerticalAlignment="Center" Content="&#9664;" ToolTip="Previous clip"/>
+                                        <Button x:Name="PART_NextTrackButton" DockPanel.Dock="Left" Width="24" Height="20" Margin="0,0,8,0"
+                                                VerticalAlignment="Center" Content="&#9654;" ToolTip="Next clip"/>
+                                        <TextBlock x:Name="PART_DetailText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                   Opacity="0.8" Text="" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+                                    </DockPanel>
+                                </Border>
 
                             </Grid>
                         </ctrl:FrostyDockablePanel>
@@ -137,7 +228,6 @@
     <Style TargetType="{x:Type local:FrostySoundWaveEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
     <Style TargetType="{x:Type local:FrostyNewWaveEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
     <Style TargetType="{x:Type local:FrostyHarmonySampleBankEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
-    <Style TargetType="{x:Type local:FrostyLocalizedWaveEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
     <Style TargetType="{x:Type local:FrostyOctaneSoundEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
     <Style TargetType="{x:Type local:FrostyImpulseResponseEditor}" BasedOn="{StaticResource {x:Type local:FrostySoundDataEditor}}"/>
 

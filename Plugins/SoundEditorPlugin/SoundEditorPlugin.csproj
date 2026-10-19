@@ -36,8 +36,15 @@
     <Optimize>true</Optimize>
   </PropertyGroup>
   
+  <!--
+    Copies the built plugin into the editor's deployment, where the editor loads it from. `xcopy` cannot be used
+    with a destination that ends in a backslash immediately before the closing quote: the backslash escapes the
+    quote, xcopy reports "Invalid number of parameters" and exits 4, and the editor goes on loading whatever
+    plugin it was built with. Naming the destination *file* has no such parsing trap, and the copy says so when it
+    fails (a running editor holds the DLL open, which is the one reason this can still refuse).
+  -->
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Exec Command="xcopy /Y $(TargetPath) $(SolutionDir)$(OutDir)Plugins\" />
+    <Exec Command="copy /Y &quot;$(TargetPath)&quot; &quot;$(SolutionDir)$(OutDir)Plugins\SoundEditorPlugin.dll&quot;" />
   </Target>
   
   <ItemGroup>
@@ -77,5 +84,17 @@
   
   <ItemGroup>
     <Resource Include="Images\SoundFileType.png" />
+  </ItemGroup>
+
+  <!--
+    Clip names derived from listening to the audio are not part of the plugin: every name it shows comes from the
+    bank's own selection keys, the game's event-system names and the game's database. These three files held the
+    listening-derived tables and their readers; they are excluded here so a checkout that still has them builds
+    the same plugin, and they can be deleted.
+  -->
+  <ItemGroup>
+    <Compile Remove="SoundRowCategories.cs" />
+    <Compile Remove="FifaClipMap.cs" />
+    <Compile Remove="FifaKeyTable.cs" />
   </ItemGroup>
 </Project>

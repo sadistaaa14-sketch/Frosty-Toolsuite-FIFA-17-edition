@@ -29,6 +29,10 @@ using System.Windows;
 
 [assembly: RegisterTypeOverride("SoundWaveAsset", typeof(SoundWaveAssetOverride))]
 
+// The bank checks (.freebuff/verify/BankCheck.cs) read the bank format's internal types: the image, its datasets and
+// their parameter records, which is what a round trip and a group ledger are made of.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("BankCheck")]
+
 [assembly: RegisterAssetDefinition("SoundWaveAsset", typeof(SoundWaveAssetDefinition))]
 [assembly: RegisterAssetDefinition("NewWaveAsset", typeof(NewWaveAssetDefinition))]
 [assembly: RegisterAssetDefinition("HarmonySampleBankAsset", typeof(HarmonySampleBankAssetDefinition))]
