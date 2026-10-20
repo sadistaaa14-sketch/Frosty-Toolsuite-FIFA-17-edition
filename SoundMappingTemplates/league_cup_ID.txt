@@ -1,0 +1,27 @@
+# mapping.txt template - sound banks looked up by league_cup_ID
+# 1 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/radio/soundwaves/bcmr_seq2_league_or_cup.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# league_cup_ID
+# FIFA17.exe sets it to +0x10 (FUN_147826830) (a field of the message its RadioDbEvents handler is given; the sender is not traced).
+# Set by the code of CMR_LEAGUE_TABLE_UPDATE_SEQ1, CMR_SEQ2_LEAGUE_OR_CUP.
+#   values these banks use (the census lists up to 60 a bank): 10, 14, 16, 17, 18, 19, 20, 21, 27, 34, 37, 38, 39, 42, 45, 50, 53, 60, 61, 65, 75,
+#     95, 201, 202, 204, 205, 206, 208, 210, 211, 212, 219, 223, 224, 225, 228, 232, 233, 234, 314, 360, 361,
+#     365
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = league_cup_ID=10
+my_clip_02.wav = league_cup_ID=14

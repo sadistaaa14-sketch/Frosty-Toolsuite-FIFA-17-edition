@@ -72,9 +72,35 @@ namespace SoundEditorPlugin
         }
     }
 
+    /// <summary>
+    /// One change of a bulk import: <see cref="Clip"/>'s audio into clip <see cref="Ordinal"/>, or (Ordinal -1) a new clip
+    /// filed under <see cref="Key"/>, its VariationId the engine hash of <see cref="Name"/> (made unique by the writer).
+    /// </summary>
+    public sealed class SoundBankBatchStep
+    {
+        public int Ordinal = -1;
+        public byte[] Clip;
+        public SoundBankClipKey Key;
+        public string Name;
+    }
+
     /// <summary>The writer's entry points: what the editor's clip commands call, and what it asks before it enables them.</summary>
     public static class SoundBankWriter
     {
+        /// <summary>
+        /// Many replaces and adds in one edit (Bulk Import): every replace first, so every clip keeps the ordinal it had,
+        /// then every add, then one commit and one read-back. The first step the writer refuses stops the batch and
+        /// nothing is handed back; an added clip's <see cref="SoundBankBatchStep.Name"/> is the name it was given.
+        /// </summary>
+        public static SoundBankAddResult ApplyBatch(byte[] res, byte[] chunk, IList<SoundBankBatchStep> steps)
+        {
+            if (steps == null || steps.Count == 0)
+                return Refused("no clip was named to import");
+            if (steps.Any(s => s.Clip == null || s.Clip.Length == 0))
+                return Refused("a clip's audio is empty");
+            return Run(res, chunk, false, "the bulk import", editor => editor.Batch(steps));
+        }
+
         private static string Fault(string what, Exception ex)
         {
             return what + " stopped on an internal error (" + ex.GetType().Name + ": " + ex.Message
@@ -908,6 +934,61 @@ namespace SoundEditorPlugin
         }
 
         // ─── the edits ───────────────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>A bulk import: every replace, then every add (see <see cref="SoundBankWriter.ApplyBatch"/>).</summary>
+        public string Batch(IList<SoundBankBatchStep> steps)
+        {
+            HashSet<int> replaced = new HashSet<int>();
+            int replaces = 0, adds = 0;
+            foreach (SoundBankBatchStep step in steps)
+            {
+                if (step.Ordinal < 0)
+                    continue;
+                if (!replaced.Add(step.Ordinal))
+                    return "clip " + step.Ordinal + " is named twice";
+                string why = Replace(step.Ordinal, step.Clip);
+                if (why != null)
+                    return "clip " + step.Ordinal + ": " + why;
+                replaces++;
+            }
+
+            foreach (SoundBankBatchStep step in steps)
+            {
+                if (step.Ordinal >= 0)
+                    continue;
+                string name = UniqueName(string.IsNullOrEmpty(step.Name) ? "bulk import" : step.Name);
+                string why = AddClipChecked(step, name);
+                if (why != null)
+                    return "the new clip \"" + name + "\": " + why;
+                step.Name = name;
+                adds++;
+            }
+
+            report.Add(string.Format(CultureInfo.InvariantCulture, "bulk import: {0} clip(s) replaced, {1} added", replaces, adds));
+            return null;
+        }
+
+        private string AddClipChecked(SoundBankBatchStep step, string name)
+        {
+            if (step.Key == null && keyOrder.Count > 0)
+                return "a new clip needs a value for every parameter the bank is looked up by";
+            return Add(step.Clip, -1, name, step.Key);
+        }
+
+        /// <summary><paramref name="stem"/>, or stem 2, stem 3 ...: the first whose engine hash no clip of the bank carries.</summary>
+        public string UniqueName(string stem)
+        {
+            if (!clipVariationId.Contains(BankBytes.Hash(stem)))
+                return stem;
+            for (int n = 2; n < 1000000; n++)
+            {
+                string name = stem + " " + n.ToString(CultureInfo.InvariantCulture);
+                if (!clipVariationId.Contains(BankBytes.Hash(name)))
+                    return name;
+            }
+
+            return stem + " " + Guid.NewGuid().ToString("N");
+        }
 
         public string AddCopy(int sourceOrdinal, string name, SoundBankClipKey key)
         {

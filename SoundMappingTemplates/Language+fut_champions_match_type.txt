@@ -1,0 +1,42 @@
+# mapping.txt template - sound banks looked up by Language + fut_champions_match_type
+# 15 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bc_fut_champions_knockout_intro.res
+#     speech/commentary/eng_us/soundwaves/bc_fut_champions_knockout_tournament_rounds_ft_lost.res
+#     speech/commentary/eng_us/soundwaves/bc_fut_champions_knockout_tournament_rounds_ft_won.res
+#     speech/commentary/eng_us/soundwaves/bc_fut_champions_weekend_league_ft_tier_clinch.res
+#     speech/commentary/eng_us/soundwaves/bfut_champions_knockout_kickoff_2nd_half.res
+#     speech/commentary/eng_us/soundwaves/bfut_champions_weekend_league_kickoff_2nd_half.res
+#     speech/commentary/eng_us/soundwaves/bm_fut_champions_knockout_intro.res
+#     speech/commentary/eng_us/soundwaves/bm_fut_champions_knockout_tournament_rounds_ft_lost.res
+#     speech/commentary/eng_us/soundwaves/bm_fut_champions_knockout_tournament_rounds_ft_won.res
+#     speech/commentary/eng_us/soundwaves/bm_fut_champions_weekend_league_ft_tier_clinch.res
+#     speech/commentary/eng_us/soundwaves/eng_us_male/bm_fut_champions_weekend_league_ft_tier_clinch.res
+#     speech/loccommentary/ara_sa/soundwaves/ara_sa_male/bfut_champions_knockout_intro.res
+#     speech/loccommentary/ara_sa/soundwaves/ara_sa_male/bfut_champions_knockout_tournament_rounds_ft_lost.res
+#     speech/loccommentary/ara_sa/soundwaves/ara_sa_male/bfut_champions_knockout_tournament_rounds_ft_won.res
+#     speech/loccommentary/por_br/soundwaves/por_br_male/bfut_champions_weekend_league_kickoff_2nd_half.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0, 15, 16
+#
+# fut_champions_match_type
+# FIFA17.exe's code never names it (neither the name nor its id 0xFCA529DA occurs in the exe); the game's CommentaryDbEvents data declares it.
+#   values these banks use (the census lists up to 60 a bank): 0, 1, 2, 3, 5, 6, 7
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, fut_champions_match_type=0
+my_clip_02.wav = Language=0, fut_champions_match_type=0

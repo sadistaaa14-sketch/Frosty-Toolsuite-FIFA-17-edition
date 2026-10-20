@@ -1,0 +1,49 @@
+# mapping.txt template - sound banks looked up by sfx_region_id
+# 30 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     chants/newwaves/chants_demo/region.res
+#     chants/newwaves/chants_demo/region_expecting_win.res
+#     chants/newwaves/chants_demo/region_low_morale.res
+#     chants/newwaves/chants_demo/you_not_singing.res
+#     chants/newwaves/chants_full/latin_bounce_region.res
+#     chants/newwaves/chants_full/manager_negative.res
+#     chants/newwaves/chants_full/region.res
+#     chants/newwaves/chants_full/region_away_expecting_win.res
+#     chants/newwaves/chants_full/region_corner.res
+#     chants/newwaves/chants_full/region_expecting_win.res
+#     chants/newwaves/chants_full/region_legacy.res
+#     chants/newwaves/chants_full/region_losing_1nil.res
+#     chants/newwaves/chants_full/region_red_card.res
+#     chants/newwaves/chants_full/region_topofleague.res
+#     chants/newwaves/chants_full/region_whistles.res
+#     chants/newwaves/chants_full/topofleague_winning.res
+#     chants/newwaves/chants_full/who_are_ya.res
+#     chants/newwaves/chants_full/you_not_singing.res
+#     chants/newwaves/latin_bounce_region.res
+#     chants/newwaves/manager_negative.res
+#     chants/newwaves/region.res
+#     chants/newwaves/region_corner.res
+#     chants/newwaves/region_expecting_win.res
+#     chants/newwaves/region_legacy.res
+#     chants/newwaves/region_low_morale.res
+#     ... and 5 more (index.tsv lists every bank and its template)
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# sfx_region_id
+# FIFA17.exe's code never names it (neither the name nor its id 0xC4ECA0DD occurs in the exe); the game's ChantDatabaseEvents data declares it.
+#   values these banks use (the census lists up to 60 a bank): 1, 2, 3, 4, 5, 7, 9, 12, 14, 16, 99999
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = sfx_region_id=2
+my_clip_02.wav = sfx_region_id=3

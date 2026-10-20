@@ -1,0 +1,64 @@
+# mapping.txt template - sound banks looked up by Language + ptw_team_result + ptw_player_result_extra
+# 41 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_draw_equaliser_offside.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_draw_equaliser_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_draw_goal_offside.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_draw_goal_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_draw_late_equaliser_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_draw_no_goal_offside_goal.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_draw_no_goal_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_win_goal_offside.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_win_goal_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_win_late_lead_goal_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_win_lead_goal_offside_goal.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_win_lead_goal_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_win_no_goal_offside_goal.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ft_win_no_goal_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_draw_equaliser_offside.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_draw_equaliser_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_draw_goal_offside.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_draw_goal_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_draw_late_equaliser_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_draw_no_goal_offside.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_draw_no_goal_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_lose_goal_offside.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_lose_goal_unconverted_pen.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_lose_no_goal_offside.res
+#     speech/commentary/eng_us/soundwaves/bptw_c_ht_lose_no_goal_unconverted_pen.res
+#     ... and 16 more (index.tsv lists every bank and its template)
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0, 1, 9, 15
+#
+# ptw_team_result
+# FIFA17.exe sets it to +0x58 of the record FUN_14783c480 is given (a field of the handler's record; what fills it is not traced).
+# Set by the code of trigger_PTW_INTRO, trigger_PTW_INTRO_SINGLE_CONTEXTUAL, trigger_PTW_INTRO_DUAL_DEFAULT, trigger_PTW_INTRO_DUAL_CONTEXTUAL, trigger_PTW_HT, trigger_PTW_FT, trigger_PTW_FT_SINGLE_CONTEXTUAL, trigger_PTW_FT_DUAL_DEFAULT and 2 more.
+#   value names: invalid=0, WIN=1, LOSE=2, DRAW=4
+#   values these banks use (the census lists up to 60 a bank): 1, 2, 4
+#
+# ptw_player_result_extra
+# FIFA17.exe sets it to +0xa8 of the record FUN_14783c480 is given (a field of the handler's record; what fills it is not traced).
+# Set by the code of trigger_PTW_INTRO, trigger_PTW_INTRO_SINGLE_CONTEXTUAL, trigger_PTW_INTRO_DUAL_DEFAULT, trigger_PTW_INTRO_DUAL_CONTEXTUAL, trigger_PTW_HT, trigger_PTW_FT, trigger_PTW_FT_SINGLE_CONTEXTUAL, trigger_PTW_FT_DUAL_DEFAULT and 2 more.
+#   value names: invalid=0, LATE_LEAD_GOAL_UNCONVERTED_PEN=1, LEAD_GOAL_UNCONVERTED_PEN=2,
+#     GOAL_UNCONVERTED_PEN=4, NO_GOAL_UNCONVERTED_PEN=8, LATE_EQUALISER_UNCONVERTED_PEN=16,
+#     EQUALISER_UNCONVERTED_PEN=32, LEAD_GOAL_OFFSIDE=64, GOAL_OFFSIDE=128, NO_GOAL_OFFSIDE=256,
+#     EQUALISER_OFFSIDE=512, NO_GOALS=1024
+#   values these banks use (the census lists up to 60 a bank): 1, 2, 4, 8, 16, 32, 64, 128, 256, 512
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, ptw_team_result=0, ptw_player_result_extra=0
+my_clip_02.wav = Language=0, ptw_team_result=0, ptw_player_result_extra=0

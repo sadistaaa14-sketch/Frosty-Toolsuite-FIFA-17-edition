@@ -1,0 +1,49 @@
+# mapping.txt template - sound banks looked up by Language + surname_ID + player_intensity
+# 3 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/eng_us_male/psimple_surname.res
+#     speech/commentary/eng_us/soundwaves/eng_us_neutral/psimple_surname.res
+#     speech/loccommentary/spa_mx/soundwaves/spa_mx_male/psimple_surname.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0, 5
+#
+# surname_ID: commentarynames.commentaryid
+# FIFA17.exe sets it to the player's commentary id (FUN_147843950): the commentaryid of his commonnameid when he has one and it is not 900000, else the commentaryid of his lastnameid (cz_players.commentaryid instead when he has a row there); his playerid when the DB has no row for him.
+# Not traced: trigger_PLAYER passes the id its message carries; not traced.
+# Set by the code of trigger_PASS, trigger_SHOT_TAKEN, trigger_FREEKICK_TAKEN, trigger_ATTACK_PASS, trigger_CROSS_RESULT, trigger_CORNER_RESULT, trigger_PLAYER.
+#   values these banks use (the census lists up to 60 a bank): 900001, 900002, 900003, 900005, 900006, 900008, 900009, 900010, 900011, 900014,
+#     900015, 900016, 900017, 900018, 900019, 900020, 900021, 900026, 900035, 900038, 900045, 900047, 900048,
+#     900055, 900057, 900060, 900062, 900063, 900064, 900065, 900070, 900071, 900074, 900078, 900080, 900085,
+#     900086, 900087, 900088, 900089, 900090, 900092, 900093, 900095, 900096, 900098, 900099, 900101, 900104,
+#     900106, 900107, 900109, 900110, 900111, 900112, 900121, 900123, 900124, 900125, 900126, 900514, 900986,
+#     900994, 900996, 901000, 901069, 901084, 901157, 901158, 901168, 901330, 901357, 901364, 901435, 901469,
+#     901505, 901514, 901517, 901525, 901527, 901529, 901531, 901599, 920082, 920304, 920414, 920443, 920473,
+#     920481, 920586, 920673, 920710, 920765, 920768, 920780, 920791, 921446, 921503, 921513, 921596, 921603,
+#     921803, 921847, 922540, 922596, 922766, 922857, 922901, 922943, 922967, 923066, 923111, 923131, 923197,
+#     923543, 923552, 923655, 923701, 923758, 923776, 923948, 924452, 924764, 924813, 928665, 930677, 930678,
+#     930679, 930680, 930681, 930682, 930683, 930684, 930685, 930686, 930687, 930688, 930689, 930690, 930691,
+#     930692, 930693, 930694, 930695, 930696, 930697, 930698, 930699, 930700, 930701, 930702, 930703
+#
+# player_intensity
+# FIFA17.exe sets it to 1 or 2 (trigger_PASS).
+# Set by the code of trigger_PASS.
+#   value names: invalid=0, HIGH=1, LOW=2
+#   values these banks use (the census lists up to 60 a bank): 1, 2
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, surname_ID=900045, player_intensity=1
+my_clip_02.wav = Language=0, surname_ID=901505, player_intensity=2

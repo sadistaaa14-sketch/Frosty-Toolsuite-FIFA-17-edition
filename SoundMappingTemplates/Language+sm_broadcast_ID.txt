@@ -1,0 +1,62 @@
+# mapping.txt template - sound banks looked up by Language + sm_broadcast_ID
+# 79 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bc_storymode_journal_events_9_2.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_appearance_milestone_banter.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_appearance_milestone_goal_scored.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_goal_milestone_banter.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_goal_milestone_goal_scored.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_1.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_11.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_12.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_12_margin.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_2.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_3.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_4.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_5.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_8.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_journal_events_9.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_match_event_1.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_match_event_10.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_match_event_10_push_pull.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_match_event_10_sliding_tackle.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_match_event_10_standing_tackle.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_match_event_11.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_match_event_4.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_match_event_7.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_performance_story_13.res
+#     speech/commentary/eng_us/soundwaves/bstorymode_performance_story_13_value.res
+#     ... and 54 more (index.tsv lists every bank and its template)
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0, 2, 3, 5, 8, 16
+#
+# sm_broadcast_ID
+# FIFA17.exe sets it to +0x10 of the record FUN_14783d470, FUN_14783d5b0 and FUN_14783d6b0 are given (a field of the handler's record; what fills it is not traced).
+# Set by the code of trigger_INJURY, trigger_GOAL_SCORED, trigger_FOUL_RESULT, trigger_SM_PERFORMANCE_BANTER_INTRO, trigger_SM_PERFORMANCE_BANTER, trigger_SM_MILESTONE, trigger_SM_JOURNAL_EVENTS.
+#   values these banks use (the census lists up to 60 a bank): 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+#     24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+#     50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,
+#     76, 77, 78, 79, 80, 81, 82, 83, 91, 92, 93, 94, 95, 96, 99, 100, 101, 102, 105, 106, 107, 108, 111,
+#     112, 113, 114, 117, 118, 119, 120, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
+#     136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 148, 149, 150, 151, 152, 153, 154, 155, 156,
+#     159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178,
+#     179, 180, 181, 182, 183, 186, 187, 188, 189, 190, 191, 192, 193, 209, 210, 211, 212, 213, 214, 215,
+#     216, 217, 218, 219, 223, 229, 230, 231, 232
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, sm_broadcast_ID=0
+my_clip_02.wav = Language=0, sm_broadcast_ID=0

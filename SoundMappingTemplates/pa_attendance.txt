@@ -1,0 +1,32 @@
+# mapping.txt template - sound banks looked up by pa_attendance
+# 2 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/announcer/announcer_00_eng1/soundwaves/bpa_attendance_number_eng.res
+#     speech/announcer/announcer_00_eng2/soundwaves/bpa_attendance_number_eng.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# pa_attendance
+# FIFA17.exe's code never names it (neither the name nor its id 0xB3A3016C occurs in the exe); the game's AnnouncerDbEvents data declares it.
+#   values these banks use (the census lists up to 60 a bank): 985, 995, 1342, 1500, 4500, 4850, 5057, 5100, 5327, 5340, 5500, 5947, 5996, 6476,
+#     6722, 6850, 6912, 7365, 7653, 7700, 7850, 7856, 8127, 8186, 8256, 8541, 9088, 9271, 9565, 9875, 10105,
+#     10153, 10249, 10284, 10356, 10504, 11300, 11588, 11642, 11700, 11840, 11917, 12021, 12300, 12392,
+#     12500, 13002, 13500, 14354, 14989, 15231, 15730, 16118, 16878, 17338, 17776, 18439, 18500, 19052,
+#     19645, 20146, 20211, 20750, 20993, 20994, 21000, 21497, 21940, 22743, 23009, 23762, 24161, 24500,
+#     25136, 25138, 25586, 25700, 26309, 26500, 26757, 26994, 26999, 27111, 27250, 27740, 27995, 28723,
+#     29456, 29912, 30016, 30311, 30500, 30602, 30750, 30852, 31367, 31806, 32262, 32689, 32702, 33597,
+#     33923, 34043, 34742, 35016, 35688, 36183
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = pa_attendance=4850
+my_clip_02.wav = pa_attendance=5057

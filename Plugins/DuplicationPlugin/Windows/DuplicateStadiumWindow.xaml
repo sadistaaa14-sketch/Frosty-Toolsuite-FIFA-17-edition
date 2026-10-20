@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:ctrl="clr-namespace:Frosty.Controls;assembly=FrostyControls"
         mc:Ignorable="d"
-        Title="Duplicate Stadium" Height="230" Width="480" ResizeMode="NoResize"
+        Title="Duplicate Stadium" Height="262" Width="480" ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
@@ -40,6 +40,10 @@
                              BorderThickness="1"
                              ToolTip="New stadium name in the form name_id (e.g. aaaaa_499)."/>
                 </DockPanel>
+                <CheckBox x:Name="sharePitchCheckBox" Margin="94,8,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          Content="Keep the source pitch (do not copy it)"
+                          ToolTip="The new stadium uses the source's pitch layer (stadiums/&lt;folder&gt;/pitch), pitch blueprint and pitch mesh (components/stadiums/&lt;name&gt;/pitch, pitch_mesh) instead of copies. Test for the black pitch at night on stadiums with a merged pitch (pitch_grass_prefab_merged, e.g. Amsterdam)."/>
             </StackPanel>
         </Grid>
 

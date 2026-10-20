@@ -1,0 +1,37 @@
+# mapping.txt template - sound banks looked up by Language + asset_team_ID + ts_num_changes
+# 3 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/tts_team_intro_num_changes.res
+#     speech/commentary/eng_us/soundwaves/tts_team_intro_num_changes.res
+#     speech/loccommentary/dut_nl/soundwaves/dut_nl_female/tts_team_intro_num_changes.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0, 10
+#
+# asset_team_ID: teams.teamid
+# FIFA17.exe sets it to the side's teamid from the commentary's team table (FUN_147844490): the match setup's teamid (+0x7c), unless the setup carries its own team asset ids (+0xa8, set in one game mode by FUN_147aaf600) or the team sheet overrides it (+0x168).
+# Not traced: the SC2_ELSEWHERE events pass teams from their message; not traced.
+# Set by the code of trigger_SHOOTOUT_SETUP, trigger_SC2_ELSEWHERE_PEN, trigger_SC2_ELSEWHERE_PEN_IMPACT, trigger_SC2_ELSEWHERE_GOAL, trigger_SC2_ELSEWHERE_GOAL_IMPACT, trigger_SAVE, trigger_INJURY, trigger_GOAL_SCORED and 49 more.
+#   values these banks use (the census lists up to 60 a bank): 5, 9, 10, 11, 21, 22, 23, 44, 45, 52, 73, 241, 243, 112998, 112999, 113000, 113001,
+#     113002, 113003, 113004, 113005, 113007, 113008, 113009, 113010, 113011, 113012
+#
+# ts_num_changes
+# FIFA17.exe's code never names it (neither the name nor its id 0x474CBD41 occurs in the exe); the game's CommentaryDbEvents data declares it.
+#   values these banks use (the census lists up to 60 a bank): 1, 2, 3, 4
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, asset_team_ID=5, ts_num_changes=1
+my_clip_02.wav = Language=0, asset_team_ID=9, ts_num_changes=2

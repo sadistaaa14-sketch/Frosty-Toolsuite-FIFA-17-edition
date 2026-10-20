@@ -1,0 +1,33 @@
+# mapping.txt template - sound banks looked up by pa_away_id
+# 5 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/announcer/announcer_00_eng1/soundwaves/tpa_intro_walk_team_away_eng.res
+#     speech/announcer/announcer_01_fre/soundwaves/in_away_fre.res
+#     speech/announcer/announcer_02_ger/soundwaves/in_away_ger.res
+#     speech/announcer/announcer_03_ita/soundwaves/in_away_ita.res
+#     speech/announcer/announcer_04_spa/soundwaves/in_away_spa.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# pa_away_id: teams.teamid
+# FIFA17.exe sets it to the second of the match setup's two teamids (+0x80, copied to +0x18 of the audio modules' match object by FUN_147852650), which the match builders fill with the teamid they query leagueteamlinks by (FUN_147aea0b0, FUN_146cde350).
+# Set by the code of pa_INTRO, pa_LINEUP_TEAM_HOME, pa_LINEUP_PLAYER.
+#   values these banks use (the census lists up to 60 a bank): 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 21, 22, 23, 25, 27, 28,
+#     29, 31, 32, 33, 34, 36, 38, 39, 44, 45, 46, 47, 50, 51, 52, 54, 55, 57, 58, 59, 62, 64, 65, 66, 68, 69,
+#     70, 71, 72, 73, 74, 76, 77, 78, 79, 80, 81, 82, 83, 86, 88, 89, 91, 94, 95, 106, 109, 110, 144, 159,
+#     160, 165, 1792, 1793, 1795, 1796, 1797, 1798, 1799, 1801, 1806, 1807, 1808, 1919, 1925, 1939, 1943,
+#     1952, 1960, 1961
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = pa_away_id=1
+my_clip_02.wav = pa_away_id=2

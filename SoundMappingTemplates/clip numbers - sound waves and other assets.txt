@@ -1,0 +1,15 @@
+# mapping.txt for a sound wave asset, or the intro or highlights music banks
+#
+# Bulk Import (right-click a clip) reads this file and the audio files beside it. One line per file:
+#     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to this folder. Lines starting with # are notes.
+# A value with a comma in it goes in double quotes. Every line is checked before anything is written,
+# and the import is one edit of the asset.
+#
+# This asset's clips are not filed under parameters, so a line names a clip by its number in the list:
+#     clip=3       replaces clip 3's audio
+#     clip=new     adds a clip
+#
+# Example lines (Write mapping.txt... in the editor lists the asset's own clips):
+Track #1.wav = clip=1
+new clip.wav = clip=new

@@ -1,5 +1,6 @@
 using Frosty.Controls;
 using Frosty.Core;
+using FrostySdk.Managers;
 using System;
 using System.Windows;
 
@@ -9,6 +10,7 @@ namespace DuplicationPlugin.Windows
     {
         public string NewFolder { get; private set; }
         public string NewNameOnly { get; private set; }
+        public bool SharePitch { get; private set; }
 
         private readonly string sourceFolder;
         private readonly string sourceNameOnly;
@@ -73,11 +75,56 @@ namespace DuplicationPlugin.Windows
                 return;
             }
 
+            // content/worlds/components/stadiums/<name> and content/effects/glares/<name>
+            // are named by the part before the id. With the same name part the copies of
+            // those assets would get the source's own names, and AssetManager.AddEbx hands
+            // back the existing source entry instead of a new asset.
+            if (newNameOnly.Equals(sourceNameOnly, StringComparison.OrdinalIgnoreCase))
+            {
+                FrostyMessageBox.Show(
+                    "The name part before the id must differ from the source's (\"" + sourceNameOnly + "\").\n" +
+                    "components/stadiums/<name> and effects/glares/<name> are named by it.\n" +
+                    "Example: " + sourceNameOnly + "b_" + idPart,
+                    "Stadium Duplicator");
+                return;
+            }
+
+            if (StadiumAssetsExist(newName, newNameOnly))
+            {
+                FrostyMessageBox.Show(
+                    "Assets for \"" + newName + "\" already exist (content/worlds/stadiums/" + newName +
+                    ", content/worlds/components/stadiums/" + newNameOnly + " or content/effects/glares/" + newNameOnly + ").\n" +
+                    "Pick another name.",
+                    "Stadium Duplicator");
+                return;
+            }
+
             NewFolder = newName;
             NewNameOnly = newNameOnly;
+            SharePitch = sharePitchCheckBox.IsChecked == true;
 
             DialogResult = true;
             Close();
+        }
+
+        private static bool StadiumAssetsExist(string folder, string nameOnly)
+        {
+            string[] prefixes =
+            {
+                "content/worlds/stadiums/" + folder.ToLower() + "/",
+                "content/worlds/components/stadiums/" + nameOnly.ToLower() + "/",
+                "content/effects/glares/" + nameOnly.ToLower() + "/"
+            };
+            foreach (EbxAssetEntry entry in App.AssetManager.EnumerateEbx())
+            {
+                string name = entry.Name.Replace('\\', '/').ToLower();
+                foreach (string prefix in prefixes)
+                {
+                    if (name.StartsWith(prefix))
+                        return true;
+                }
+            }
+            return false;
         }
     }
 }

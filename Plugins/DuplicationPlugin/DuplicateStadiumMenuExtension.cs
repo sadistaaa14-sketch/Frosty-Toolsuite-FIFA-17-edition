@@ -1,4 +1,5 @@
 using AtlasTexturePlugin;
+using BundleRefTablePlugin;
 using DuplicationPlugin.Windows;
 using Frosty.Controls;
 using Frosty.Core;
@@ -41,6 +42,13 @@ namespace DuplicationPlugin
         // Debug capture of pointer remap lookups (cleared per run).
         private readonly List<string> pointerDebug = new List<string>();
         private readonly List<string> verificationReport = new List<string>();
+        private readonly List<string> mirrorReport = new List<string>();
+        private readonly List<string> brtReport = new List<string>();
+        private readonly List<string> lightingReport = new List<string>();
+        private int droppedForeignBundles;
+        // Bundles are only ever appended, so every bundle id >= this one was created by the
+        // current run; anything below it existed before (vanilla or added by earlier runs).
+        private int firstNewBundleId;
         private const string L1_PREFIX = "content/worlds/stadiums/";
         private const string L2_PREFIX = "content/worlds/components/stadiums/";
         private const string L3_PREFIX = "content/effects/glares/";
@@ -94,12 +102,13 @@ namespace DuplicationPlugin
 
             string newFolder = win.NewFolder;
             string newNameOnly = win.NewNameOnly;
+            bool sharePitch = win.SharePitch;
 
             FrostyTaskWindow.Show("Duplicating Stadium", "", (task) =>
             {
                 try
                 {
-                    DuplicateStadium(task, oldFolder, oldNameOnly, newFolder, newNameOnly);
+                    DuplicateStadium(task, oldFolder, oldNameOnly, newFolder, newNameOnly, sharePitch);
                 }
                 catch (Exception ex)
                 {
@@ -179,20 +188,55 @@ namespace DuplicationPlugin
 
         // ─── Main duplication ────────────────────────────────────────────────
 
-        private void DuplicateStadium(FrostyTaskWindow task, string oldFolder, string oldNameOnly, string newFolder, string newNameOnly)
+        private void DuplicateStadium(FrostyTaskWindow task, string oldFolder, string oldNameOnly, string newFolder, string newNameOnly, bool sharePitch)
         {
             pointerDebug.Clear();
             verificationReport.Clear();
-            App.Logger.Log($"Duplicating stadium: folder {oldFolder} -> {newFolder}, name {oldNameOnly} -> {newNameOnly}");
+            mirrorReport.Clear();
+            brtReport.Clear();
+            lightingReport.Clear();
+            droppedForeignBundles = 0;
+            firstNewBundleId = App.AssetManager.EnumerateBundles().Count();
+            App.Logger.Log($"Duplicating stadium: folder {oldFolder} -> {newFolder}, name {oldNameOnly} -> {newNameOnly}" +
+                           (sharePitch ? " (keeping the source pitch)" : ""));
 
             // 1. Enumerate every source asset in the three stadium locations.
+            //    With "keep the source pitch" the pitch layer, pitch blueprint and pitch
+            //    mesh are left out: the copies keep pointing at the source's, and
+            //    MirrorSourceBundles puts those originals into the new bundles.
             List<EbxAssetEntry> sourceAssets = new List<EbxAssetEntry>();
+            List<EbxAssetEntry> keptPitch = new List<EbxAssetEntry>();
             foreach (EbxAssetEntry entry in App.AssetManager.EnumerateEbx())
             {
-                if (IsInStadiumLocations(entry.Name, oldFolder, oldNameOnly))
-                    sourceAssets.Add(entry);
+                if (!IsInStadiumLocations(entry.Name, oldFolder, oldNameOnly))
+                    continue;
+                if (sharePitch && IsPitchAsset(entry.Name, oldFolder, oldNameOnly))
+                {
+                    keptPitch.Add(entry);
+                    continue;
+                }
+                sourceAssets.Add(entry);
             }
             App.Logger.Log($"  Found {sourceAssets.Count} source assets");
+
+            // Stadium-local source assets by the FileGuid in their EBX data (what imports
+            // reference; EbxAssetEntry.Guid can be empty for sublevel bundle assets).
+            Dictionary<Guid, EbxAssetEntry> localByFileGuid = new Dictionary<Guid, EbxAssetEntry>();
+            foreach (EbxAssetEntry kept in keptPitch)
+            {
+                App.Logger.Log($"  Keeping source pitch asset {kept.Name} ({kept.Type})");
+                mirrorReport.Add($"source pitch kept (not copied): {kept.Name} ({kept.Type})");
+                try
+                {
+                    EbxAsset keptAsset = App.AssetManager.GetEbx(kept);
+                    if (keptAsset != null)
+                        localByFileGuid[keptAsset.FileGuid] = kept;
+                }
+                catch (Exception ex)
+                {
+                    App.Logger.Log($"  Could not read {kept.Name}: {ex.Message}");
+                }
+            }
 
             // SubWorldData / DetachedSubWorldData assets first: they create the new
             // sublevel bundles that everything else is then placed into.
@@ -218,6 +262,7 @@ namespace DuplicationPlugin
                 try
                 {
                     EbxAsset oldAsset = App.AssetManager.GetEbx(src);
+                    localByFileGuid[oldAsset.FileGuid] = src;
                     string newName = RewriteStadiumName(src.Name, oldFolder, oldNameOnly, newFolder, newNameOnly);
                     EbxAssetEntry newEntry = DuplicateStadiumAsset(src, newName);
 
@@ -227,6 +272,15 @@ namespace DuplicationPlugin
                         failures.Add($"{src.Name} ({src.Type}) -> null");
                         continue;
                     }
+
+                    // Meshes keep the source's root instance GUID. FIFA17.exe keys the Enlighten lighting of
+                    // every static-lit mesh instance by FNV-1 over the mesh object's instance GUID and its
+                    // placement (FUN_146b18400; used by both the dynamic and the static lookup), and the
+                    // stadium's lighting databases are copied byte for byte. A copy with a new root GUID
+                    // gets a key the databases do not contain and is drawn without its lighting (black
+                    // at night). The copy keeps its own file GUID, MeshSet res and chunks.
+                    if (TypeLibrary.IsSubClassOf(src.Type, "MeshAsset"))
+                        RestoreRootInstanceGuid(newEntry, oldAsset.RootInstanceGuid);
 
                     // Key on the FileGuid read from the actual EBX data: PointerRef.External.FileGuid
                     // references that guid, whereas EbxAssetEntry.Guid can be Guid.Empty for sublevel
@@ -324,10 +378,28 @@ namespace DuplicationPlugin
                 RemapEntryBundlesDeep(newEntry, oldFolder, oldNameOnly, newFolder, newNameOnly, remappedSet);
             }
 
-            // 5. Shared assets (outside the three locations) that lived inside the
-            //    original sublevel bundles must also be added to the new bundles.
-            task.Update("Adding shared assets to new bundles...");
-            AddSharedAssetsToNewBundles(pairs, oldFolder, oldNameOnly);
+            // 5. Mirror every source bundle of the stadium (sublevel bundles and the
+            //    blueprint bundles under components/stadiums/<name>) into its new
+            //    bundle: shared EBX, and every res / chunk the source bundle carries
+            //    that was not replaced by a duplicate. This covers data no EBX of the
+            //    duplicate names directly (e.g. Bernabeu's standslower occluder mesh
+            //    res, the per-bundle Ant state banks, IES profiles, BRT res).
+            task.Update("Mirroring source bundles...");
+            List<EbxAssetEntry> keptLocal = keptPitch.Concat(notDuplicated).ToList();
+            MirrorSourceBundles(pairs, duplicatedSources, keptLocal, localByFileGuid, oldFolder, oldNameOnly, newFolder, newNameOnly);
+
+            // 5b. Assets that a Bundle Ref Table resolves by name (Bernabeu's
+            //     tournament_main through tournament_brt) get an entry for their
+            //     duplicate, pointing at the duplicated blueprint bundle.
+            if (!Config.Get<bool>("SkipBrtAdd", false))
+            {
+                task.Update("Updating BRT entries...");
+                InjectBrtEntries(pairs, oldFolder, oldNameOnly, newFolder, newNameOnly);
+            }
+            else
+            {
+                brtReport.Add("SkipBrtAdd is set: no BRT entries added.");
+            }
 
             // 6. Add the new stadium as a sublevel entry in the StadiumCollectionSLM
             //    sublevel map so the game knows about it at runtime.
@@ -374,6 +446,21 @@ namespace DuplicationPlugin
                 }
 
                 sb.AppendLine();
+                sb.AppendLine($"Bundle mirror ({mirrorReport.Count} lines):");
+                foreach (string line in mirrorReport)
+                    sb.AppendLine($"  {line}");
+
+                sb.AppendLine();
+                sb.AppendLine($"BRT ({brtReport.Count} lines):");
+                foreach (string line in brtReport)
+                    sb.AppendLine($"  {line}");
+
+                sb.AppendLine();
+                sb.AppendLine($"Lighting keys: {lightingReport.Count} mesh copies keep their source's root instance GUID:");
+                foreach (string line in lightingReport)
+                    sb.AppendLine($"  {line}");
+
+                sb.AppendLine();
                 sb.AppendLine($"Verification: {verificationReport.Count} unrewired stadium-local pointers (first 200):");
                 foreach (string line in verificationReport)
                     sb.AppendLine($"  {line}");
@@ -399,6 +486,26 @@ namespace DuplicationPlugin
         }
 
         // ─── Duplication helpers ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Gives a duplicated mesh its source's root instance GUID back (DuplicateAssetExtension sets a new,
+        /// deterministic one). The engine identifies a static-lit mesh instance to the Enlighten databases by a
+        /// hash of that GUID and the instance's placement, so the copy then matches the copied lighting data.
+        /// References to the copy are rewired with classGuidMap, which then maps that root GUID to itself.
+        /// </summary>
+        private void RestoreRootInstanceGuid(EbxAssetEntry newEntry, Guid sourceRootGuid)
+        {
+            EbxAsset newAsset = App.AssetManager.GetEbx(newEntry);
+            if (newAsset == null || sourceRootGuid == Guid.Empty)
+                return;
+            dynamic root = newAsset.RootObject;
+            AssetClassGuid current = root.GetInstanceGuid();
+            if (current.ExportedGuid == sourceRootGuid)
+                return;
+            root.SetInstanceGuid(new AssetClassGuid(sourceRootGuid, -1));
+            App.AssetManager.ModifyEbx(newEntry.Name, newAsset);
+            lightingReport.Add($"{newEntry.Name}: root {current.ExportedGuid} -> {sourceRootGuid} (source's)");
+        }
 
         private EbxAssetEntry DuplicateStadiumAsset(EbxAssetEntry entry, string newName)
         {
@@ -856,11 +963,13 @@ namespace DuplicationPlugin
 
             bool changed = false;
             List<int> remapped = new List<int>();
+            List<int> foreign = new List<int>();
 
             foreach (int bundleId in entry.AddedBundles)
             {
                 BundleEntry bundle = App.AssetManager.GetBundleEntry(bundleId);
-                if (bundle != null && IsStadiumLocalBundle(bundle, oldFolder, oldNameOnly))
+                bool preexisting = bundle != null && bundleId < firstNewBundleId;
+                if (preexisting && IsStadiumLocalBundle(bundle, oldFolder, oldNameOnly))
                 {
                     int newBundleId = GetOrCreateNewBundle(bundle, oldFolder, oldNameOnly, newFolder, newNameOnly);
                     if (newBundleId >= 0)
@@ -870,17 +979,34 @@ namespace DuplicationPlugin
                         continue;
                     }
                 }
-                remapped.Add(bundleId);
+
+                if (preexisting)
+                    foreign.Add(bundleId);   // a bundle of another level
+                else
+                    remapped.Add(bundleId);  // a bundle this run created
             }
 
             if (!changed)
                 return;
 
+            // A source that also sits in other levels' bundles (bernabeu/pitch is in 93:
+            // every stadium that uses pitch_grass_prefab lists it in PitchGeo, plus the
+            // story sets) must not drag its duplicate into them: nothing there references
+            // the duplicate. Once one of its bundles was a stadium bundle, the duplicate keeps
+            // only the new stadium's bundles; a source found only in other levels' bundles
+            // (none in the vanilla game) keeps them, so its copy is never left in no bundle.
             entry.AddedBundles.Clear();
             foreach (int bundleId in remapped.Distinct())
             {
                 if (!entry.Bundles.Contains(bundleId) && !entry.AddedBundles.Contains(bundleId))
                     entry.AddedBundles.Add(bundleId);
+            }
+
+            if (foreign.Count > 0)
+            {
+                droppedForeignBundles += foreign.Count;
+                if (mirrorReport.Count < 400)
+                    mirrorReport.Add($"{entry.Name}: kept out of {foreign.Count} bundle(s) of other levels the source is also in");
             }
         }
 
@@ -900,44 +1026,365 @@ namespace DuplicationPlugin
         }
 
         /// <summary>
-        /// Copies shared assets that lived in the original sublevel bundles into the
-        /// corresponding new sublevel bundles, so streaming the new stadium can find
-        /// everything it needs.
+        /// Mirrors every original bundle of the source stadium into its new bundle.
+        ///
+        /// The duplicates themselves are placed by RemapEntryBundlesDeep. What is left
+        /// is everything else the source bundle carries:
+        ///   - shared EBX (outside the three stadium locations) and, for the types
+        ///     AddLinkedAssetsToBundle knows, their res and chunks;
+        ///   - stadium-local EBX that could not be duplicated (the duplicate still points
+        ///     at them, so they must travel with it);
+        ///   - every res and chunk of the source bundle that no duplicate replaced. No EBX
+        ///     names some of these, so a per-EBX walk never finds them: Bernabeu's
+        ///     standslower_mesh_occludermesh res (standslower_mesh.OccluderMeshResource
+        ///     points at it and the duplicate keeps that RID), the per-bundle Ant state
+        ///     banks, IES light profiles, the tournament BRT res.
+        /// Blueprint bundles under components/stadiums/&lt;name&gt; (the BRT bundle
+        /// tournament_main_tournament_brt) are mirrored the same way as sublevel bundles.
         /// </summary>
-        private void AddSharedAssetsToNewBundles(List<Tuple<EbxAssetEntry, EbxAssetEntry>> pairs, string oldFolder, string oldNameOnly)
+        private void MirrorSourceBundles(List<Tuple<EbxAssetEntry, EbxAssetEntry>> pairs, HashSet<EbxAssetEntry> duplicatedSources,
+            List<EbxAssetEntry> keptLocal, Dictionary<Guid, EbxAssetEntry> localByFileGuid,
+            string oldFolder, string oldNameOnly, string newFolder, string newNameOnly)
         {
+            // Source assets that travel with the new stadium as they are: stadium-local assets that
+            // were not copied (Keep the source pitch, failed copies) and every stadium-local asset
+            // they reference, because their references were not rewired to the copies.
+            HashSet<EbxAssetEntry> requiredOriginals = CollectRequiredOriginals(keptLocal, localByFileGuid, oldFolder, oldNameOnly);
+            foreach (EbxAssetEntry req in requiredOriginals.Where(r => duplicatedSources.Contains(r)))
+                mirrorReport.Add($"source kept as well as copied (a kept asset references it): {req.Name}");
+
+            HashSet<EbxAssetEntry> copies = new HashSet<EbxAssetEntry>(pairs.Select(p => p.Item2));
+
+            // Res / chunks of the source whose content was copied into a new res / chunk.
+            HashSet<ulong> replacedRes = new HashSet<ulong>();
+            HashSet<Guid> replacedChunks = new HashSet<Guid>();
             foreach (Tuple<EbxAssetEntry, EbxAssetEntry> pair in pairs)
             {
-                EbxAssetEntry src = pair.Item1;
-                EbxAssetEntry dst = pair.Item2;
+                if (!requiredOriginals.Contains(pair.Item1))
+                    CollectReplacedData(pair.Item1, pair.Item2, replacedRes, replacedChunks);
+            }
+            mirrorReport.Add($"replaced by duplicates: {replacedRes.Count} res, {replacedChunks.Count} chunks");
 
-                if (!IsSubWorldData(src.Type))
+            // Source bundles: the stadium's bundles that existed before this run. Their new
+            // counterparts were created by the SubWorldData / BlueprintBundle extensions or by
+            // RemapEntryBundles; GetOrCreateNewBundle returns those by name.
+            Dictionary<int, int> bundleMap = new Dictionary<int, int>();
+            for (int id = 0; id < firstNewBundleId; id++)
+            {
+                BundleEntry oldBundle = App.AssetManager.GetBundleEntry(id);
+                if (oldBundle == null || !IsStadiumLocalBundle(oldBundle, oldFolder, oldNameOnly))
                     continue;
-                if (dst.AddedBundles == null || dst.AddedBundles.Count == 0)
-                    continue;
-
-                int newBundleId = dst.AddedBundles[0];
-
-                foreach (BundleEntry oldBundle in App.AssetManager.EnumerateBundles())
+                int newId = GetOrCreateNewBundle(oldBundle, oldFolder, oldNameOnly, newFolder, newNameOnly);
+                if (newId < 0 || newId == id)
                 {
-                    if (oldBundle.Blueprint == null || oldBundle.Blueprint.Guid != src.Guid)
+                    mirrorReport.Add($"{oldBundle.Name}: no new bundle (new id {newId}), skipped");
+                    continue;
+                }
+                bundleMap[id] = newId;
+            }
+
+            // Res and chunks per source bundle. EnumerateRes/EnumerateChunks(BundleEntry) only see
+            // original membership; EnumerateBundles() also covers bundles a project added them to
+            // (a stadium made by an earlier duplication).
+            Dictionary<int, List<ResAssetEntry>> resByBundle = new Dictionary<int, List<ResAssetEntry>>();
+            foreach (ResAssetEntry res in App.AssetManager.EnumerateRes())
+            {
+                if (replacedRes.Contains(res.ResRid))
+                    continue;
+                foreach (int bid in res.EnumerateBundles())
+                {
+                    if (!bundleMap.ContainsKey(bid))
                         continue;
+                    if (!resByBundle.TryGetValue(bid, out List<ResAssetEntry> list))
+                        resByBundle[bid] = list = new List<ResAssetEntry>();
+                    list.Add(res);
+                }
+            }
+            Dictionary<int, List<ChunkAssetEntry>> chunksByBundle = new Dictionary<int, List<ChunkAssetEntry>>();
+            foreach (ChunkAssetEntry chunk in App.AssetManager.EnumerateChunks())
+            {
+                if (replacedChunks.Contains(chunk.Id))
+                    continue;
+                foreach (int bid in chunk.EnumerateBundles())
+                {
+                    if (!bundleMap.ContainsKey(bid))
+                        continue;
+                    if (!chunksByBundle.TryGetValue(bid, out List<ChunkAssetEntry> list))
+                        chunksByBundle[bid] = list = new List<ChunkAssetEntry>();
+                    list.Add(chunk);
+                }
+            }
 
-                    foreach (EbxAssetEntry member in App.AssetManager.EnumerateEbx(oldBundle))
+            int totalEbx = 0, totalRes = 0, totalChunks = 0;
+            foreach (KeyValuePair<int, int> mapping in bundleMap)
+            {
+                int oldId = mapping.Key;
+                int newId = mapping.Value;
+                BundleEntry oldBundle = App.AssetManager.GetBundleEntry(oldId);
+
+                int ebxAdded = 0, localKept = 0, resAdded = 0, chunksAdded = 0;
+                List<string> resNames = new List<string>();
+
+                foreach (EbxAssetEntry member in App.AssetManager.EnumerateEbx(oldBundle).ToList())
+                {
+                    if (copies.Contains(member) || IsInStadiumLocations(member.Name, newFolder, newNameOnly))
+                        continue; // made by this run (a finished copy, or one an extension gave up on)
+
+                    bool local = IsInStadiumLocations(member.Name, oldFolder, oldNameOnly);
+                    if (local && duplicatedSources.Contains(member) && !requiredOriginals.Contains(member))
+                        continue; // replaced by its copy
+
+                    if (member.AddToBundle(newId))
                     {
-                        if (ReferenceEquals(member, src))
-                            continue;
-                        if (IsInStadiumLocations(member.Name, oldFolder, oldNameOnly))
-                            continue; // already duplicated and remapped
-
-                        if (member.AddToBundle(newBundleId))
+                        ebxAdded++;
+                        if (local)
                         {
-                            App.Logger.Log($"  shared asset {member.Name} -> new bundle");
-                            AddLinkedAssetsToBundle(member, newBundleId);
+                            localKept++;
+                            mirrorReport.Add($"{oldBundle.Name}: source asset kept in the new bundle: {member.Name}");
+                        }
+                    }
+                    AddLinkedAssetsToBundle(member, newId);
+                }
+
+                if (resByBundle.TryGetValue(oldId, out List<ResAssetEntry> bundleRes))
+                {
+                    foreach (ResAssetEntry res in bundleRes)
+                    {
+                        if (res.AddToBundle(newId))
+                        {
+                            resAdded++;
+                            resNames.Add($"{res.Name} (0x{res.ResType:X8} {res.ResRid:X16})");
                         }
                     }
                 }
+
+                if (chunksByBundle.TryGetValue(oldId, out List<ChunkAssetEntry> bundleChunks))
+                {
+                    foreach (ChunkAssetEntry chunk in bundleChunks)
+                    {
+                        if (chunk.AddToBundle(newId))
+                            chunksAdded++;
+                    }
+                }
+
+                totalEbx += ebxAdded;
+                totalRes += resAdded;
+                totalChunks += chunksAdded;
+                string newBundleName = App.AssetManager.GetBundleEntry(newId)?.Name ?? newId.ToString();
+                mirrorReport.Add($"{oldBundle.Name} -> {newBundleName}: +{ebxAdded} ebx ({localKept} source assets), +{resAdded} res, +{chunksAdded} chunks");
+                foreach (string rn in resNames)
+                    mirrorReport.Add($"    res {rn}");
+                App.Logger.Log($"  mirrored {oldBundle.Name}: +{ebxAdded} ebx, +{resAdded} res, +{chunksAdded} chunks");
             }
+
+            mirrorReport.Add($"total: {bundleMap.Count} source bundles, +{totalEbx} ebx, +{totalRes} res, +{totalChunks} chunks; " +
+                             $"{droppedForeignBundles} bundle refs of other levels dropped from duplicates");
+            App.Logger.Log($"  Bundle mirror: {bundleMap.Count} bundles, +{totalEbx} ebx, +{totalRes} res, +{totalChunks} chunks");
+        }
+
+        /// <summary>
+        /// The given stadium-local source assets plus every stadium-local asset they reference,
+        /// transitively (EBX imports).
+        /// </summary>
+        private static HashSet<EbxAssetEntry> CollectRequiredOriginals(List<EbxAssetEntry> kept, Dictionary<Guid, EbxAssetEntry> localByFileGuid,
+            string oldFolder, string oldNameOnly)
+        {
+            HashSet<EbxAssetEntry> required = new HashSet<EbxAssetEntry>();
+            Queue<EbxAssetEntry> queue = new Queue<EbxAssetEntry>(kept);
+            while (queue.Count > 0)
+            {
+                EbxAssetEntry entry = queue.Dequeue();
+                if (entry == null || !required.Add(entry))
+                    continue;
+
+                EbxAsset asset;
+                try
+                {
+                    asset = App.AssetManager.GetEbx(entry);
+                }
+                catch (Exception ex)
+                {
+                    App.Logger.Log($"  CollectRequiredOriginals {entry.Name}: {ex.Message}");
+                    continue;
+                }
+                if (asset == null)
+                    continue;
+
+                foreach (Guid dep in asset.Dependencies)
+                {
+                    if (!localByFileGuid.TryGetValue(dep, out EbxAssetEntry depEntry))
+                        depEntry = App.AssetManager.GetEbxEntry(dep);
+                    if (depEntry != null && !required.Contains(depEntry) && IsInStadiumLocations(depEntry.Name, oldFolder, oldNameOnly))
+                        queue.Enqueue(depEntry);
+                }
+            }
+            return required;
+        }
+
+        /// <summary>
+        /// Records the res (and their chunks) of a source asset that the duplicate no
+        /// longer uses because its duplication extension copied them: the duplicate's
+        /// resource field holds a different RID than the source's. Anything not listed
+        /// here is mirrored into the new bundles.
+        /// </summary>
+        private static void CollectReplacedData(EbxAssetEntry src, EbxAssetEntry dst, HashSet<ulong> replacedRes, HashSet<Guid> replacedChunks)
+        {
+            try
+            {
+                EbxAsset srcAsset = App.AssetManager.GetEbx(src);
+                EbxAsset dstAsset = App.AssetManager.GetEbx(dst);
+                if (srcAsset == null || dstAsset == null)
+                    return;
+
+                object srcRoot = srcAsset.RootObject;
+                object dstRoot = dstAsset.RootObject;
+
+                foreach (string field in new[] { "MeshSetResource", "Resource", "PhysicsData", "DatabaseResource" })
+                {
+                    ulong srcRid = GetResourceRefValue(srcRoot, field);
+                    ulong dstRid = GetResourceRefValue(dstRoot, field);
+                    if (srcRid == 0 || srcRid == dstRid)
+                        continue;
+
+                    replacedRes.Add(srcRid);
+
+                    ResAssetEntry res = App.AssetManager.GetResEntry(srcRid);
+                    if (res == null)
+                        continue;
+
+                    if (res.ResType == (uint)ResourceType.MeshSet)
+                    {
+                        MeshSet meshSet = App.AssetManager.GetResAs<MeshSet>(res);
+                        if (meshSet != null && meshSet.Lods != null)
+                        {
+                            foreach (MeshSetLod lod in meshSet.Lods)
+                            {
+                                if (lod.ChunkId != Guid.Empty)
+                                    replacedChunks.Add(lod.ChunkId);
+                            }
+                        }
+                    }
+                    else if (res.ResType == (uint)ResourceType.Texture)
+                    {
+                        Texture texture = App.AssetManager.GetResAs<Texture>(res);
+                        if (texture != null && texture.ChunkId != Guid.Empty)
+                            replacedChunks.Add(texture.ChunkId);
+                    }
+                    else if (res.ResType == (uint)ResourceType.AtlasTexture)
+                    {
+                        AtlasTexture atlas = App.AssetManager.GetResAs<AtlasTexture>(res);
+                        if (atlas != null && atlas.ChunkId != Guid.Empty)
+                            replacedChunks.Add(atlas.ChunkId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Logger.Log($"  CollectReplacedData {src.Name}: {ex.Message}");
+            }
+        }
+
+        /// <summary>Reads a ResourceRef property by name; 0 when absent.</summary>
+        private static ulong GetResourceRefValue(object obj, string property)
+        {
+            if (obj == null)
+                return 0;
+            PropertyInfo pi = obj.GetType().GetProperty(property, BindingFlags.Instance | BindingFlags.Public);
+            if (pi == null || pi.PropertyType != typeof(ResourceRef))
+                return 0;
+            return (ResourceRef)pi.GetValue(obj);
+        }
+
+        // ─── Bundle Ref Table entries ────────────────────────────────────────
+
+        /// <summary>
+        /// For every duplicated asset that a Bundle Ref Table lists, add an entry for the
+        /// duplicate. Bernabeu is the stadium this matters for: tournament_brt lists
+        /// content/worlds/components/stadiums/bernabeu/tournament_main and the game keeps
+        /// it in its own blueprint bundle tournament_main_tournament_brt (a
+        /// BundleRefTableBlueprintBundle EBX in components/stadiums/bernabeu, which this
+        /// duplication copies to components/stadiums/&lt;new&gt;/tournament_main_tournament_brt).
+        ///
+        /// The entry is pointed at a new bundle ref only when this duplication created the
+        /// blueprint bundle that ref resolves to ("&lt;ref&gt;_&lt;table&gt;"); otherwise it reuses the
+        /// source's ref, as the other Duplicate tools do without a blueprint bundle. (When the
+        /// mod is applied, BundleRefTableResource.ApplyModifiedResource points such a fallback
+        /// entry at a new ref of the same folder if one was added; the report says which.)
+        /// </summary>
+        private void InjectBrtEntries(List<Tuple<EbxAssetEntry, EbxAssetEntry>> pairs,
+            string oldFolder, string oldNameOnly, string newFolder, string newNameOnly)
+        {
+            HashSet<string> newBlueprintBundles = new HashSet<string>(pairs
+                .Where(p => TypeLibrary.IsSubClassOf(p.Item2.Type, "BundleRefTableBlueprintBundle"))
+                .Select(p => NormalizePath(p.Item2.Name).ToLower()));
+            foreach (string bb in newBlueprintBundles)
+                brtReport.Add($"new BRT blueprint bundle: {bb}");
+
+            List<ResAssetEntry> allBrts = App.AssetManager.EnumerateRes((uint)ResourceType.BundleRefTableResource).ToList();
+            brtReport.Add($"{allBrts.Count} BRT res checked");
+
+            int hits = 0;
+            foreach (ResAssetEntry brtRes in allBrts)
+            {
+                BundleRefTableResource brt;
+                try
+                {
+                    brt = App.AssetManager.GetResAs<BundleRefTableResource>(brtRes);
+                }
+                catch (Exception ex)
+                {
+                    brtReport.Add($"{brtRes.Name}: could not be read ({ex.Message})");
+                    continue;
+                }
+                if (brt == null)
+                    continue;
+
+                // A table's blueprint bundles are named "<ref>_<table name>", e.g.
+                // components/stadiums/bernabeu/tournament_main + "_" + tournament_brt.
+                string tableName = brtRes.Name.Substring(brtRes.Name.LastIndexOf('/') + 1).ToLower();
+
+                bool modified = false;
+                foreach (Tuple<EbxAssetEntry, EbxAssetEntry> pair in pairs)
+                {
+                    string oldPath = NormalizePath(pair.Item1.Name).ToLower();
+                    string newPath = NormalizePath(pair.Item2.Name).ToLower();
+                    if (!brt.ContainsAsset(oldPath))
+                        continue;
+
+                    hits++;
+                    brt.GetSourceBundleIndex(oldPath, out string refName, out string refPath);
+                    bool perAssetRef = !string.IsNullOrEmpty(refPath);
+
+                    // Per-asset ref (Name = asset name, Path = folder): its bundle is
+                    // "<path>/<name>_<table>", i.e. the new asset path plus a suffix.
+                    // Folder ref (Name = folder, Path empty): "<folder>_<table>".
+                    string newRefKey = perAssetRef
+                        ? newPath
+                        : RewriteStadiumName(refName ?? string.Empty, oldFolder, oldNameOnly, newFolder, newNameOnly).ToLower();
+                    bool newBundleExists = newBlueprintBundles.Contains(newRefKey + "_" + tableName);
+
+                    bool added = newBundleExists
+                        ? brt.DupeAssetToNewBundle(newPath, oldPath, perAssetRef ? null : newRefKey)
+                        : brt.DupeAsset(newPath, oldPath);
+
+                    modified |= added;
+                    string line = $"{brtRes.Name}: {oldPath} -> {newPath} | source ref name='{refName}' path='{refPath}' " +
+                                  $"({(perAssetRef ? "per-asset" : "folder")}) | " +
+                                  (newBundleExists ? "new bundle ref" : "source bundle ref (no copied blueprint bundle " + newRefKey + "_" + tableName + "; at mod apply a new ref of the same folder can take it over)") +
+                                  (added ? "" : " | already present");
+                    brtReport.Add(line);
+                    App.Logger.Log("  BRT " + line);
+                }
+
+                if (modified)
+                {
+                    App.AssetManager.ModifyRes(brtRes.ResRid, brt);
+                    App.Logger.Log($"  Saved BRT: {brtRes.Name}");
+                }
+            }
+
+            brtReport.Add($"{hits} duplicated asset(s) found in a BRT");
+            App.Logger.Log($"  BRT: {hits} duplicated asset(s) found in a BRT");
         }
 
         /// <summary>
@@ -1296,6 +1743,22 @@ namespace DuplicationPlugin
                 || n.StartsWith(L3_PREFIX + o + "/") || n.Equals(L3_PREFIX + o);
         }
 
+        /// <summary>
+        /// The pitch layer (stadiums/&lt;folder&gt;/pitch, a WorldPartData or LayerData), the
+        /// stadium's pitch blueprint and its mesh (components/stadiums/&lt;name&gt;/pitch and
+        /// pitch_mesh). 88 stadiums have the blueprint; on the 27 that place
+        /// pitch_grass_prefab_merged the playing surface is part of that mesh.
+        /// </summary>
+        private static bool IsPitchAsset(string assetName, string oldFolder, string oldNameOnly)
+        {
+            string n = NormalizePath(assetName).ToLower();
+            string f = oldFolder.ToLower();
+            string o = oldNameOnly.ToLower();
+            return n == L1_PREFIX + f + "/pitch"
+                || n == L2_PREFIX + o + "/pitch"
+                || n == L2_PREFIX + o + "/pitch_mesh";
+        }
+
         private static bool IsStadiumLocalBundle(BundleEntry bundle, string oldFolder, string oldNameOnly)
         {
             if (bundle == null || string.IsNullOrEmpty(bundle.Name))
@@ -1314,14 +1777,32 @@ namespace DuplicationPlugin
         }
 
         /// <summary>
-        /// Replace the longer token first ("allianz_137") then the shorter one
-        /// ("allianz"), case-insensitively.
+        /// Replace the folder token ("allianz_137") and the name token ("allianz"),
+        /// case-insensitively, in ONE pass with the longer token tried first. Two
+        /// sequential passes rewrote text the first pass had just written whenever the
+        /// new name contains the old one: bernabeu_2 -> bernabeu2_903 became
+        /// "bernabeu22_903" once the second pass replaced "bernabeu" again.
         /// </summary>
         private static string RewriteStadiumName(string value, string oldFolder, string oldNameOnly, string newFolder, string newNameOnly)
         {
-            string result = ReplaceToken(value, oldFolder, newFolder);
-            result = ReplaceToken(result, oldNameOnly, newNameOnly);
-            return result;
+            if (string.IsNullOrEmpty(value))
+                return value;
+
+            bool folderChanges = !string.IsNullOrEmpty(oldFolder) && !string.Equals(oldFolder, newFolder, StringComparison.OrdinalIgnoreCase);
+            bool nameChanges = !string.IsNullOrEmpty(oldNameOnly) && !string.Equals(oldNameOnly, newNameOnly, StringComparison.OrdinalIgnoreCase);
+            if (!folderChanges && !nameChanges)
+                return value;
+
+            List<string> tokens = new List<string>();
+            if (folderChanges)
+                tokens.Add(oldFolder);
+            if (nameChanges)
+                tokens.Add(oldNameOnly);
+            string pattern = string.Join("|", tokens.OrderByDescending(t => t.Length).Select(t => Regex.Escape(t)));
+
+            return Regex.Replace(value, pattern, m =>
+                folderChanges && m.Value.Equals(oldFolder, StringComparison.OrdinalIgnoreCase) ? newFolder : newNameOnly,
+                RegexOptions.IgnoreCase);
         }
 
         private static string RewriteStadiumString(string value, string oldFolder, string oldNameOnly, string newFolder, string newNameOnly)
@@ -1335,14 +1816,6 @@ namespace DuplicationPlugin
                             || lower.Contains(L3_PREFIX + oldNameOnly.ToLower());
 
             return relevant ? RewriteStadiumName(value, oldFolder, oldNameOnly, newFolder, newNameOnly) : value;
-        }
-
-        private static string ReplaceToken(string input, string oldToken, string newToken)
-        {
-            if (string.IsNullOrEmpty(oldToken) || string.Equals(oldToken, newToken, StringComparison.OrdinalIgnoreCase))
-                return input;
-
-            return Regex.Replace(input, Regex.Escape(oldToken), newToken.Replace("$", "$$"), RegexOptions.IgnoreCase);
         }
     }
 }

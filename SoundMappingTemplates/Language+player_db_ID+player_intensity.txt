@@ -1,0 +1,46 @@
+# mapping.txt template - sound banks looked up by Language + player_db_ID + player_intensity
+# 4 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pplayer_names.res
+#     speech/commentary/eng_us/soundwaves/eng_us_male/pplayer_names.res
+#     speech/loccommentary/ara_sa/soundwaves/pplayer_names.res
+#     speech/loccommentary/spa_es/soundwaves/pplayer_names.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0
+#
+# player_db_ID: players.playerid
+# FIFA17.exe sets it to a match player's players.playerid (+8 of the match player, FUN_146faab90), or the same id from the per-player playerid table the commentary copies from the match players (FUN_14785c6d0).
+# Not traced: trigger_PLAYER passes the id its message carries (the same value as surname_ID), and the SC2_ELSEWHERE events pass the id their message carries; those senders are not traced.
+# Set by the code of trigger_SHOOTOUT_SETUP, trigger_SC2_ELSEWHERE_PEN, trigger_SC2_ELSEWHERE_PEN_IMPACT, trigger_SC2_ELSEWHERE_GOAL, trigger_SC2_ELSEWHERE_GOAL_IMPACT, trigger_SAVE, trigger_PASS, trigger_MISS and 66 more.
+#   values these banks use (the census lists up to 60 a bank): 2, 16, 27, 34, 41, 80, 93, 158, 164, 172, 185, 195, 201, 203, 239, 241, 244, 245,
+#     246, 249, 250, 273, 330, 388, 393, 450, 461, 492, 496, 508, 518, 595, 614, 636, 638, 641, 642, 652,
+#     657, 666, 684, 694, 726, 729, 750, 768, 802, 860, 882, 933, 942, 1025, 1040, 1041, 1046, 1075, 1099,
+#     1102, 1109, 1111, 1145, 1175, 1179, 1238, 1611, 5471, 5479, 5485, 9014, 10535, 10959, 12259, 13732,
+#     13743, 20289, 20801, 21146, 26501, 31432, 34079, 41236, 45197, 48940, 49370, 52091, 53302, 53405,
+#     53578, 54037, 54050, 102056, 106573, 107713, 108080, 112316, 113176, 117063, 119152, 120533, 121939,
+#     121944, 134979, 135073, 135455, 135475, 135507, 136875, 137160, 137186, 138412, 138532, 138956, 139064,
+#     139720, 142721, 142754, 142784, 144429, 144622, 146530
+#
+# player_intensity
+# FIFA17.exe sets it to 1 or 2 (trigger_PASS).
+# Set by the code of trigger_PASS.
+#   value names: invalid=0, HIGH=1, LOW=2
+#   values these banks use (the census lists up to 60 a bank): 1, 2
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, player_db_ID=41, player_intensity=1
+my_clip_02.wav = Language=0, player_db_ID=330, player_intensity=2

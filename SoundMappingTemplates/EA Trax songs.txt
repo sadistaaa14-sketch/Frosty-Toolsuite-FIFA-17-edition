@@ -1,0 +1,22 @@
+# mapping.txt for Sound/FifaHarmony/EATrax/EATrax_01 or EATrax_02
+#
+# Bulk Import (right-click a clip) reads this file and the audio files beside it. One line per file:
+#     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to this folder. Lines starting with # are notes.
+# A value with a comma in it goes in double quotes. Every line is checked before anything is written,
+# and the import is one edit of the asset.
+#
+# EA Trax: a song is filed under its songid, the game DB's eatrax.songid.
+#     songid=<a songid this bank has>    replaces that song's audio
+#     songid=<a new songid>              adds a song
+#     title, artist, album               the DB's eatrax.songname, artist and album
+#     intro, playlistid, unlocked        the DB columns eatrax.intro, songplaylistlinks.playlistid and
+#                                        .unlocked (every shipped song: intro=1, playlistid=0, unlocked=1)
+#     clip=3                             replaces track 3 whatever its songid
+# FIFA17.exe lists EA Trax songs from the DB (FUN_14789d6a0: songplaylistlinks joined with eatrax), so a
+# new song plays in the game once the DB has its rows: the import writes them next to this file as
+# eatrax_rows.txt and songplaylistlinks_rows.txt, in the format the DB's text export uses.
+#
+# Example lines (Write mapping.txt... in the editor lists the bank's own songs):
+Bayonne - Appeals (my version).wav = songid=1
+My Song.wav = songid=58, title="My Song", artist="My Band", album="My Album"

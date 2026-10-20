@@ -1,0 +1,35 @@
+# mapping.txt template - sound banks looked up by Language + ssm_objective + ssm_score + ssm_clinch_requirement + ssm_clinch_time
+# 1 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bssm_cnotes_banter_timed_requirement_games.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#
+# ssm_objective
+# FIFA17.exe's code never names it (neither the name nor its id 0x9780BF58 occurs in the exe); the game's CommentaryDbEvents data declares it.
+#
+# ssm_score
+# FIFA17.exe's code never names it (neither the name nor its id 0x7DF46F5F occurs in the exe); the game's CommentaryDbEvents data declares it.
+#
+# ssm_clinch_requirement
+# FIFA17.exe's code never names it (neither the name nor its id 0x6DC3C5B4 occurs in the exe); the game's CommentaryDbEvents data declares it.
+#
+# ssm_clinch_time
+# FIFA17.exe's code never names it (neither the name nor its id 0x24AE527E occurs in the exe); the game's CommentaryDbEvents data declares it.
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, ssm_objective=0, ssm_score=0, ssm_clinch_requirement=0, ssm_clinch_time=0
+my_clip_02.wav = Language=0, ssm_objective=0, ssm_score=0, ssm_clinch_requirement=0, ssm_clinch_time=0

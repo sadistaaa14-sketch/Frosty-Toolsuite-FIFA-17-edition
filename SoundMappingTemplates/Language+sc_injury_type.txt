@@ -1,0 +1,34 @@
+# mapping.txt template - sound banks looked up by Language + sc_injury_type
+# 2 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bsc1_injury_heavy.res
+#     speech/commentary/eng_us/soundwaves/bsc1_injury_light.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#
+# sc_injury_type
+# FIFA17.exe sets it to +0x18 of the record FUN_147821940 is given (a field of the handler's record; what fills it is not traced).
+# Set by the code of trigger_SC1_INJURY.
+#   value names: invalid=0, LIGHT_CALF=1, LIGHT_DEADLEG=2, LIGHT_HAMSTRING=4, LIGHT_GROIN=8, LIGHT_FOOT=16,
+#     LIGHT_ANKLE=32, LIGHT_KNEE=64, LIGHT_RIB=128, LIGHT_SHOULDER=256, LIGHT_BACK=512, LIGHT_ELBOW=1024,
+#     BAD_CALF=2048, BAD_QUAD=4096, BAD_HAMSTRING=8192, BAD_GROIN=16384, BAD_METATARSAL=32768,
+#     BAD_ANKLE=65536, BAD_RIB=131072, BAD_SHOULDER=262144, BAD_BACK=524288, BAD_ELBOW=1048576,
+#     BAD_CONCUSSION=2097152, BAD_HEADCUT=4194304, BAD_LIGAMENT=8388608, BAD_COLLARBONE=16777216,
+#     BAD_LEG=33554432
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, sc_injury_type=0
+my_clip_02.wav = Language=0, sc_injury_type=0

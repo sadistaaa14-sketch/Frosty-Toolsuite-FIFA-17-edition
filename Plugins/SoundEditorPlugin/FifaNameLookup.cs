@@ -455,9 +455,51 @@ namespace SoundEditorPlugin
         public static bool TrySongName(int songId, out string name)
         {
             string source;
+            lock (songGate)
+            {
+                if (sessionSongs.TryGetValue(songId, out name))
+                    return true;
+            }
+
             EnsureDatabase();
             return FromTable(songNames, songId, "db", out name, out source);
         }
+
+        /// <summary>
+        /// Names an EA Trax songid for the rest of the session: what the user entered for a song this editor added (or gave
+        /// new metadata), which the DB holds only once the rows written for it are imported. Comes before the DB's name.
+        /// </summary>
+        public static void RememberSong(int songId, string name)
+        {
+            if (songId == 0 || string.IsNullOrWhiteSpace(name))
+                return;
+            lock (songGate)
+                sessionSongs[songId] = name.Trim();
+        }
+
+        /// <summary>The DB's `eatrax` columns for a songid (album, songname, artist, intro), or null.</summary>
+        public static EaTraxSongInfo TrySongInfo(int songId)
+        {
+            EnsureDatabase();
+            EaTraxSongInfo info;
+            return songId != 0 && songInfo != null && songInfo.TryGetValue(songId, out info) ? info : null;
+        }
+
+        /// <summary>Every songid the DB's `eatrax` table and this session name.</summary>
+        public static IEnumerable<int> SongIds()
+        {
+            EnsureDatabase();
+            List<int> ids = new List<int>();
+            if (songNames != null)
+                ids.AddRange(songNames.Keys);
+            lock (songGate)
+                ids.AddRange(sessionSongs.Keys);
+            return ids;
+        }
+
+        private static readonly object songGate = new object();
+        private static readonly Dictionary<int, string> sessionSongs = new Dictionary<int, string>();
+        private static Dictionary<int, EaTraxSongInfo> songInfo;
 
         private static void EnsureDatabase()
         {
@@ -847,6 +889,7 @@ namespace SoundEditorPlugin
                 return null;
 
             Dictionary<int, string> result = new Dictionary<int, string>();
+            Dictionary<int, EaTraxSongInfo> info = new Dictionary<int, EaTraxSongInfo>();
             foreach (object row in rows)
             {
                 int id = ToInt(ReadColumn(row, new[] { "songid" }));
@@ -855,8 +898,14 @@ namespace SoundEditorPlugin
                 if (id == 0 || result.ContainsKey(id) || string.IsNullOrEmpty(song))
                     continue;
                 result[id] = string.IsNullOrEmpty(artist) ? song : artist + " - " + song;
+                info[id] = new EaTraxSongInfo
+                {
+                    SongId = id, Title = song, Artist = artist, Album = AsText(ReadColumn(row, new[] { "album" })),
+                    Intro = ToInt(ReadColumn(row, new[] { "intro" })),
+                };
             }
 
+            songInfo = info.Count > 0 ? info : null;
             return result.Count > 0 ? result : null;
         }
 

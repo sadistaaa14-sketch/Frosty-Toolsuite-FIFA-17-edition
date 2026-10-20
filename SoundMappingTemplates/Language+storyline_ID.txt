@@ -1,0 +1,40 @@
+# mapping.txt template - sound banks looked up by Language + storyline_ID
+# 6 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bstitch_goal_storyline.res
+#     speech/commentary/eng_us/soundwaves/bstitch_storyline_another_player.res
+#     speech/commentary/eng_us/soundwaves/eng_us_male/bstitch_storyline.res
+#     speech/commentary/eng_us/soundwaves/eng_us_male/bstorylines.res
+#     speech/loccommentary/ita_it/soundwaves/ita_it_neutral/bstitch_goal_storyline.res
+#     speech/loccommentary/por_br/soundwaves/bstitch_storyline_another_player.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0, 6
+#
+# storyline_ID
+# FIFA17.exe sets it to 0 in FUN_147842a60, FUN_147842650 and FUN_14781c080; FUN_147841e30 sets it from a value the trace does not resolve.
+# Set by the code of trigger_OOP_STORYLINE, trigger_NH_FULL_TIME, trigger_NH_PRE_MATCH, trigger_INTRO_SEQ1, trigger_INTRO_SEQ2, trigger_INTRO_SEQ2_STORYLINE, trigger_REPLAY_HEAT_RED, trigger_REPLAY_HEAT_RED_COLOUR.
+#   values these banks use (the census lists up to 60 a bank): 2, 3, 4, 6, 7, 12, 16, 31, 36, 52, 54, 58, 80, 82, 83, 84, 107, 110, 114, 119, 122,
+#     123, 124, 152, 154, 158, 182, 183, 202, 203, 204, 206, 219, 224, 252, 254, 258, 282, 283, 302, 303,
+#     306, 310, 315, 319, 324, 326, 327, 329, 341, 342, 352, 354, 358, 368, 382, 383, 403, 404, 406, 410,
+#     424, 452, 454, 458, 483, 503, 510, 522, 523, 554, 558, 584, 603, 610, 622, 623, 1002, 1003, 1006, 1202,
+#     1204, 1303, 1306, 1502, 1503, 1504, 1506, 1602, 1603, 1604, 1606, 1731, 1741, 1841, 1931, 2002, 2003,
+#     2006, 2102, 2103, 2106, 2202, 2203, 2204, 2206, 2222, 2223, 2302, 2303, 2304, 2322, 2403, 2404, 2422,
+#     20439, 20539
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, storyline_ID=0
+my_clip_02.wav = Language=0, storyline_ID=0

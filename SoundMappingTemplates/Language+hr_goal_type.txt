@@ -1,0 +1,40 @@
+# mapping.txt template - sound banks looked up by Language + hr_goal_type
+# 8 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bgr_c_goal_type_stitch.res
+#     speech/commentary/eng_us/soundwaves/bhr_c_goal_extra.res
+#     speech/commentary/eng_us/soundwaves/bhr_m_goal_type.res
+#     speech/commentary/eng_us/soundwaves/bhr_m_goal_type_stitch.res
+#     speech/loccommentary/ara_sa/soundwaves/ara_sa_male/bhr_m_goal_type_stitch_loc.res
+#     speech/loccommentary/ger_de/soundwaves/bgr_c_goal_type_stitch_loc.res
+#     speech/loccommentary/ita_it/soundwaves/ita_it_male/bgr_c_goal_type_stitch_loc.res
+#     speech/loccommentary/spa_mx/soundwaves/bhr_m_goal_type.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 6, 16
+#
+# hr_goal_type
+# FIFA17.exe sets it to one bit per value: the exe sends every bit that is set in its flag word as a value of its own (0 when none is).
+# Set by the code of trigger_REPLAY_HEAT_GOAL, trigger_SUB_CAMERA, trigger_SUB, trigger_REPLAY_GOAL, trigger_REPLAY_HEAT_OWN_GOAL, trigger_REPLAY_HEAT_GOAL_COLOUR.
+#   value names: invalid=0, FIRST_GOAL=1, BRACE=2, HATTRICK=4, FOURTH_GOAL=8, FIFTH_GOAL=16, LEAD=32,
+#     LEVEL=64, LATE_LEVEL=128, OWN_GOAL=512, LATE_LEAD=256, BAR_AND_IN=1024, POST_AND_IN=2048,
+#     KEEPER_TOUCH_NOT_ENOUGH=4096, KEEPER_NO_SAVE_ATTEMPT=8192, KEEPER_NUTMEGGED=16384, OVER_KEEPER=32768,
+#     REBOUND_AFTER_SAVE=65536, REBOUND_AFTER_WOODWORK=131072, KEEPER_GIVEAWAY=262144
+#   values these banks use (the census lists up to 60 a bank): 64, 128, 256
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, hr_goal_type=0
+my_clip_02.wav = Language=0, hr_goal_type=0

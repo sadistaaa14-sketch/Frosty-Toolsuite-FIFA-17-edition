@@ -1,0 +1,32 @@
+# mapping.txt template - sound banks looked up by Language + sm_sub_speech_time
+# 2 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bstorymode_sub_intro_time_remaining.res
+#     speech/loccommentary/ara_sa/soundwaves/ara_sa_male/bm_storymode_sub_intro_time_remaining.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 16
+#
+# sm_sub_speech_time
+# FIFA17.exe's code never names it (neither the name nor its id 0xE5A4C47D occurs in the exe); the game's CommentaryDbEvents data declares it.
+#   value names: invalid=0, REMAINING_35MINS=1, REMAINING_OVER_30MINS=2, REMAINING_30MIN=4,
+#     REMAINING_UNDER_30MINS=8, REMAINING_25MINS=16, REMAINING_15MINS=32, REMAINING_OVER_10MINS=64,
+#     REMAINING_10MINS=128, REMAINING_UNDER_10MINS=256, REMAINING_5MINS=512
+#   values these banks use (the census lists up to 60 a bank): 1, 2, 4, 8, 16, 32, 64, 128, 256, 512
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, sm_sub_speech_time=0
+my_clip_02.wav = Language=0, sm_sub_speech_time=0

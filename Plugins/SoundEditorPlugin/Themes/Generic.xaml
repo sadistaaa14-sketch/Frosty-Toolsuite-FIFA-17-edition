@@ -156,6 +156,14 @@
                                                     <Image Source="/FrostyEditor;component/Images/Import.png" Opacity="0.5"/>
                                                 </MenuItem.Icon>
                                             </MenuItem>
+                                            <MenuItem x:Name="PART_SoundBulkImportMenuItem" Header="Bulk Import From Folder..."
+                                                      ToolTip="Pick a folder's mapping.txt: each line names an audio file and the key it goes under. A key this asset has is replaced, a new one is added; the plan is shown before anything is written.">
+                                                <MenuItem.Icon>
+                                                    <Image Source="/FrostyEditor;component/Images/Import.png" Opacity="0.5"/>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="PART_SoundMappingTemplateMenuItem" Header="Write mapping.txt..."
+                                                      ToolTip="Save this asset's mapping.txt: how to fill it in, what its key parameters are, and one line per clip, named the way Export All Clips names the files"/>
                                             <Separator/>
                                             <MenuItem x:Name="PART_SoundAddTrackMenuItem" Header="Add Clip">
                                                 <MenuItem.Icon>

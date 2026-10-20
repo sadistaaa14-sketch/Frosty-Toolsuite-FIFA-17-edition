@@ -1,0 +1,47 @@
+# mapping.txt template - sound banks looked up by pa_player_id
+# 12 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/announcer/announcer_00_eng1/soundwaves/ppa_player_home_eng.res
+#     speech/announcer/announcer_00_eng1/soundwaves/ppa_player_sub_eng.res
+#     speech/announcer/announcer_00_eng2/soundwaves/ppa_player_home_eng.res
+#     speech/announcer/announcer_00_eng2/soundwaves/ppa_player_sub_eng.res
+#     speech/announcer/announcer_01_fre/soundwaves/gl_player_fre.res
+#     speech/announcer/announcer_01_fre/soundwaves/l_player_fre.res
+#     speech/announcer/announcer_02_ger/soundwaves/gl_player_ger.res
+#     speech/announcer/announcer_02_ger/soundwaves/l_player_ger.res
+#     speech/announcer/announcer_03_ita/soundwaves/gl_player_ita.res
+#     speech/announcer/announcer_03_ita/soundwaves/l_player_ita.res
+#     speech/announcer/announcer_04_spa/soundwaves/gl_player_spa.res
+#     speech/announcer/announcer_04_spa/soundwaves/l_player_spa.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# pa_player_id: players.playerid
+# FIFA17.exe sets it to a match player's players.playerid (+8 of the match player, FUN_146faab90); in pa_LINEUP_PLAYER_SUB the id the substitution message carries, which the exe looks up among the match players by their playerid (FUN_146fe4920).
+# Set by the code of pa_LINEUP_PLAYER_SUB, pa_LINEUP_PLAYER, pa_INTRO, pa_LINEUP_TEAM_HOME, pa_SUBSTITUTION_OFF, pa_SUBSTITUTION_ON, pa_GOAL.
+#   values these banks use (the census lists up to 60 a bank): 2, 6, 11, 27, 40, 41, 58, 61, 80, 164, 185, 195, 241, 244, 245, 246, 249, 250, 268,
+#     269, 273, 330, 388, 450, 492, 552, 560, 580, 591, 595, 599, 603, 607, 615, 630, 631, 638, 639, 642,
+#     646, 657, 684, 694, 750, 768, 805, 806, 838, 880, 887, 899, 933, 1040, 1041, 1046, 1075, 1080, 1085,
+#     1088, 1099, 1102, 1124, 1175, 1177, 1178, 1179, 1183, 1198, 1210, 1219, 1235, 1238, 1256, 1275, 1283,
+#     1289, 1295, 1318, 1323, 1372, 1373, 1393, 1408, 1419, 1443, 1517, 1541, 1551, 1595, 1605, 1611, 1625,
+#     1637, 1638, 1647, 1668, 1672, 1677, 1678, 1731, 1737, 1741, 1742, 1747, 1803, 1860, 1972, 1983, 2062,
+#     2091, 2141, 2147, 2151, 2155, 2196, 2231, 2264, 2335, 2488, 2518, 2572, 2622, 2651, 2702, 2769, 2819,
+#     2823, 2837, 2904, 2956, 2992, 3041, 3235, 3264, 3363, 3395, 3484, 3622, 3647, 3813, 3912, 4077, 4083,
+#     4098, 4111, 4114, 4190, 4238, 4257, 4667, 4695, 4731, 4832, 5047, 5099, 5208, 5231, 5355, 5440, 5471,
+#     5479, 5485, 5594, 5661, 5673, 5679, 5704, 5860, 5879, 5984, 6095, 6122, 6207, 6422, 6826, 6895, 7289,
+#     7384, 7446, 7597, 7631, 7647, 7656, 7743, 7763, 7814, 7820, 7826, 7833, 7939, 8040, 8119, 8131, 8298,
+#     8348, 8376, 8473, 8517, 8538, 8753, ... and 94 more
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = pa_player_id=41
+my_clip_02.wav = pa_player_id=657

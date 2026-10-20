@@ -368,6 +368,132 @@ namespace SoundEditorPlugin
             App.Logger.Log("Imported audio into {0} clip(s) of {1} in one edit.", plan.Count, _bankPath);
         }
 
+        /// <summary>
+        /// What a bulk import reads a mapping against: for a bank, its key parameters and every clip's key, and whether the
+        /// writer can add to it and replace in it (asked of the writer, on the file as it is).
+        /// </summary>
+        protected override BulkTarget DescribeBulkTarget(out string refusal)
+        {
+            BulkTarget target = base.DescribeBulkTarget(out refusal);
+            if (target == null)
+                return null;
+
+            if (!_isLocalizedWave || _bank == null || _bank.Clips == null)
+            {
+                if (_bankShaped && !_isLocalizedWave)
+                {
+                    target.CanReplace = false;
+                    target.ReplaceRefusal = "this asset's clip index could not be read (" + (_noIndexReason ?? "see the log")
+                        + "), so importing over its chunks would leave the index describing audio that is no longer there";
+                }
+
+                return target;
+            }
+
+            target.Kind = BulkKind.Bank;
+            target.KeyParameters = _bank.KeyParameters.ToList();
+            target.ClipKeys = new List<SoundBankClipKey>();
+            for (int i = 0; i < _bank.Clips.Count; i++)
+            {
+                IList<SoundBankKeyValue> key = _bank.KeyOfClip(i);
+                SoundBankClipKey clipKey = null;
+                if (key != null)
+                {
+                    clipKey = new SoundBankClipKey();
+                    foreach (SoundBankKeyValue value in key)
+                        clipKey.Set(value.ParameterId, value.Value);
+                }
+
+                target.ClipKeys.Add(clipKey);
+            }
+
+            // A bulk add is one writer batch over the bank's one chunk (RunBulkImport); a bank whose audio is in several
+            // chunks takes new clips one at a time, through Add Clip, which asks for each one's key.
+            bool oneChunk = _bankResRowToAsset == null && _bankChunkDatas.Count == 1;
+            target.CanAdd = CanAddClip && oneChunk;
+            target.AddRefusal = !CanAddClip ? AddClipRefusal
+                : (oneChunk ? null : (_bankResRowToAsset != null ? "this bank keeps a chunk per clip" : "this bank's audio is in " + _bankChunkDatas.Count + " chunks")
+                    + ", and a bulk import adds clips only to a bank whose clips are in one chunk (Add Clip adds one at a time)");
+            string replace = _bankResRowToAsset != null
+                ? SoundBankWriter.RefusalForReplaceInRows(_bankResData, BankRowsInResOrder(), 0)
+                : SoundBankWriter.RefusalForReplace(_bankResData, _bankChunk, 0);
+            target.CanReplace = replace == null;
+            target.ReplaceRefusal = replace == null ? null : "a clip's audio cannot be replaced in this bank: " + replace;
+            return target;
+        }
+
+        /// <summary>
+        /// A bulk import into a bank with one chunk is one edit: every file encoded, the writer's batch (every replace, then
+        /// every add, <see cref="SoundBankWriter.ApplyBatch"/>), one write of the chunk and the .res, one read-back. A bank
+        /// with a chunk per clip takes its replaces in one edit too (<see cref="ImportFilesInto"/>); anything else goes
+        /// file by file.
+        /// </summary>
+        protected override void RunBulkImport(BulkPlan plan, FrostyTaskWindow task)
+        {
+            bool oneRow = _isLocalizedWave && _bankResRowToAsset == null && _bankChunkDatas.Count == 1;
+            bool rows = _isLocalizedWave && _bankResRowToAsset != null;
+            if (rows && plan.Steps.All(s => !s.Add))
+            {
+                ImportFilesInto(plan.Steps.Select(s => new KeyValuePair<int, string>(s.Clip, s.Path)).ToList(), task);
+                return;
+            }
+
+            if (!oneRow)
+            {
+                base.RunBulkImport(plan, task);
+                return;
+            }
+
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(_bankPath);
+            if (resEntry == null)
+            {
+                App.Logger.LogWarning("This asset's .res clip index is not in the loaded game data, so nothing was imported.");
+                return;
+            }
+
+            Dictionary<string, byte[]> encoded = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            List<SoundBankBatchStep> steps = new List<SoundBankBatchStep>();
+            for (int n = 0; n < plan.Steps.Count; n++)
+            {
+                BulkStep step = plan.Steps[n];
+                task.Update(status: "Encoding " + (n + 1) + " / " + plan.Steps.Count + ": " + step.File, progress: (n + 1) * 80.0 / plan.Steps.Count);
+                byte[] clip;
+                if (!encoded.TryGetValue(step.Path, out clip))
+                {
+                    clip = ConvertAudioFileToPcm16Big(step.Path);
+                    encoded[step.Path] = clip;
+                }
+
+                if (clip == null || clip.Length == 0)
+                {
+                    App.Logger.LogWarning("{0} decodes to no audio, so nothing was imported.", step.File);
+                    return;
+                }
+
+                steps.Add(step.Add
+                    ? new SoundBankBatchStep { Clip = clip, Key = step.Key, Name = NewClipName(step.Key) }
+                    : new SoundBankBatchStep { Ordinal = step.Clip, Clip = clip });
+            }
+
+            task.Update(status: "Writing " + plan.Steps.Count + " clip(s) into the bank...", progress: 85);
+            SoundBankAddResult result = SoundBankWriter.ApplyBatch(_bankResData, _bankChunk, steps);
+            if (!result.Ok)
+            {
+                App.Logger.LogWarning("Bulk import: nothing was written - {0}", result.Refusal);
+                return;
+            }
+
+            int clipsBefore = _bank.Clips == null ? 0 : _bank.Clips.Count;
+            BulkStep first = plan.Steps.FirstOrDefault(s => !s.Add);
+            int select = first != null ? first.Clip : clipsBefore;
+            if (!WriteBankEdit(resEntry, result, new Dictionary<int, byte[]> { { 0, result.Chunk } }, task, select))
+                return;
+
+            LogReport(result.Report);
+            App.Logger.Log("Bulk import into {0}: {1} clip(s) replaced and {2} added in one edit; the bank now has {3} clips.",
+                _bankPath, plan.Replaces, plan.Adds, clipsBefore + plan.Adds);
+        }
+
         /// <summary>Many deletes from a bank in one edit (the writer's RemoveClips), written and read back once.</summary>
         protected override void DeleteTracks(IList<int> indices, FrostyTaskWindow task)
         {
@@ -1105,12 +1231,11 @@ namespace SoundEditorPlugin
         /// appends its bytes to the chunk (on a 4-byte boundary, as FUN_146210310 reads offsets), and the asset's last
         /// Chunks row grows by exactly what the chunk grew.
         /// </summary>
-        protected override void AddTrack(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
+        protected override bool AddTrackFile(string fileName, FrostyTaskWindow task)
         {
             if (!_isLocalizedWave)
             {
-                base.AddTrack(ofd, task);
-                return;
+                return base.AddTrackFile(fileName, task);
             }
 
             int source = _pendingClipSource;
@@ -1120,22 +1245,22 @@ namespace SoundEditorPlugin
             if (string.IsNullOrEmpty(name) || _bank == null || _bankResData == null || _bankChunk == null)
             {
                 App.Logger.LogWarning("Adding a clip needs a name for it and a loaded bank; one of those was missing.");
-                return;
+                return false;
             }
 
             ResAssetEntry resEntry = App.AssetManager.GetResEntry(_bankPath);
             if (resEntry == null)
             {
                 App.Logger.LogWarning("This asset's .res clip index is not in the loaded game data, so a new clip cannot be written.");
-                return;
+                return false;
             }
 
             task.Update(status: "Encoding the audio file...");
-            byte[] clipBytes = ConvertAudioFileToPcm16Big(ofd);
+            byte[] clipBytes = ConvertAudioFileToPcm16Big(fileName);
             if (clipBytes == null || clipBytes.Length == 0)
             {
                 App.Logger.LogWarning("The file chosen for the new clip decoded to no audio, so nothing was written.");
-                return;
+                return false;
             }
 
             task.Update(status: "Adding the clip to the bank...");
@@ -1143,7 +1268,7 @@ namespace SoundEditorPlugin
             if (!added.Ok)
             {
                 App.Logger.LogWarning(added.Refusal);
-                return;
+                return false;
             }
 
             // The writer appended the clip (after zero padding to a 4-byte boundary) to the whole chunk; those bytes
@@ -1160,11 +1285,12 @@ namespace SoundEditorPlugin
             _pendingClipKey = null;
 
             if (!WriteBankEdit(resEntry, added, new Dictionary<int, byte[]> { { last, grownRow } }, task, added.Ordinal))
-                return;
+                return false;
 
             LogReport(added.Report);
             App.Logger.Log("Added clip {0} (\"{1}\") to {2}, filed under {3}; the bank now has {4} clips.",
                 added.Ordinal + 1, name, _bankPath, added.Key ?? "no key", added.Ordinal + 1);
+            return true;
         }
 
         /// <summary>

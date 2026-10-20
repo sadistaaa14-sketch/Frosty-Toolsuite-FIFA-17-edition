@@ -407,7 +407,15 @@ namespace SoundEditorPlugin
         /// </summary>
         public static byte[] EncodePcm16BigFromAudioFile(string path, out int channels, out int sampleRate)
         {
+            long frames;
+            return EncodePcm16BigFromAudioFile(path, out channels, out sampleRate, out frames);
+        }
+
+        /// <summary>The same, saying how many frames the file decoded to (the encoder stops at 0xFFFFFF frames).</summary>
+        public static byte[] EncodePcm16BigFromAudioFile(string path, out int channels, out int sampleRate, out long sourceFrames)
+        {
             short[] samples = DecodeAudioFileToSamples(path, out channels, out sampleRate);
+            sourceFrames = samples == null || channels <= 0 ? 0 : samples.Length / channels;
             return EncodePcm16Big(samples, channels, sampleRate);
         }
 

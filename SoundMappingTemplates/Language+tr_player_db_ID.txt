@@ -1,0 +1,38 @@
+# mapping.txt template - sound banks looked up by Language + tr_player_db_ID
+# 3 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/eng_us_male/ptr_m_confirmed.res
+#     speech/commentary/eng_us/soundwaves/eng_us_male/ptr_m_rumoured.res
+#     speech/loccommentary/fre_fr/soundwaves/fre_fr_male/ptr_m_confirmed.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0, 1
+#
+# tr_player_db_ID
+# FIFA17.exe sets it to +0x10 of the record FUN_14783e3e0 is given (a field of the handler's record; what fills it is not traced).
+# Set by the code of trigger_TRANSFER_RUMOURS.
+#   values these banks use (the census lists up to 60 a bank): 41, 1179, 2196, 4098, 5471, 5479, 6826, 7763, 7826, 8473, 9014, 9676, 10535, 13732,
+#     13743, 16254, 20289, 20775, 20800, 20801, 21146, 24630, 25420, 31432, 41236, 45186, 45197, 45574,
+#     48717, 48745, 48940, 49369, 49370, 50542, 52091, 53302, 53578, 53612, 53914, 54050, 103935, 105454,
+#     106213, 106231, 106573, 110677, 112253, 112316, 116494, 120533, 121170, 121933, 121939, 121944, 124635,
+#     135475, 135507, 137186, 137262, 137677, 138110, 138412, 138956, 139720, 139869, 140601, 142754, 142784,
+#     143001, 143745, 146439, 146530, 146562, 146748, 148803, 150724, 152729, 153079, 155862, 156616, 158023,
+#     158133, 162347, 162835, 162895, 164240, 165153, 165239, 167397, 167495, 167628, 167664, 167948, 168435,
+#     168542, 168609, 168651, 169416, 170481, 170890
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, tr_player_db_ID=41
+my_clip_02.wav = Language=0, tr_player_db_ID=1179

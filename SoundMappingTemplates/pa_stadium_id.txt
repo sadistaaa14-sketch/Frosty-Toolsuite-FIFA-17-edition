@@ -1,0 +1,37 @@
+# mapping.txt template - sound banks looked up by pa_stadium_id
+# 6 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/announcer/announcer_00_eng1/soundwaves/spa_attendance_stad_thx_eng.res
+#     speech/announcer/announcer_00_eng1/soundwaves/spa_intro_walk_stad_eng.res
+#     speech/announcer/announcer_00_eng1/soundwaves/spa_intro_wrap_eng.res
+#     speech/announcer/announcer_00_eng1/soundwaves/spa_motm_stad_eng.res
+#     speech/announcer/announcer_00_eng2/soundwaves/spa_attendance_stad_thx_eng.res
+#     speech/announcer/announcer_00_eng2/soundwaves/spa_motm_stad_eng.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# pa_stadium_id: stadiums.stadiumid
+# FIFA17.exe sets it to the match setup's stadium id (+0xa4, copied to +0x30 of the audio modules' match object by FUN_147852650), which the exe looks the audiostadium table up by (FUN_147850760).
+# Set by the code of pa_INTRO_WRAP, pa_INTRO, pa_LINEUP_TEAM_HOME, pa_LINEUP_PLAYER.
+#   values these banks use (the census lists up to 60 a bank): 1, 13, 28, 100, 112, 113, 115, 116, 155, 156, 246, 248, 260, 265, 325, 326, 327,
+#     329, 330, 333, 335, 337, 341, 347, 348, 10000001, 10000002, 10000003, 10000004, 10000005, 10000006,
+#     10000007, 10000008, 10000009, 10000010, 10000011, 10000012, 10000013, 10000014, 10000015, 10000016,
+#     10000017, 10000018, 10000019, 10000020, 10000021, 10000022, 10000023, 10000024, 10000025, 10000026,
+#     10000027, 10000028, 10000029, 10000030, 10000031, 10000032, 10000033, 10000034, 10000035, 10000036,
+#     10000037, 10000038, 10000039, 10000040, 10000041, 10000042, 10000043, 10000044, 10000045, 10000046,
+#     10000047, 10000048, 10000049, 10000050, 10000051, 10000052, 10000053, 10000054, 10000055, 10000056,
+#     10000057, 10000058, 10000059, 10000060, 10000061, 10000062
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = pa_stadium_id=1
+my_clip_02.wav = pa_stadium_id=13

@@ -1,0 +1,38 @@
+# mapping.txt template - sound banks looked up by Language + possessor_ID
+# 7 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pjostle_begins_possessor.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/ptckl_down_maybe_injured.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/ptckl_rslt_jumps_over_slide.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/ptckl_rslt_player_stumbles.res
+#     speech/commentary/eng_us/soundwaves/eng_us_male/pjostle_bounced_off_ball.res
+#     speech/loccommentary/ara_sa/soundwaves/pjostle_begins_possessor.res
+#     speech/loccommentary/rus_ru/soundwaves/ptckl_down_maybe_injured.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0
+#
+# possessor_ID: players.playerid
+# FIFA17.exe sets it to a match player's players.playerid (+8 of the match player, FUN_146faab90) (0 when there is none).
+# Set by the code of trigger_TACKLE, trigger_TACKLE_RESULT, trigger_SHIELDING, trigger_JOSTLING, trigger_JOSTLE_RESULT.
+#   values these banks use (the census lists up to 60 a bank): 41, 1179, 5419, 5471, 5479, 9014, 10535, 10959, 12259, 12265, 13732, 13743, 20289,
+#     20801, 21146, 26501, 31432, 39943, 41236, 45197, 52091, 53302, 54050, 120533, 138412, 142754, 146530,
+#     146536, 152908, 155862, 156616, 158023, 162895, 164477, 165031, 165153, 165239, 167905, 168542, 169590,
+#     171833, 177003, 178033, 178625, 183460, 186140, 186146, 186192, 187084, 189505, 189508, 197777, 198139
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, possessor_ID=20801
+my_clip_02.wav = Language=0, possessor_ID=26501

@@ -1,0 +1,50 @@
+# mapping.txt template - sound banks looked up by pa_half_type
+# 33 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/announcer/announcer_01_fre/soundwaves/pa_full_fre.res
+#     speech/announcer/announcer_01_fre/soundwaves/pa_half_fre.res
+#     speech/announcer/announcer_02_ger/soundwaves/pa_full_ger.res
+#     speech/announcer/announcer_02_ger/soundwaves/pa_half_ger.res
+#     speech/announcer/announcer_03_ita/soundwaves/pa_full_ita.res
+#     speech/announcer/announcer_03_ita/soundwaves/pa_half_ita.res
+#     speech/announcer/announcer_04_spa/soundwaves/pa_full_spa.res
+#     speech/announcer/announcer_04_spa/soundwaves/pa_half_spa.res
+#     speech/announcer/announcer_05_cro/soundwaves/pa_full_cro.res
+#     speech/announcer/announcer_05_cro/soundwaves/pa_half_cro.res
+#     speech/announcer/announcer_06_cze/soundwaves/pa_full_cze.res
+#     speech/announcer/announcer_06_cze/soundwaves/pa_half_cze.res
+#     speech/announcer/announcer_07_dut/soundwaves/pa_full_dut.res
+#     speech/announcer/announcer_07_dut/soundwaves/pa_half_dut.res
+#     speech/announcer/announcer_08_grk/soundwaves/pa_full_grk.res
+#     speech/announcer/announcer_08_grk/soundwaves/pa_half_grk.res
+#     speech/announcer/announcer_09_pol/soundwaves/pa_full_pol.res
+#     speech/announcer/announcer_09_pol/soundwaves/pa_half_pol.res
+#     speech/announcer/announcer_10_rus/soundwaves/pa_full_rus.res
+#     speech/announcer/announcer_10_rus/soundwaves/pa_half_rus.res
+#     speech/announcer/announcer_11_swe/soundwaves/pa_full_swe.res
+#     speech/announcer/announcer_11_swe/soundwaves/pa_half_swe.res
+#     speech/announcer/announcer_12_trk/soundwaves/pa_full_trk.res
+#     speech/announcer/announcer_12_trk/soundwaves/pa_half_trk.res
+#     speech/announcer/announcer_13_mex/soundwaves/pa_full_mex.res
+#     ... and 8 more (index.tsv lists every bank and its template)
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# pa_half_type
+# FIFA17.exe's code never names it (neither the name nor its id 0x168C5E8F occurs in the exe); the game's AnnouncerDbEvents data declares it.
+#   value names: invalid=0, fulltime=1, halftime=2
+#   values these banks use (the census lists up to 60 a bank): 1, 2
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = pa_half_type=1
+my_clip_02.wav = pa_half_type=1

@@ -1,0 +1,55 @@
+# mapping.txt template - sound banks looked up by sfx_team_id
+# 43 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     chants/newwaves/chants_demo/club_anthem.res
+#     chants/newwaves/chants_demo/motivational.res
+#     chants/newwaves/chants_demo/motivational_high.res
+#     chants/newwaves/chants_demo/motivational_low_morale.res
+#     chants/newwaves/chants_demo/positive_team.res
+#     chants/newwaves/chants_demo/team.res
+#     chants/newwaves/chants_full/away.res
+#     chants/newwaves/chants_full/club_anthem.res
+#     chants/newwaves/chants_full/club_anthem_st.res
+#     chants/newwaves/chants_full/latin_bounce.res
+#     chants/newwaves/chants_full/manager.res
+#     chants/newwaves/chants_full/motivational.res
+#     chants/newwaves/chants_full/motivational_8min_rep.res
+#     chants/newwaves/chants_full/motivational_high.res
+#     chants/newwaves/chants_full/motivational_low_morale.res
+#     chants/newwaves/chants_full/motivational_st.res
+#     chants/newwaves/chants_full/positive_team.res
+#     chants/newwaves/chants_full/stadium.res
+#     chants/newwaves/chants_full/team.res
+#     chants/newwaves/chants_full/team_1nil.res
+#     chants/newwaves/chants_full/team_2nil.res
+#     chants/newwaves/chants_full/team_goal.res
+#     chants/newwaves/chants_full/team_lowrepro.res
+#     chants/newwaves/chants_full/team_st.res
+#     chants/newwaves/chants_full/team_topofleague.res
+#     ... and 18 more (index.tsv lists every bank and its template)
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# sfx_team_id
+# FIFA17.exe's code never names it (neither the name nor its id 0x67CC2C58 occurs in the exe); the game's ChantDatabaseEvents data declares it.
+#   values these banks use (the census lists up to 60 a bank): 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 21, 22, 23, 25, 28, 29,
+#     31, 32, 34, 36, 38, 44, 45, 47, 52, 55, 59, 65, 66, 72, 73, 78, 82, 86, 88, 91, 92, 94, 95, 106, 109,
+#     110, 144, 160, 166, 169, 171, 175, 219, 229, 234, 236, 237, 240, 241, 243, 245, 247, 259, 325, 383,
+#     449, 452, 461, 472, 481, 483, 485, 598, 620, 819, 974, 1041, 1318, 1321, 1330, 1331, 1335, 1337, 1338,
+#     1343, 1352, 1354, 1355, 1357, 1359, 1362, 1363, 1364, 1367, 1369, 1370, 1387, 1790, 1792, 1793, 1795,
+#     1796, 1798, 1799, 1802, 1806, 1808, 1824, 1837, 1843, 1861, 1879, 1880, 1881, 1882, 1917, 1923, 1925,
+#     1932, 1943, 1954, 1960, 1961, 100761, 101112, 105035, 110329, 111462, 111484, 113009
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = sfx_team_id=5
+my_clip_02.wav = sfx_team_id=9

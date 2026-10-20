@@ -1,0 +1,30 @@
+# mapping.txt template - sound banks looked up by sfx_home_id + sfx_away_id
+# 3 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     chants/newwaves/chants_demo/team_vs_team.res
+#     chants/newwaves/chants_full/team_vs_team.res
+#     chants/newwaves/team_vs_team.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# sfx_home_id
+# FIFA17.exe's code never names it (neither the name nor its id 0xA0F8218A occurs in the exe); the game's ChantDatabaseEvents data declares it.
+#   values these banks use (the census lists up to 60 a bank): 5, 7, 8, 9, 10, 15, 18, 19, 22, 25, 31, 44, 47, 52, 109, 160, 175
+#
+# sfx_away_id
+# FIFA17.exe's code never names it (neither the name nor its id 0x7B73784B occurs in the exe); the game's ChantDatabaseEvents data declares it.
+#   values these banks use (the census lists up to 60 a bank): 5, 7, 10, 11, 12, 13, 17, 19, 21, 22, 32, 34, 36, 44, 45, 47, 95, 110, 1792
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = sfx_home_id=10, sfx_away_id=11
+my_clip_02.wav = sfx_home_id=10, sfx_away_id=11

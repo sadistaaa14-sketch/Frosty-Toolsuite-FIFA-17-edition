@@ -1,0 +1,67 @@
+# mapping.txt template - sound banks looked up by Language + player_db_ID
+# 141 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bfut_player_legend.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/kpass_back_to_keeper.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pattack_support_player.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pattacking_entry.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pbeats_defender.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pbl01_cross.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pbl02_breakaway.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pc_goal_difficult_angle.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pc_goal_from_breakaway.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pc_replay_goal_fk_direct.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pc_replay_goal_longrange.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pc_replay_goal_pk.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pcleared_ball.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pcorner_player.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pcross_blocked_plyr.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pfoul_2nd_ylw_player.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pfoul_ant_generic.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pfoul_yellow_player.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pgoal_player_1_for_1.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pgoal_player_specific.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pgoal_scored_player.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pgoal_storyline_player.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pgr_c_goal_stitch.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pgr_fk_c_throw.res
+#     speech/commentary/eng_us/soundwaves/eng_us_demo_male/pgr_pen_c_throw.res
+#     ... and 116 more (index.tsv lists every bank and its template)
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 0, 2, 3, 6, 8, 16
+#
+# player_db_ID: players.playerid
+# FIFA17.exe sets it to a match player's players.playerid (+8 of the match player, FUN_146faab90), or the same id from the per-player playerid table the commentary copies from the match players (FUN_14785c6d0).
+# Not traced: trigger_PLAYER passes the id its message carries (the same value as surname_ID), and the SC2_ELSEWHERE events pass the id their message carries; those senders are not traced.
+# Set by the code of trigger_SHOOTOUT_SETUP, trigger_SC2_ELSEWHERE_PEN, trigger_SC2_ELSEWHERE_PEN_IMPACT, trigger_SC2_ELSEWHERE_GOAL, trigger_SC2_ELSEWHERE_GOAL_IMPACT, trigger_SAVE, trigger_PASS, trigger_MISS and 66 more.
+#   values these banks use (the census lists up to 60 a bank): 0, 16, 27, 41, 80, 164, 241, 244, 246, 250, 330, 450, 552, 684, 883, 954, 1041,
+#     1046, 1075, 1088, 1099, 1178, 1179, 1183, 1198, 1219, 1238, 1283, 1289, 1397, 1419, 1551, 1615, 1625,
+#     1668, 1731, 1803, 2147, 2155, 2196, 2231, 2264, 2392, 2492, 2572, 2587, 2651, 2769, 2904, 2956, 3264,
+#     3363, 3395, 3484, 3622, 3647, 3665, 3790, 3813, 3912, 4077, 4098, 4105, 4111, 4190, 4202, 4205, 4556,
+#     4667, 4724, 4731, 4806, 4832, 5099, 5203, 5213, 5419, 5430, 5459, 5467, 5471, 5479, 5485, 5547, 5744,
+#     5809, 5860, 5879, 5942, 5984, 6083, 6159, 6647, 6747, 6826, 6908, 6975, 7289, 7631, 7687, 7743, 7763,
+#     7766, 7784, 7826, 8243, 8473, 8517, 9014, 9232, 9273, 9432, 9676, 9799, 9801, 9805, 10133, 10264,
+#     10535, 10959, 11141, 11576, 11983, 12259, 12265, 12445, 12940, 13038, 13128, 13130, 13690, 13732,
+#     13743, 13879, 13940, 16254, 16619, 16897, 17605, 17711, 17912, 17964, 18760, 19271, 19367, 19643,
+#     19896, 20080, 20096, 20169, 20176, 20205, 20209, 20212, 20289, 20556, 20775, 20800, 20801, 20882,
+#     21146, 23015, 23461, 24438, 24630, 24851, 25420, 25924, 26501, 26502, 26503, 26504, 26530, 26992,
+#     28130, 29488, 30110, 30663, 31432, 34079, 37576, 39943, 40900, 40988, 41236, 41635, 43020, 44902,
+#     45074, 45119, 45186, 45197, 45574, 45601, 45661, 45674, 45701, 48745, 48940, 49012, ... and 366 more
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, player_db_ID=0
+my_clip_02.wav = Language=0, player_db_ID=0

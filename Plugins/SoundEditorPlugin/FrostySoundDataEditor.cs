@@ -600,6 +600,8 @@ namespace SoundEditorPlugin
     [TemplatePart(Name = PART_SoundCopyNameMenuItem, Type = typeof(MenuItem))]
     [TemplatePart(Name = PART_SoundCopyKeysMenuItem, Type = typeof(MenuItem))]
     [TemplatePart(Name = PART_SoundRenameMenuItem, Type = typeof(MenuItem))]
+    [TemplatePart(Name = PART_SoundBulkImportMenuItem, Type = typeof(MenuItem))]
+    [TemplatePart(Name = PART_SoundMappingTemplateMenuItem, Type = typeof(MenuItem))]
     [TemplatePart(Name = PART_WaveFormStatus, Type = typeof(TextBlock))]
     [TemplatePart(Name = PART_SelectBar, Type = typeof(FrameworkElement))]
     [TemplatePart(Name = PART_SelectCountText, Type = typeof(TextBlock))]
@@ -646,6 +648,8 @@ namespace SoundEditorPlugin
         private const string PART_SoundCopyNameMenuItem = "PART_SoundCopyNameMenuItem";
         private const string PART_SoundCopyKeysMenuItem = "PART_SoundCopyKeysMenuItem";
         private const string PART_SoundRenameMenuItem = "PART_SoundRenameMenuItem";
+        private const string PART_SoundBulkImportMenuItem = "PART_SoundBulkImportMenuItem";
+        private const string PART_SoundMappingTemplateMenuItem = "PART_SoundMappingTemplateMenuItem";
         private const string PART_WaveFormCanvas = "PART_WaveFormCanvas";
         private const string PART_WaveFormImage = "PART_WaveFormImage";
         private const string PART_ProgressLine = "PART_ProgressLine";
@@ -903,6 +907,8 @@ namespace SoundEditorPlugin
             WireEditMenuItem(PART_SoundCopyNameMenuItem, SoundCopyNameMenuItem_Click);
             WireEditMenuItem(PART_SoundCopyKeysMenuItem, SoundCopyKeysMenuItem_Click);
             WireEditMenuItem(PART_SoundRenameMenuItem, SoundRenameMenuItem_Click);
+            WireEditMenuItem(PART_SoundBulkImportMenuItem, SoundBulkImportMenuItem_Click);
+            WireEditMenuItem(PART_SoundMappingTemplateMenuItem, SoundMappingTemplateMenuItem_Click);
         }
 
         /// <summary>
@@ -1764,24 +1770,9 @@ namespace SoundEditorPlugin
         /// </summary>
         protected static string SafeFileName(string name, int index)
         {
-            if (string.IsNullOrWhiteSpace(name))
-                return string.Format("clip_{0:D5}", index);
-
-            StringBuilder builder = new StringBuilder();
-            foreach (char c in name)
-            {
-                // Only the characters a Windows file name cannot hold are replaced; everything else,
-                // including the accents in a player's name, is kept.
-                bool bad = c < ' ' || c == '<' || c == '>' || c == ':' || c == '"' || c == '/' || c == '\\'
-                    || c == '|' || c == '?' || c == '*';
-                builder.Append(bad ? '_' : c);
-            }
-
-            string cleaned = builder.ToString().Trim().TrimEnd('.');
-            if (cleaned.Length == 0)
-                return string.Format("clip_{0:D5}", index);
-
-            return cleaned.Length > 120 ? cleaned.Substring(0, 120) : cleaned;
+            // Only the characters a Windows file name cannot hold are replaced; everything else, including the accents in
+            // a player's name, is kept. One rule (SoundFileNames.Safe), so a mapping.txt names the files Export writes.
+            return SoundFileNames.Safe(name, index);
         }
 
         /// <summary>
@@ -1806,6 +1797,12 @@ namespace SoundEditorPlugin
 
             string outputDir = System.IO.Path.GetDirectoryName(sfd.FileName);
             int written = 0, skipped = 0;
+
+            // What the clips are filed under, read here on the UI thread, so the folder gets a mapping.txt naming each file
+            // it holds: the folder then imports back into this asset with Bulk Import, file for file.
+            string noTarget;
+            BulkTarget target = DescribeBulkTarget(out noTarget);
+            string[] fileOf = new string[TracksList.Count];
 
             RunTask("Exporting Tracks", task =>
             {
@@ -1851,6 +1848,8 @@ namespace SoundEditorPlugin
                     {
                         File.WriteAllBytes(filePath, SoundEdits.EncodeWav(samples, track.ChannelCount, track.SampleRate));
                         written++;
+                        if (i < fileOf.Length)
+                            fileOf[i] = System.IO.Path.GetFileName(filePath);
                     }
                     catch (Exception ex)
                     {
@@ -1864,6 +1863,34 @@ namespace SoundEditorPlugin
 
             App.Logger.Log("Exported {0} of {1} tracks to {2}{3}", written, TracksList.Count, outputDir,
                 skipped > 0 ? " (" + skipped + " carried no audio)" : "");
+            WriteExportMapping(target, fileOf, outputDir);
+        }
+
+        /// <summary>
+        /// The mapping.txt of an exported folder: one line per file written, with the key its clip is filed under. A
+        /// mapping.txt already in the folder is left as it is.
+        /// </summary>
+        private static void WriteExportMapping(BulkTarget target, string[] fileOf, string outputDir)
+        {
+            if (target == null || fileOf.All(f => f == null))
+                return;
+
+            string path = System.IO.Path.Combine(outputDir, MappingFile.Name);
+            if (File.Exists(path))
+            {
+                App.Logger.Log("{0} is already in the folder, so it was left as it is (Write mapping.txt writes one for this asset).", path);
+                return;
+            }
+
+            try
+            {
+                File.WriteAllText(path, MappingTemplate.For(target, fileOf), new UTF8Encoding(false));
+                App.Logger.Log("Wrote {0}: the key of every exported file, so the folder imports back with Bulk Import.", path);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.LogWarning("mapping.txt could not be written to {0}: {1}", outputDir, ex.Message);
+            }
         }
 
         private void SoundImportMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1887,6 +1914,207 @@ namespace SoundEditorPlugin
             }
         }
 
+        // ═══════════════════════════════════════════════════════════
+        //  Bulk import: a folder of audio files and its mapping.txt
+        // ═══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Bulk Import From Folder: the user picks a folder's mapping.txt, every line is read against this asset (which clip
+        /// each file replaces, or the clip it adds) and shown before anything is read or written, and the files the user
+        /// accepts are written in one edit of the asset (<see cref="RunBulkImport"/>).
+        /// </summary>
+        private void SoundBulkImportMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            string refusal;
+            BulkTarget target = DescribeBulkTarget(out refusal);
+            if (target == null)
+            {
+                App.Logger.LogWarning("Bulk import: {0}", refusal ?? "this asset's clips are not loaded");
+                return;
+            }
+
+            FrostyOpenFileDialog ofd = new FrostyOpenFileDialog("Bulk Import: the folder's mapping.txt",
+                "mapping.txt|mapping.txt|Text files (*.txt)|*.txt", "SoundBulk");
+            if (!ofd.ShowDialog())
+                return;
+
+            BulkPlan plan;
+            try
+            {
+                plan = BulkPlanner.Plan(target, ofd.FileName);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.LogError("Bulk import: {0} could not be read: {1}", ofd.FileName, ex.Message);
+                return;
+            }
+
+            foreach (string problem in plan.Problems.Take(50))
+                App.Logger.LogWarning("Bulk import: {0}", problem);
+            if (plan.Problems.Count > 50)
+                App.Logger.LogWarning("Bulk import: ... and {0} more line(s) that cannot be imported", plan.Problems.Count - 50);
+
+            if (!ConfirmBulkPlan(plan))
+                return;
+
+            ExitSelectMode();
+            RunTask("Bulk import (" + plan.Steps.Count + " files)", task =>
+            {
+                RunBulkImport(plan, task);
+            });
+        }
+
+        /// <summary>
+        /// Write mapping.txt: the mapping for this asset as it is - how to fill it in, what each of its key parameters is,
+        /// and one line per clip, the file named the way Export All Clips names it - so a folder exported from the asset
+        /// imports back into it, file for file.
+        /// </summary>
+        private void SoundMappingTemplateMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            string refusal;
+            BulkTarget target = DescribeBulkTarget(out refusal);
+            if (target == null)
+            {
+                App.Logger.LogWarning("mapping.txt: {0}", refusal ?? "this asset's clips are not loaded");
+                return;
+            }
+
+            FrostySaveFileDialog sfd = new FrostySaveFileDialog("Save mapping.txt", "mapping.txt|mapping.txt|Text files (*.txt)|*.txt", "SoundBulk", MappingFile.Name);
+            if (!sfd.ShowDialog())
+                return;
+
+            try
+            {
+                File.WriteAllText(sfd.FileName, MappingTemplate.For(target, SoundFileNames.ForClips(target.ClipNames)), new UTF8Encoding(false));
+                App.Logger.Log("Wrote {0}: {1} line(s), one per clip of {2}.", sfd.FileName, target.ClipCount, target.AssetName ?? "this asset");
+            }
+            catch (Exception ex)
+            {
+                App.Logger.LogError("mapping.txt could not be written: {0}", ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// What this asset is to a bulk import, read on the UI thread: by default a list of clips filed under nothing, which
+        /// a mapping names by number (clip=3) and can add to when the asset takes a clip from an audio file. A bank and an
+        /// EA Trax bank override this with their keys. Null with <paramref name="refusal"/> when there is nothing to import into.
+        /// </summary>
+        protected virtual BulkTarget DescribeBulkTarget(out string refusal)
+        {
+            refusal = null;
+            if (TracksList == null)
+            {
+                refusal = "this asset's clips are not loaded";
+                return null;
+            }
+
+            BulkTarget target = new BulkTarget
+            {
+                AssetName = AssetEntry?.Name,
+                Kind = BulkKind.Clips,
+                ClipNames = TracksList.Select(t => t.Name).ToList(),
+                CanAdd = CanAddClip && AddClipNeedsAudioFile,
+                AddRefusal = CanAddClip ? (AddClipNeedsAudioFile ? null : "this asset's new clip is not made from an audio file") : AddClipRefusal,
+            };
+            return target;
+        }
+
+        /// <summary>
+        /// Writes a checked bulk import: by default one file at a time - each replace through <see cref="ImportFileInto"/>,
+        /// each add through <see cref="AddTrackFile"/> - stopping at the first that is refused. A format that can write
+        /// many clips in one edit overrides this.
+        /// </summary>
+        protected virtual void RunBulkImport(BulkPlan plan, FrostyTaskWindow task)
+        {
+            int done = 0;
+            foreach (BulkStep step in plan.Steps.Where(s => !s.Add))
+            {
+                task.Update(status: "Importing " + (done + 1) + " / " + plan.Steps.Count + ": " + step.File, progress: (done + 1) * 100.0 / plan.Steps.Count);
+                if (!ImportFileInto(step.Clip, step.Path, task))
+                {
+                    App.Logger.LogWarning("Bulk import stopped at {0} (line {1}); the {2} file(s) before it were written.", step.File, step.Line, done);
+                    return;
+                }
+
+                done++;
+            }
+
+            foreach (BulkStep step in plan.Steps.Where(s => s.Add))
+            {
+                task.Update(status: "Adding " + (done + 1) + " / " + plan.Steps.Count + ": " + step.File, progress: (done + 1) * 100.0 / plan.Steps.Count);
+                if (!AddTrackFile(step.Path, task))
+                {
+                    App.Logger.LogWarning("Bulk import stopped at {0} (line {1}); the {2} file(s) before it were written.", step.File, step.Line, done);
+                    return;
+                }
+
+                done++;
+            }
+
+            App.Logger.Log("Bulk import: {0} file(s) of {1} written into {2}.", done, plan.MappingPath, AssetEntry?.Name ?? "the asset");
+        }
+
+        /// <summary>The plan, shown before anything is written: what each line does, and the lines that cannot be imported.</summary>
+        private bool ConfirmBulkPlan(BulkPlan plan)
+        {
+            Window window = new Window
+            {
+                Title = "Bulk Import",
+                Width = 760,
+                Height = 520,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ShowInTaskbar = false,
+                Owner = Window.GetWindow(this),
+            };
+
+            DockPanel panel = new DockPanel { Margin = new Thickness(12) };
+            TextBlock summary = new TextBlock { Text = plan.Summary() + ".", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
+            DockPanel.SetDock(summary, Dock.Top);
+            panel.Children.Add(summary);
+
+            StackPanel buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+            Button ok = new Button
+            {
+                Content = plan.Problems.Count == 0 ? "Import" : "Import the " + plan.Steps.Count + " that can be",
+                MinWidth = 90, Height = 24, Padding = new Thickness(8, 0, 8, 0), IsDefault = true, IsEnabled = plan.Steps.Count > 0,
+            };
+            Button cancel = new Button { Content = "Cancel", Width = 90, Height = 24, Margin = new Thickness(6, 0, 0, 0), IsCancel = true };
+            buttons.Children.Add(ok);
+            buttons.Children.Add(cancel);
+            DockPanel.SetDock(buttons, Dock.Bottom);
+            panel.Children.Add(buttons);
+
+            StringBuilder text = new StringBuilder();
+            if (plan.Problems.Count > 0)
+            {
+                text.AppendLine("Cannot be imported:");
+                foreach (string problem in plan.Problems)
+                    text.AppendLine("  " + problem);
+                text.AppendLine();
+            }
+
+            text.AppendLine("Will be written (" + plan.Steps.Count + "):");
+            foreach (BulkStep step in plan.Steps.Take(2000))
+                text.AppendLine("  line " + step.Line + ": " + step.File + " " + step.What);
+            if (plan.Steps.Count > 2000)
+                text.AppendLine("  ... and " + (plan.Steps.Count - 2000) + " more");
+
+            TextBox list = new TextBox
+            {
+                Text = text.ToString(),
+                IsReadOnly = true,
+                FontFamily = new FontFamily("Consolas"),
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                TextWrapping = TextWrapping.NoWrap,
+            };
+            panel.Children.Add(list);
+
+            ok.Click += (s, e) => window.DialogResult = true;
+            window.Content = panel;
+            return window.ShowDialog() == true;
+        }
+
         private void SoundAddTrackMenuItem_Click(object sender, RoutedEventArgs e)
         {
             // What the new clip is filed under is asked first (a bank of player lines asks for the player id and
@@ -1899,9 +2127,10 @@ namespace SoundEditorPlugin
             if (AddClipNeedsAudioFile && !ofd.ShowDialog())
                 return;
 
+            string fileName = AddClipNeedsAudioFile ? ofd.FileName : null;
             RunTask("Adding clip", task =>
             {
-                AddTrack(ofd, task);
+                AddTrackFile(fileName, task);
             });
         }
 
@@ -1965,22 +2194,22 @@ namespace SoundEditorPlugin
         /// no bundle is one the game's bundle walk never reaches. `Seekable` is cleared the same way an edit
         /// clears it: the new clip carries no seek table, so the asset cannot claim every clip has one.
         /// </summary>
-        protected virtual void AddTrack(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
+        protected virtual bool AddTrackFile(string fileName, FrostyTaskWindow task)
         {
             dynamic soundWave;
             if (!TryReadVariationShape(out soundWave))
             {
                 App.Logger.LogError("Add Clip: this asset does not state its audio as runtime variations, so a " +
                     "clip cannot be added to it; nothing was changed.");
-                return;
+                return false;
             }
 
             task.Update(status: "Encoding the audio file...");
-            byte[] audio = ConvertAudioFileToPcm16Big(ofd);
+            byte[] audio = ConvertAudioFileToPcm16Big(fileName);
             if (audio == null || audio.Length == 0)
             {
                 App.Logger.LogError("The file chosen for the new clip decoded to no audio, so nothing was written.");
-                return;
+                return false;
             }
 
             int[] bundles = BundlesOfFirstLoadedChunk(soundWave);
@@ -1994,7 +2223,7 @@ namespace SoundEditorPlugin
             {
                 App.Logger.LogError("The audio was written as a new chunk, but the asset manager does not list it, " +
                     "so the clip cannot be named in the asset; nothing else was changed.");
-                return;
+                return false;
             }
 
             dynamic soundDataChunk = TypeLibrary.CreateObject("SoundDataChunk");
@@ -2004,7 +2233,7 @@ namespace SoundEditorPlugin
             {
                 App.Logger.LogError("The game's type library does not describe the three objects a clip needs, so " +
                     "nothing was changed.");
-                return;
+                return false;
             }
 
             int segmentIndex = (int)soundWave.Segments.Count;
@@ -2034,6 +2263,7 @@ namespace SoundEditorPlugin
             ReloadAfterVariationEdit(task, new[] { chunkEntry });
             App.Logger.Log("Added a clip to {0}: {1:N0} bytes in a new chunk, and the asset now has {2} clip(s).",
                 AssetNameOnUiThread() ?? "this asset", audio.Length, (int)soundWave.RuntimeVariations.Count);
+            return true;
         }
 
         /// <summary>
@@ -2231,7 +2461,8 @@ namespace SoundEditorPlugin
             inputWindow.Content = sp;
             inputWindow.ShowDialog();
 
-            if (keepCount <= 0)
+            // 0 is an answer: keep none. Each format says what it does with it (a sound bank keeps at least one clip).
+            if (keepCount < 0)
                 return;
 
             RunTask("Deleting tracks", task =>
@@ -3540,8 +3771,18 @@ namespace SoundEditorPlugin
                 fileName.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
             {
                 int channels, sampleRate;
-                byte[] encoded = SoundEdits.EncodePcm16BigFromAudioFile(fileName, out channels, out sampleRate);
+                long sourceFrames;
+                byte[] encoded = SoundEdits.EncodePcm16BigFromAudioFile(fileName, out channels, out sampleRate, out sourceFrames);
                 App.Logger.Log("Importing {0} at {1} Hz, {2} channel(s)", System.IO.Path.GetFileName(fileName), sampleRate, channels);
+
+                // The encoder writes at most 0xFFFFFF frames (SoundEdits.EncodePcm16Big); a longer file is cut there, and
+                // that is said here rather than found out in the game.
+                long frames;
+                int rate, headerChannels;
+                if (SoundDurationScale.TryHeader(encoded, 0, out frames, out rate, out headerChannels) && frames < sourceFrames && rate > 0)
+                    App.Logger.LogWarning("{0} is {1:F1} s long; the clip written holds its first {2:F1} s ({3:N0} of {4:N0} frames), the most "
+                        + "the encoder writes in one clip.", System.IO.Path.GetFileName(fileName), sourceFrames / (double)rate, frames / (double)rate,
+                        frames, sourceFrames);
                 return encoded;
             }
 

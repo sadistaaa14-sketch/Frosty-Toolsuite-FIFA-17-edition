@@ -493,6 +493,20 @@ namespace SoundEditorPlugin
         public int TailOffset;
         public int TailLength;          // to the end of the file; 16 in a bank with one chunk and no subtitles
 
+        /// <summary>
+        /// True when the SBle+0x20 slot points at a block that sits before the first dataset instead of a tail after
+        /// the last one. That is how a Harmony sample bank's RAM and debug chunks are laid out (all 12 of the six shipped
+        /// HarmonySampleBankAssets' chunks): the block starts "data", and in a debug chunk it holds the strings its
+        /// `SRC.` column addresses from the block's start; each dataset's +0x18 slot points at it too. The block and
+        /// everything before the first dataset is copied as read, unless <see cref="LeadingReplacement"/> gives the
+        /// block new bytes (the datasets then start on the next 16-byte boundary after it, as they do in the shipped
+        /// chunks), and the last dataset's region is padded to 16 bytes.
+        /// </summary>
+        public bool HasLeadingBlock;
+        public int LeadingOffset;       // file offset of the block
+        public int LeadingLength;       // to the first dataset, as read
+        public byte[] LeadingReplacement;
+
         /// <summary>The slots the file's chain carries, as walked; null with <see cref="ChainProblem"/> when broken.</summary>
         public List<int> Chain;
         public string ChainProblem;
@@ -582,11 +596,6 @@ namespace SoundEditorPlugin
                 return null;
             }
 
-            uint tail = BankBytes.U32(data, sble + 0x20);
-            image.HasTail = tail != 0 && tail != 0xFFFFFFFF && sble + (long)tail <= data.Length - 16;
-            image.TailOffset = image.HasTail ? sble + (int)tail : data.Length;
-            image.TailLength = data.Length - image.TailOffset;
-
             List<int> offsets = new List<int>();
             for (int i = 0; i < count; i++)
             {
@@ -599,6 +608,18 @@ namespace SoundEditorPlugin
 
                 offsets.Add(at);
             }
+
+            // SBle+0x20 points at the tail after the datasets in a bank's .res, and at the "data" block before them in a
+            // Harmony sample bank's chunks.
+            uint tail = BankBytes.U32(data, sble + 0x20);
+            int firstDataset = offsets.Min();
+            bool pointsAtBlock = tail != 0 && tail != 0xFFFFFFFF;
+            image.HasLeadingBlock = pointsAtBlock && sble + (long)tail < firstDataset;
+            image.LeadingOffset = image.HasLeadingBlock ? sble + (int)tail : 0;
+            image.LeadingLength = image.HasLeadingBlock ? firstDataset - image.LeadingOffset : 0;
+            image.HasTail = pointsAtBlock && !image.HasLeadingBlock && sble + (long)tail <= data.Length - 16;
+            image.TailOffset = image.HasTail ? sble + (int)tail : data.Length;
+            image.TailLength = data.Length - image.TailOffset;
 
             List<int> sorted = offsets.OrderBy(o => o).ToList();
             for (int i = 0; i < count; i++)
@@ -1189,8 +1210,12 @@ namespace SoundEditorPlugin
             Dictionary<BankDataset, byte[]> area = new Dictionary<BankDataset, byte[]>();
             Dictionary<BankDataset, Dictionary<object, int>> pieceAt = new Dictionary<BankDataset, Dictionary<object, int>>();
 
-            // The first dataset stays where it is: nothing before it changes size.
+            // The first dataset stays where it is: nothing before it changes size - unless a Harmony chunk's leading
+            // block was given new bytes, when the datasets start on the next 16-byte boundary after it.
             int cursor = order.Count > 0 ? order[0].Offset : BankBytes.Align(sble + TocRel + 8 * count, 16);
+            bool newLeading = HasLeadingBlock && LeadingReplacement != null;
+            if (newLeading)
+                cursor = BankBytes.Align(LeadingOffset + LeadingReplacement.Length, 16);
 
             for (int k = 0; k < order.Count; k++)
             {
@@ -1212,7 +1237,8 @@ namespace SoundEditorPlugin
                     Dictionary<Piece, int> placed = new Dictionary<Piece, int>();
                     byte[] natural = Lay(pieces, dataStart, -1, placed);
                     int end = dataStart + natural.Length;
-                    int padded = last ? (HasTail ? BankBytes.Align(end, 4) : end) : BankBytes.Align(end, 16);
+                    int padded = last ? (HasTail ? BankBytes.Align(end, 4) : (HasLeadingBlock ? BankBytes.Align(end, 16) : end))
+                        : BankBytes.Align(end, 16);
                     bytes = new byte[padded - dataStart];
                     Buffer.BlockCopy(natural, 0, bytes, 0, natural.Length);
 
@@ -1237,9 +1263,18 @@ namespace SoundEditorPlugin
             int length = cursor + (HasTail ? TailLength : 0);
             byte[] output = new byte[length];
 
-            // Everything before the first dataset is copied: the 16 bytes before the SBle, the header, the TOC.
-            int head = Math.Min(order.Count > 0 ? order[0].Offset : Data.Length, Data.Length);
-            Buffer.BlockCopy(Data, 0, output, 0, head);
+            // Everything before the first dataset is copied: the 16 bytes before the SBle, the header, the TOC (and a
+            // Harmony chunk's leading block, or the bytes it was given).
+            if (newLeading)
+            {
+                Buffer.BlockCopy(Data, 0, output, 0, LeadingOffset);
+                Buffer.BlockCopy(LeadingReplacement, 0, output, LeadingOffset, LeadingReplacement.Length);
+            }
+            else
+            {
+                int head = Math.Min(order.Count > 0 ? order[0].Offset : Data.Length, Data.Length);
+                Buffer.BlockCopy(Data, 0, output, 0, head);
+            }
 
             // The SBle's size word moves by exactly what the file grew; its tail slot is restated.
             uint sizeWord = BankBytes.U32(Data, sble + 4);
@@ -1377,7 +1412,7 @@ namespace SoundEditorPlugin
             int sble = Sble;
             List<int> slots = new List<int>();
             slots.Add(sble + 0x18);
-            if (HasTail)
+            if (HasTail || HasLeadingBlock)
                 slots.Add(sble + 0x20);
             for (int i = 0; i < Datasets.Count; i++)
                 slots.Add(sble + TocRel + 8 * i);

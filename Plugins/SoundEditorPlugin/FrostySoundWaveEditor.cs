@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using FrostySdk.Interfaces;
 using System.Windows;
@@ -223,21 +224,21 @@ namespace SoundEditorPlugin
         }
     }
 
-     public class FrostyHarmonySampleBankEditor : FrostySoundDataEditor
+    /// <summary>
+    /// A HarmonySampleBankAsset: a RAM chunk whose tables say where each sample is and what it is filed under, a stream
+    /// chunk holding the samples, and a debug chunk naming each sample's source file.
+    ///
+    /// A replace (Import, the sample edits) rewrites the stream and moves every `.OFF` value after the sample, in every
+    /// table of the RAM chunk, in place. Adding and removing songs is done for the EA Trax shape (EATrax_01, EATrax_02;
+    /// <see cref="HarmonySongTable"/>): a new song is filed under the songid the user enters, with the metadata they
+    /// enter, and the bank can be emptied. The other Harmony banks (intro and highlights music) key their tables
+    /// differently and keep their samples; they can be replaced.
+    /// </summary>
+    public class FrostyHarmonySampleBankEditor : FrostySoundDataEditor
     {
         public FrostyHarmonySampleBankEditor()
             : base(null)
         {
-        }
-
-        /// <summary>
-        /// This format can take a new clip: its index lives inside the chunk the editor already rewrites
-        /// (<see cref="AddTrack"/> → `ModifyChunk`), which is the one shape in this plugin where a row can be
-        /// added today. Every other editor leaves the button disabled and says why instead.
-        /// </summary>
-        protected override bool CanAddClip
-        {
-            get { return true; }
         }
 
         public FrostyHarmonySampleBankEditor(ILogger inLogger)
@@ -245,711 +246,702 @@ namespace SoundEditorPlugin
         {
         }
 
-        protected override bool ImportFileInto(int index, string fileName, FrostyTaskWindow task)
+        /// <summary>Why this bank's songs cannot be added or removed, or null for an EA Trax bank that can.</summary>
+        private volatile string songRefusal = "the bank has not been read yet";
+
+        /// <summary>The song the Add Song window was answered with (UI thread), for AddTrackFile on the task thread.</summary>
+        private EaTraxSongInfo pendingSong;
+
+        /// <summary>Per track of the list: its stream offset, and the songid it plays (0 when none).</summary>
+        private List<int> trackStarts = new List<int>();
+        private List<int> trackSongIds = new List<int>();
+
+        /// <summary>The RAM and stream chunks as last read, for decoding a sample when it is asked for.</summary>
+        private byte[] harmonyRam, harmonyStream;
+
+        protected override bool CanAddClip
         {
-            return ReplaceHarmonyClip(index, ConvertAudioFileToPcm16Big(fileName), task);
+            get { return songRefusal == null; }
+        }
+
+        protected override string AddClipRefusal
+        {
+            get { return songRefusal == null ? "Add a song from an audio file." : "A song cannot be added to this bank: " + songRefusal + "."; }
+        }
+
+        protected override string RemoveClipRefusal
+        {
+            get
+            {
+                if (songRefusal != null)
+                    return "A song cannot be removed from this bank: " + songRefusal + ".";
+                if (SelectedTrackIndex < 0)
+                    return "Select a clip first: a delete removes the selected song, its two rows and its audio.";
+                return null;
+            }
+        }
+
+        // ─── the bank's chunks ─────────────────────────────────────────────────────────────────────────────────────────
+
+        private sealed class HarmonyChunks
+        {
+            public dynamic RamRow, DebugRow, StreamRow;
+            public ChunkAssetEntry RamEntry, DebugEntry, StreamEntry;
+            public byte[] Ram, Debug, Stream;
+        }
+
+        private static byte[] ReadChunkBytes(ChunkAssetEntry entry)
+        {
+            using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(entry)))
+                return reader.ReadToEnd();
+        }
+
+        /// <summary>The bank's RAM, debug and stream chunks as the asset manager holds them now; null with the reason.</summary>
+        private HarmonyChunks ReadChunks(out string why)
+        {
+            why = null;
+            dynamic asset = RootObject;
+            int rows = (int)asset.Chunks.Count;
+            int ram = (int)asset.RamChunkIndex, debug = (int)asset.DebugChunkIndex, stream = (int)asset.StreamChunkIndex;
+            if (ram < 0 || ram >= rows)
+            {
+                why = "it names no RAM chunk";
+                return null;
+            }
+
+            HarmonyChunks c = new HarmonyChunks { RamRow = asset.Chunks[ram] };
+            c.RamEntry = App.AssetManager.GetChunkEntry((Guid)c.RamRow.ChunkId);
+            if (c.RamEntry == null)
+            {
+                why = "its RAM chunk is not in the loaded game data";
+                return null;
+            }
+
+            c.Ram = ReadChunkBytes(c.RamEntry);
+            if (stream != 255 && stream < rows)
+            {
+                c.StreamRow = asset.Chunks[stream];
+                c.StreamEntry = App.AssetManager.GetChunkEntry((Guid)c.StreamRow.ChunkId);
+                if (c.StreamEntry != null)
+                    c.Stream = ReadChunkBytes(c.StreamEntry);
+            }
+
+            if (debug != 255 && debug < rows)
+            {
+                c.DebugRow = asset.Chunks[debug];
+                c.DebugEntry = App.AssetManager.GetChunkEntry((Guid)c.DebugRow.ChunkId);
+                if (c.DebugEntry != null)
+                    c.Debug = ReadChunkBytes(c.DebugEntry);
+            }
+
+            return c;
         }
 
         /// <summary>
-        /// Writes one clip into the Harmony bank's audio and answers whether it reached the file.
-        ///
-        /// The import command and the sample edits (normalize, gain, fades, trim, undo) write exactly the same
-        /// thing - one clip's encoded bytes in place of the bytes that were there - so they share this method
-        /// rather than one of them refusing what the other does. The clip list is rebuilt from the same tables
-        /// `InitialLoad` reads, so a track's index means the same row in both.
+        /// Writes the chunks an edit changed (null leaves one as it is), stream first; a refused write gives the chunks
+        /// already written their old bytes back. Then, on the UI thread, the asset's ChunkSize words follow and the asset
+        /// is marked modified, and the chunks are linked to it so its Revert takes them back together.
         /// </summary>
-        private bool ReplaceHarmonyClip(int selectedIndex, byte[] resultBuf, FrostyTaskWindow task)
+        private bool WriteChunks(HarmonyChunks c, byte[] ram, byte[] debug, byte[] stream)
         {
-            if (resultBuf == null || resultBuf.Length == 0)
-            {
-                App.Logger.LogError("The new clip carries no audio, so nothing was written.");
-                return false;
-            }
+            List<Tuple<ChunkAssetEntry, byte[], byte[], string>> plan = new List<Tuple<ChunkAssetEntry, byte[], byte[], string>>();
+            List<dynamic> rows = new List<dynamic>();
+            if (stream != null) { plan.Add(Tuple.Create(c.StreamEntry, stream, c.Stream, "stream chunk")); rows.Add(c.StreamRow); }
+            if (ram != null) { plan.Add(Tuple.Create(c.RamEntry, ram, c.Ram, "RAM chunk")); rows.Add(c.RamRow); }
+            if (debug != null) { plan.Add(Tuple.Create(c.DebugEntry, debug, c.Debug, "debug chunk")); rows.Add(c.DebugRow); }
 
-            dynamic soundWave = RootObject;
-
-            // The same samples, in the same order, as the list shows (DiscoverTracks): an index means one sample in both.
-            ChunkAssetEntry ramChunkEntry = App.AssetManager.GetChunkEntry(soundWave.Chunks[soundWave.RamChunkIndex].ChunkId);
-            ChunkAssetEntry streamChunkEntry = null;
-            byte[] ramBytes, streamBytes = null;
-            using (NativeReader ramReader = new NativeReader(App.AssetManager.GetChunk(ramChunkEntry)))
-                ramBytes = ramReader.ReadToEnd();
-            if (soundWave.StreamChunkIndex != 255)
+            for (int i = 0; i < plan.Count; i++)
             {
-                dynamic streamChunkObj = soundWave.Chunks[soundWave.StreamChunkIndex];
-                streamChunkEntry = App.AssetManager.GetChunkEntry(streamChunkObj.ChunkId);
-                if (streamChunkEntry != null)
+                if (plan[i].Item1 == null)
                 {
-                    using (NativeReader streamReader = new NativeReader(App.AssetManager.GetChunk(streamChunkEntry)))
-                        streamBytes = streamReader.ReadToEnd();
-                }
-            }
-
-            List<int> trackOffsets;
-            List<bool> trackIsStreaming;
-            int ramDataEnd;
-            DiscoverTracks(ramBytes, streamBytes, out trackOffsets, out trackIsStreaming, out ramDataEnd);
-
-            if (selectedIndex < 0 || selectedIndex >= trackOffsets.Count)
-            {
-                App.Logger.LogError("There is no clip #{0} in this Harmony bank (it lists {1}), so nothing was written.",
-                    selectedIndex + 1, trackOffsets.Count);
-                return false;
-            }
-
-            bool isStreaming = trackIsStreaming[selectedIndex];
-            int trackStart = trackOffsets[selectedIndex];
-
-            // Determine which chunk to modify
-            ChunkAssetEntry targetChunkEntry;
-            dynamic targetSoundDataChunk;
-            if (isStreaming)
-            {
-                targetChunkEntry = streamChunkEntry;
-                targetSoundDataChunk = soundWave.Chunks[soundWave.StreamChunkIndex];
-            }
-            else
-            {
-                targetChunkEntry = ramChunkEntry;
-                targetSoundDataChunk = soundWave.Chunks[soundWave.RamChunkIndex];
-            }
-
-            byte[] chunkData = isStreaming ? streamBytes : ramBytes;
-
-            // The sample ends where its own blocks end (StreamEnd); what follows up to the next sample is the padding that
-            // keeps the next one on its boundary (EATrax streams start every song on a 32-byte boundary). Searching the
-            // bytes for an end marker, as this used to, stopped inside the audio of every EATrax_01 song.
-            int nextStart = chunkData.Length;
-            for (int i = 0; i < trackOffsets.Count; i++)
-            {
-                if (trackIsStreaming[i] == isStreaming && trackOffsets[i] > trackStart && trackOffsets[i] < nextStart)
-                    nextStart = trackOffsets[i];
-            }
-
-            int trackEnd = FrostyHarmonySampleBankEditor.StreamEnd(chunkData, trackStart);
-            if (trackEnd < 0 || trackEnd > nextStart)
-                trackEnd = nextStart;
-
-            bool hasNext = nextStart < chunkData.Length;
-            int newLength = resultBuf.Length;
-            int padded = hasNext ? ((trackStart + newLength + 31) & ~31) - trackStart : newLength;
-            int delta = (trackStart + padded) - (hasNext ? nextStart : trackEnd);
-
-            // A streamed sample's later neighbours move by delta, so the RAM chunk's `.OFF` palette, which states every
-            // streamed sample's offset, moves with them. Only the palette form (class 3, the one the add and delete
-            // commands also rewrite) is rewritten; anything else is refused before anything is written.
-            byte[] newRam = null;
-            if (isStreaming && hasNext && delta != 0)
-            {
-                int toff = FindTESDOffset(ramBytes);
-                if (toff < 0 || ramBytes[toff + 0x4D] != 0x03 || ramBytes[toff + 0x4F] != 4)
-                {
-                    App.Logger.LogError("This bank does not state its stream offsets as the 4-byte palette this editor rewrites, so a "
-                        + "replace that changes the sample's length cannot be written; nothing was changed.");
+                    App.Logger.LogError("This bank's {0} is not in the loaded game data, so nothing was written.", plan[i].Item4);
                     return false;
                 }
-
-                int entries = (int)BitConverter.ToUInt32(ramBytes, toff + 0x50);
-                int table = (int)BitConverter.ToUInt32(ramBytes, toff + 0x58);
-                newRam = (byte[])ramBytes.Clone();
-                for (int i = 0; i < entries; i++)
-                {
-                    uint value = BitConverter.ToUInt32(newRam, table + 4 * i);
-                    if (value > trackStart)
-                        BitConverter.GetBytes((uint)(value + delta)).CopyTo(newRam, table + 4 * i);
-                }
             }
 
-            // Splice: [before the sample] + [new audio, padded to the boundary] + [from the next sample on]
-            int tailFrom = hasNext ? nextStart : trackEnd;
-            byte[] newChunkData = new byte[trackStart + padded + (chunkData.Length - tailFrom)];
-            Array.Copy(chunkData, 0, newChunkData, 0, trackStart);
-            Array.Copy(resultBuf, 0, newChunkData, trackStart, resultBuf.Length);
-            Array.Copy(chunkData, tailFrom, newChunkData, trackStart + padded, chunkData.Length - tailFrom);
+            for (int i = 0; i < plan.Count; i++)
+            {
+                if (WriteChunk(plan[i].Item1, plan[i].Item2, "bank's " + plan[i].Item4))
+                    continue;
 
-            if (!WriteChunk(targetChunkEntry, newChunkData, "clip's chunk"))
+                for (int j = 0; j < i; j++)
+                {
+                    if (!WriteChunk(plan[j].Item1, plan[j].Item3, "bank's " + plan[j].Item4 + " (putting its old bytes back)"))
+                        App.Logger.LogError("This bank's {0} could not be given its old bytes back; revert the asset before saving.", plan[j].Item4);
+                }
+
                 return false;
-
-            if (newRam != null)
-            {
-                if (!WriteChunk(ramChunkEntry, newRam, "ram chunk"))
-                {
-                    WriteChunk(targetChunkEntry, chunkData, "clip's chunk (putting its old bytes back)");
-                    return false;
-                }
-
-                soundWave.Chunks[soundWave.RamChunkIndex].ChunkSize = (uint)newRam.Length;
-                App.Logger.Log("Moved the stream offsets after the replaced sample by {0:N0} bytes in the RAM chunk.", delta);
             }
 
-            targetSoundDataChunk.ChunkSize = (uint)newChunkData.Length;
-
-            audioPlayer.Dispose();
-            audioPlayer = new AudioPlayer();
-
-            List<SoundDataTrack> tracks = InitialLoad(task);
-
-            Dispatcher?.Invoke(() =>
+            RunOnUiThread(() =>
             {
+                for (int i = 0; i < plan.Count; i++)
+                    rows[i].ChunkSize = (uint)plan[i].Item2.Length;
                 AssetModified = true;
                 InvokeOnAssetModified();
-                EbxAssetEntry assetEntry = AssetEntry as EbxAssetEntry;
-                assetEntry.LinkAsset(targetChunkEntry);
-                if (newRam != null)
-                    assetEntry.LinkAsset(ramChunkEntry);
-
-                SetTrackList(tracks);
-                RefreshTrackListChrome();
             });
+            LinkToAssetOnUiThread(plan.Select(p => (AssetEntry)p.Item1));
+            return true;
+        }
 
+        private void Reload(FrostyTaskWindow task, int select)
+        {
+            audioPlayer.Dispose();
+            audioPlayer = new AudioPlayer();
+            task.Update(status: "Reading the bank back...");
+            List<SoundDataTrack> tracks = InitialLoad(task);
+            ShowReloadedTracks(tracks, Math.Max(0, Math.Min(select, tracks.Count - 1)));
+        }
+
+        // ─── replace ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+        protected override bool ImportFileInto(int index, string fileName, FrostyTaskWindow task)
+        {
+            task.Update(status: "Encoding the audio file...");
+            if (!ReplaceHarmonyClip(index, ConvertAudioFileToPcm16Big(fileName)))
+                return false;
+            Reload(task, index);
             return true;
         }
 
         /// <summary>
-        /// A Harmony bank's audio is not a runtime-variation list - it is one RAM chunk and (for a streamed
-        /// bank) one stream chunk, with the clip boundaries stated in TESD tables - so the base class's rule
-        /// does not apply and used to answer here with "editing is not supported for this asset type" while the
-        /// log above it said the edit was done. The bytes go where an import puts them: over the clip's own
-        /// byte range, moving every clip after it.
+        /// The sample edits (normalize, gain, fades, trim, undo) write the same thing an import does - one sample's bytes
+        /// in place of the bytes that were there - so they share <see cref="ReplaceHarmonyClip"/>; the list is read again
+        /// by the edit command (<see cref="FrostySoundDataEditor.RequireTrackReload"/>).
         /// </summary>
         protected override bool CommitTrackSamples(SoundDataTrack track, int trackIndex, short[] samples, FrostyTaskWindow task)
         {
-            // The track is handed in: this runs on the task window's thread, where the track list (a dependency
-            // property) cannot be read. ReplaceHarmonyClip checks the index against the bank's own tables.
             if (track == null)
             {
                 App.Logger.LogError("There is no clip #{0} in this Harmony bank, so nothing was written.", trackIndex + 1);
                 return false;
             }
 
-            byte[] clip = EncodeTrack(track, samples);
-            return ReplaceHarmonyClip(trackIndex, clip, task);
+            if (!ReplaceHarmonyClip(trackIndex, EncodeTrack(track, samples)))
+                return false;
+            RequireTrackReload();
+            return true;
         }
 
-        private byte[] ConvertAudioFile(FrostyOpenFileDialog ofd)
+        /// <summary>
+        /// Writes one sample's audio over track <paramref name="index"/> and answers whether it reached the asset. In an EA
+        /// Trax bank the song table is stated again (the song's `.OFF`, `.ZIS`, every later song's `.OFF`); in any other
+        /// Harmony bank every `.OFF` value after the sample, in every table of the RAM chunk, moves by what the stream
+        /// moved, in place (<see cref="EaTraxEdit.ShiftOffsets"/>).
+        /// </summary>
+        private bool ReplaceHarmonyClip(int index, byte[] audio)
         {
-            return ConvertAudioFileToPcm16Big(ofd);
-        }
-
-        private int FindTESDOffset(byte[] data)
-        {
-            for (int i = 0; i <= data.Length - 0x100; i++)
+            if (audio == null || audio.Length == 0)
             {
-                if (data[i] == 0x54 && data[i + 1] == 0x45 && data[i + 2] == 0x53 && data[i + 3] == 0x44)
-                {
-                    if (i + 0x4C <= data.Length && data[i + 0x48] == 0x46 && data[i + 0x49] == 0x46 &&
-                        data[i + 0x4A] == 0x4F && data[i + 0x4B] == 0x2E)
-                        return i;
-                }
+                App.Logger.LogError("The new clip carries no audio, so nothing was written.");
+                return false;
             }
-            return -1;
-        }
 
-        private int GetSongCount(byte[] data, int toff)
-        {
-            if (data[toff + 0x4D] == 0x03)
-                return (int)BitConverter.ToUInt32(data, toff + 0x50);
-            return (int)BitConverter.ToUInt32(data, toff + 0x38);
-        }
+            if (songRefusal == null)
+                return EditSongs(new Dictionary<int, byte[]> { { index, audio } }, null, null, null, out string _);
 
-        private void GetTableLayout(byte[] data, int toff, int N, out int t1es, out int stp,
-            out int t1, out int t2, out int t3, out int t4, out int t4e)
-        {
-            t1es = (data[toff + 0x4E] > 0x04) ? 2 : 1;
-            stp = (int)BitConverter.ToUInt32(data, toff + 0x58);
-            t1 = stp + N * 4;
-            t2 = t1 + N * t1es;
-            t3 = t2 + N * 2;
-            t4 = t3 + N * 2;
-            t4e = t4 + N;
-        }
-
-        private void ReloadAfterModify(FrostyTaskWindow task, List<ChunkAssetEntry> chunks)
-        {
-            audioPlayer.Dispose();
-            audioPlayer = new AudioPlayer();
-            List<SoundDataTrack> tracks = InitialLoad(task);
-            Dispatcher?.Invoke(() =>
+            string why;
+            HarmonyChunks c = ReadChunks(out why);
+            if (c == null)
             {
-                AssetModified = true;
-                InvokeOnAssetModified();
-                EbxAssetEntry assetEntry = AssetEntry as EbxAssetEntry;
-                foreach (var ce in chunks) assetEntry.LinkAsset(ce);
-                SetTrackList(tracks);
-            });
-        }
+                App.Logger.LogError("This Harmony bank cannot be written: {0}.", why);
+                return false;
+            }
 
-        private byte[] RebuildRamChunk(byte[] ramData, int toff, int oldN, int newN,
-            byte[] newSongOffsets, byte[] newTable1, byte[] newTable2, byte[] newTable3, byte[] newTable4,
-            int t1es, int songTablePtr)
-        {
-            int newT1 = songTablePtr + newN * 4;
-            int newT2 = newT1 + newN * t1es;
-            int newT3 = newT2 + newN * 2;
-            int newT4 = newT3 + newN * 2;
-            int newEnd = (newT4 + newN + 15) & ~15;
-
-            byte[] result = new byte[newEnd];
-            Array.Copy(ramData, 0, result, 0, songTablePtr);
-            Array.Copy(newSongOffsets, 0, result, songTablePtr, newSongOffsets.Length);
-            Array.Copy(newTable1, 0, result, newT1, newTable1.Length);
-            Array.Copy(newTable2, 0, result, newT2, newTable2.Length);
-            Array.Copy(newTable3, 0, result, newT3, newTable3.Length);
-            Array.Copy(newTable4, 0, result, newT4, newTable4.Length);
-
-            // Patch SBle totalSize
-            BitConverter.GetBytes((uint)newEnd).CopyTo(result, 4);
-            // TESD payload is fixed-size, do NOT modify it
-            // Patch field38
-            int oldF38 = (int)BitConverter.ToUInt32(ramData, toff + 0x38);
-            int f38ps = (oldN > 0) ? oldF38 / oldN : 2;
-            BitConverter.GetBytes((uint)(newN * f38ps)).CopyTo(result, toff + 0x38);
-            // Patch .OFF songCount
-            if (ramData[toff + 0x4D] == 0x03)
-                BitConverter.GetBytes((uint)newN).CopyTo(result, toff + 0x50);
-            // Patch area songCount
-            result[toff + 0xCC] = (byte)newN;
-            // Patch Table2 ptr
-            BitConverter.GetBytes((uint)newT2).CopyTo(result, toff + 0x88);
-            // Patch Table3 ptr
-            BitConverter.GetBytes((uint)newT3).CopyTo(result, toff + 0xA0);
-            // Patch Table4 ptr
-            BitConverter.GetBytes((uint)newT4).CopyTo(result, toff + 0xD8);
-
-            return result;
-        }
-
-        private void PatchDebugChunk(dynamic soundWave, int newN, int newField38)
-        {
-            if (soundWave.DebugChunkIndex == 255 || soundWave.DebugChunkIndex >= soundWave.Chunks.Count)
-                return;
-
-            dynamic dbgChunkDyn = soundWave.Chunks[soundWave.DebugChunkIndex];
-            ChunkAssetEntry dbgEntry = App.AssetManager.GetChunkEntry(dbgChunkDyn.ChunkId);
-            if (dbgEntry == null) return;
-
-            byte[] dbgData;
-            using (var r = new NativeReader(App.AssetManager.GetChunk(dbgEntry)))
-                dbgData = r.ReadToEnd();
-
-            // Find TESD with .ZIS block in debug chunk
-            int dt = -1;
-            for (int i = 0; i <= dbgData.Length - 0x60; i++)
+            List<int> offsets;
+            List<bool> streaming;
+            int ramDataEnd;
+            DiscoverTracks(c.Ram, c.Stream, out offsets, out streaming, out ramDataEnd);
+            if (index < 0 || index >= offsets.Count)
             {
-                if (dbgData[i] == 0x54 && dbgData[i + 1] == 0x45 && dbgData[i + 2] == 0x53 && dbgData[i + 3] == 0x44)
+                App.Logger.LogError("There is no clip #{0} in this Harmony bank (it lists {1}), so nothing was written.", index + 1, offsets.Count);
+                return false;
+            }
+
+            if (!streaming[index] || c.Stream == null)
+            {
+                App.Logger.LogError("Clip #{0} lives in the RAM chunk's own data, which this editor does not rewrite; nothing was written.", index + 1);
+                return false;
+            }
+
+            List<int> samples = HarmonyStream.Samples(c.Stream);
+            int start = offsets[index];
+            List<HarmonyStream.Piece> pieces = samples.Select(s => s == start ? new HarmonyStream.Piece { Audio = audio }
+                : new HarmonyStream.Piece { From = s }).ToList();
+            long[] at;
+            byte[] stream = HarmonyStream.Build(c.Stream, samples, pieces, out at, out why);
+            if (stream == null)
+            {
+                App.Logger.LogError("Clip #{0} was not replaced: {1}.", index + 1, why);
+                return false;
+            }
+
+            Dictionary<long, long> moved = new Dictionary<long, long>();
+            for (int i = 0; i < samples.Count; i++)
+                moved[samples[i]] = at[i];
+            byte[] ram = (byte[])c.Ram.Clone();
+            string shift = EaTraxEdit.ShiftOffsets(ram, moved);
+            if (shift != null)
+            {
+                App.Logger.LogError("Clip #{0} was not replaced: {1}.", index + 1, shift);
+                return false;
+            }
+
+            if (!WriteChunks(c, ram, null, stream))
+                return false;
+            App.Logger.Log("Replaced clip #{0}'s audio: {1:N0} bytes; the stream chunk is now {2:N0} bytes, and every .OFF after it moved with it. "
+                + "This bank's tables are not the EA Trax shape, so its debug chunk's sizes and paths are left as they were.", index + 1, audio.Length, stream.Length);
+            return true;
+        }
+
+        // ─── EA Trax songs: add, remove, replace in one edit ──────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// One edit of an EA Trax bank (<see cref="EaTraxEdit"/>): <paramref name="replace"/> writes new audio over tracks (by
+        /// list index), <paramref name="add"/> adds songs, <paramref name="remove"/> removes tracks with their songs, and
+        /// <paramref name="metadata"/> states new metadata for the songs of tracks that stay. The three chunks are written
+        /// together, and the songs' names are remembered for the session.
+        /// </summary>
+        private bool EditSongs(IDictionary<int, byte[]> replace, IList<KeyValuePair<EaTraxSongInfo, byte[]>> add,
+            ICollection<int> remove, IDictionary<int, EaTraxSongInfo> metadata, out string report)
+        {
+            report = null;
+            string why;
+            HarmonyChunks c = ReadChunks(out why);
+            if (c == null)
+            {
+                App.Logger.LogError("This EA Trax bank cannot be written: {0}.", why);
+                return false;
+            }
+
+            EaTraxEdit edit = new EaTraxEdit();
+            if (replace != null)
+                foreach (KeyValuePair<int, byte[]> pair in replace)
+                    edit.Replace[pair.Key] = pair.Value;
+            if (add != null)
+                edit.Add.AddRange(add);
+            if (remove != null)
+                foreach (int i in remove)
+                    edit.Remove.Add(i);
+            if (metadata != null)
+                foreach (KeyValuePair<int, EaTraxSongInfo> pair in metadata)
+                    edit.Metadata[pair.Key] = pair.Value;
+            if (edit.Add.Count > 0)
+                edit.FirstNewSampleId = NextSampleId();
+
+            why = edit.Apply(c.Ram, c.Debug, c.Stream);
+            if (why != null)
+            {
+                App.Logger.LogError("Nothing was written to this EA Trax bank: {0}.", why);
+                return false;
+            }
+
+            if (!WriteChunks(c, edit.Ram, edit.Debug, edit.Stream))
+                return false;
+
+            foreach (KeyValuePair<EaTraxSongInfo, byte[]> song in edit.Add)
+                FifaNameLookup.RememberSong(song.Key.SongId, song.Key.DisplayName);
+            foreach (KeyValuePair<int, EaTraxSongInfo> info in edit.Metadata)
+            {
+                if (info.Value != null && !edit.Remove.Contains(info.Key) && info.Value.SongId > 0)
+                    FifaNameLookup.RememberSong(info.Value.SongId, info.Value.DisplayName);
+            }
+
+            foreach (HarmonySong song in edit.NewSongs)
+                App.Logger.Log("EA Trax: added {0}", song);
+            report = edit.Report;
+            App.Logger.Log("EA Trax: {0}", report);
+            return true;
+        }
+
+
+        /// <summary>
+        /// The `.SID` the first new song takes: one past the largest any HarmonySampleBankAsset's RAM chunk states (every
+        /// table of all of them, read through the asset manager, so a bank edited in this project counts as edited);
+        /// <see cref="EaTraxEdit"/> numbers further new songs on from it. FIFA17.exe hands a row's `.SID` to every listener
+        /// of the bank when the sample starts (FUN_147985380 -> FUN_147987e90 -> FUN_147987c90, the listener's +0x50) and
+        /// when it stops (FUN_147987b70 -> FUN_147987d30 -> FUN_147987c00, +0x58) - bridge n1-n3, 2026-10-20; what the
+        /// listeners do with it is not traced - so a new song does not take a value another bank's sample has.
+        /// </summary>
+        private uint NextSampleId()
+        {
+            uint max = 0;
+            try
+            {
+                foreach (EbxAssetEntry entry in App.AssetManager.EnumerateEbx(type: "HarmonySampleBankAsset"))
                 {
-                    if (i + 0x4C <= dbgData.Length && dbgData[i + 0x48] == 0x5A && dbgData[i + 0x49] == 0x49 &&
-                        dbgData[i + 0x4A] == 0x53 && dbgData[i + 0x4B] == 0x2E)
+                    try
                     {
-                        dt = i;
-                        break;
+                        dynamic root = App.AssetManager.GetEbx(entry).RootObject;
+                        int ramIndex = (int)root.RamChunkIndex;
+                        if (ramIndex < 0 || ramIndex >= (int)root.Chunks.Count)
+                            continue;
+                        ChunkAssetEntry chunk = App.AssetManager.GetChunkEntry((Guid)root.Chunks[ramIndex].ChunkId);
+                        if (chunk == null)
+                            continue;
+                        string error;
+                        BankImage image = BankImage.Read(ReadChunkBytes(chunk), out error);
+                        if (image == null)
+                            continue;
+                        foreach (BankDataset ds in image.Datasets)
+                        {
+                            BankField sid = ds.Field(HarmonySongTable.SampleIdField);
+                            uint[] values = sid == null ? null : sid.Decode(ds.Rows);
+                            if (values != null && values.Length > 0)
+                                max = Math.Max(max, values.Max());
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // A bank that does not read is skipped; this one's own values are already counted.
                     }
                 }
             }
+            catch (Exception ex)
+            {
+                App.Logger.LogWarning("The Harmony banks could not be read for their .SID values ({0}); a new song's .SID is one past this bank's.", ex.Message);
+            }
 
-            if (dt < 0) return;
-
-            // Patch field38
-            BitConverter.GetBytes((uint)newField38).CopyTo(dbgData, dt + 0x38);
-            // Patch .ZIS songCount
-            BitConverter.GetBytes((uint)newN).CopyTo(dbgData, dt + 0x50);
-
-            if (!WriteChunk(dbgEntry, dbgData, "debug chunk"))
-                return;
-
-            dbgChunkDyn.ChunkSize = (uint)dbgData.Length;
+            return max + 1;
         }
 
-        protected override void AddTrack(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
+        // ─── add ───────────────────────────────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>The song's songid and metadata, asked on the UI thread before the file picker; false abandons the add.</summary>
+        protected override bool PrepareAddClip()
         {
-            byte[] newAudio = ConvertAudioFile(ofd);
-            dynamic soundWave = RootObject;
+            pendingSong = null;
+            if (songRefusal != null)
+            {
+                App.Logger.LogWarning("A song cannot be added to this bank: {0}.", songRefusal);
+                return false;
+            }
 
-            if (soundWave.StreamChunkIndex == 255)
-            { App.Logger.LogWarning("Add Track only supported for streaming HarmonySampleBanks."); return; }
-
-            dynamic ramDyn = soundWave.Chunks[soundWave.RamChunkIndex];
-            ChunkAssetEntry ramEntry = App.AssetManager.GetChunkEntry(ramDyn.ChunkId);
-            dynamic strmDyn = soundWave.Chunks[soundWave.StreamChunkIndex];
-            ChunkAssetEntry strmEntry = App.AssetManager.GetChunkEntry(strmDyn.ChunkId);
-
-            byte[] ramData, streamData;
-            using (var r = new NativeReader(App.AssetManager.GetChunk(ramEntry))) ramData = r.ReadToEnd();
-            using (var r = new NativeReader(App.AssetManager.GetChunk(strmEntry))) streamData = r.ReadToEnd();
-
-            int toff = FindTESDOffset(ramData);
-            if (toff < 0) { App.Logger.LogWarning("Could not find streaming TESD."); return; }
-
-            int oldN = GetSongCount(ramData, toff);
-            int t1es, stp, t1s, t2s, t3s, t4s, t4e;
-            GetTableLayout(ramData, toff, oldN, out t1es, out stp, out t1s, out t2s, out t3s, out t4s, out t4e);
-
-            // Read existing tables
-            byte[] so = new byte[oldN * 4]; Array.Copy(ramData, stp, so, 0, so.Length);
-            byte[] tb1 = new byte[oldN * t1es]; Array.Copy(ramData, t1s, tb1, 0, tb1.Length);
-            byte[] tb2 = new byte[oldN * 2]; Array.Copy(ramData, t2s, tb2, 0, tb2.Length);
-            byte[] tb3 = new byte[oldN * 2]; Array.Copy(ramData, t3s, tb3, 0, tb3.Length);
-            byte[] tb4 = new byte[oldN]; Array.Copy(ramData, t4s, tb4, 0, tb4.Length);
-
-            // Append audio to stream chunk, on the 32-byte boundary every shipped song starts on (EATrax_01: 8 of 8).
-            int newOffset = (streamData.Length + 31) & ~31;
-            byte[] newStream = new byte[newOffset + newAudio.Length];
-            Array.Copy(streamData, 0, newStream, 0, streamData.Length);
-            Array.Copy(newAudio, 0, newStream, newOffset, newAudio.Length);
-
-            int newN = oldN + 1;
-
-            // Extend tables
-            byte[] nso = new byte[newN * 4];
-            Array.Copy(so, 0, nso, 0, so.Length);
-            BitConverter.GetBytes((uint)newOffset).CopyTo(nso, oldN * 4);
-
-            byte[] nt1 = new byte[newN * t1es];
-            Array.Copy(tb1, 0, nt1, 0, tb1.Length);
-            if (t1es == 1) nt1[oldN] = (byte)((oldN * 0x11) & 0xFF);
-            else { nt1[oldN * 2] = (byte)oldN; nt1[oldN * 2 + 1] = (byte)oldN; }
-
-            byte[] nt2 = new byte[newN * 2];
-            Array.Copy(tb2, 0, nt2, 0, tb2.Length);
-            if (oldN > 0) { nt2[oldN * 2] = tb2[(oldN - 1) * 2]; nt2[oldN * 2 + 1] = tb2[(oldN - 1) * 2 + 1]; }
-
-            byte[] nt3 = new byte[newN * 2];
-            Array.Copy(tb3, 0, nt3, 0, tb3.Length);
-            if (oldN > 0) { nt3[oldN * 2] = tb3[(oldN - 1) * 2]; nt3[oldN * 2 + 1] = tb3[(oldN - 1) * 2 + 1]; }
-
-            byte[] nt4 = new byte[newN];
-            Array.Copy(tb4, 0, nt4, 0, tb4.Length);
-            if (oldN > 0) nt4[oldN] = tb4[oldN - 1];
-
-            byte[] newRam = RebuildRamChunk(ramData, toff, oldN, newN, nso, nt1, nt2, nt3, nt4, t1es, stp);
-
-            if (!WriteChunk(ramEntry, newRam, "ram chunk") || !WriteChunk(strmEntry, newStream, "stream chunk"))
-                return;
-
-            ramDyn.ChunkSize = (uint)newRam.Length;
-            strmDyn.ChunkSize = (uint)newStream.Length;
-
-            int dbgToff = FindTESDOffset(newRam);
-            if (dbgToff >= 0)
-                PatchDebugChunk(soundWave, GetSongCount(newRam, dbgToff), (int)BitConverter.ToUInt32(newRam, dbgToff + 0x38));
-
-            ReloadAfterModify(task, new List<ChunkAssetEntry> { ramEntry, strmEntry });
+            pendingSong = AskForSong(null);
+            return pendingSong != null;
         }
+
+        protected override bool AddTrackFile(string fileName, FrostyTaskWindow task)
+        {
+            EaTraxSongInfo info = pendingSong;
+            pendingSong = null;
+            if (info == null)
+            {
+                App.Logger.LogWarning("Adding a song needs its songid and metadata; the Add Song window was not answered.");
+                return false;
+            }
+
+            task.Update(status: "Encoding the audio file...");
+            byte[] audio = ConvertAudioFileToPcm16Big(fileName);
+            if (audio == null || audio.Length == 0)
+            {
+                App.Logger.LogWarning("The file chosen for the new song decoded to no audio, so nothing was written.");
+                return false;
+            }
+
+            task.Update(status: "Adding the song...");
+            string report;
+            if (!EditSongs(null, new List<KeyValuePair<EaTraxSongInfo, byte[]>> { new KeyValuePair<EaTraxSongInfo, byte[]>(info, audio) },
+                    null, null, out report))
+                return false;
+
+            WriteDbRows(Path.GetDirectoryName(fileName), new[] { info });
+            Reload(task, int.MaxValue);
+            return true;
+        }
+
+        /// <summary>The rows the game DB needs for new songs, beside the audio they came from (see <see cref="EaTraxDbRows"/>).</summary>
+        private static void WriteDbRows(string folder, IEnumerable<EaTraxSongInfo> songs)
+        {
+            List<EaTraxSongInfo> list = songs.Where(s => s != null).ToList();
+            if (list.Count == 0 || string.IsNullOrEmpty(folder))
+                return;
+            try
+            {
+                string[] files = EaTraxDbRows.Write(folder, list);
+                App.Logger.Log("The game lists EA Trax songs from its DB (FUN_14789d6a0 joins songplaylistlinks with eatrax): the rows for "
+                    + "{0} song(s) are in {1} and {2}; import them into those tables for the song(s) to play in the game.",
+                    list.Count, files[0], files[1]);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.LogWarning("The DB rows for the new song(s) could not be written to {0}: {1}", folder, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// The Add Song window: the songid (the next free one is offered) and the DB columns a song has - title (songname),
+        /// artist, album, intro, playlistid, unlocked - each captioned with the column it is. Null when cancelled.
+        /// </summary>
+        private EaTraxSongInfo AskForSong(EaTraxSongInfo start)
+        {
+            HashSet<int> taken = new HashSet<int>(trackSongIds.Where(i => i > 0));
+            foreach (int id in FifaNameLookup.SongIds())
+                taken.Add(id);
+            int next = 1;
+            while (taken.Contains(next))
+                next++;
+
+            Window window = new Window
+            {
+                Title = "Add EA Trax Song",
+                Width = 480,
+                SizeToContent = SizeToContent.Height,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                ShowInTaskbar = false,
+                Owner = Window.GetWindow(this),
+            };
+
+            Grid grid = new Grid { Margin = new Thickness(12) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            int row = 0;
+            Func<string, string, string, TextBox> field = (caption, tip, text) =>
+            {
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                TextBlock label = new TextBlock { Text = caption, Margin = new Thickness(0, 6, 10, 3), ToolTip = tip };
+                Grid.SetRow(label, row);
+                grid.Children.Add(label);
+                TextBox box = new TextBox { Text = text ?? "", Margin = new Thickness(0, 3, 0, 3), ToolTip = tip };
+                Grid.SetRow(box, row);
+                Grid.SetColumn(box, 1);
+                grid.Children.Add(box);
+                row++;
+                return box;
+            };
+
+            TextBox songId = field("songid", "eatrax.songid: the value the bank files the song under, and the DB's key for it",
+                (start != null ? start.SongId : next).ToString(CultureInfo.InvariantCulture));
+
+            // Under the songid, as it is typed: whether the DB (or this session) already names it.
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            TextBlock idSays = new TextBlock { Foreground = Brushes.Gray, Margin = new Thickness(0, 0, 0, 3), TextTrimming = TextTrimming.CharacterEllipsis };
+            Grid.SetRow(idSays, row);
+            Grid.SetColumn(idSays, 1);
+            grid.Children.Add(idSays);
+            row++;
+            Action describe = () =>
+            {
+                int typed;
+                string known;
+                if (!BulkPlanner.TryInt(songId.Text, out typed) || typed < 1)
+                    idSays.Text = "a whole number from 1";
+                else if (trackSongIds.Contains(typed))
+                    idSays.Text = "already a song of this bank";
+                else if (FifaNameLookup.TrySongName(typed, out known))
+                    idSays.Text = "the DB already names it: " + known + " (another song, unless you are moving it here)";
+                else
+                    idSays.Text = "free: no song of this bank or the DB has it";
+            };
+            songId.TextChanged += (s, e) => describe();
+            describe();
+            TextBox title = field("title", "eatrax.songname", start?.Title);
+            TextBox artist = field("artist", "eatrax.artist", start?.Artist);
+            TextBox album = field("album", "eatrax.album", start?.Album);
+            TextBox intro = field("intro", "eatrax.intro (every shipped song: 1)", (start?.Intro ?? 1).ToString(CultureInfo.InvariantCulture));
+            TextBox playlist = field("playlistid", "songplaylistlinks.playlistid (every shipped song: 0)", (start?.PlaylistId ?? 0).ToString(CultureInfo.InvariantCulture));
+            TextBox unlocked = field("unlocked", "songplaylistlinks.unlocked (every shipped song: 1)", (start?.Unlocked ?? 1).ToString(CultureInfo.InvariantCulture));
+
+            TextBlock note = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Opacity = 0.7,
+                Margin = new Thickness(0, 8, 0, 0),
+                Text = "The game lists EA Trax songs from its DB, so the eatrax and songplaylistlinks rows for this song are written "
+                    + "next to the audio file (" + EaTraxDbRows.EatraxFile + ", " + EaTraxDbRows.LinksFile + ") for you to import. "
+                    + "Songids in use here or in the DB: " + SoundTrackNaming.DescribeBankValues(taken) + ".",
+            };
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(note, row);
+            Grid.SetColumnSpan(note, 2);
+            grid.Children.Add(note);
+            row++;
+
+            TextBlock problem = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.IndianRed, Margin = new Thickness(0, 6, 0, 0), Visibility = Visibility.Collapsed };
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(problem, row);
+            Grid.SetColumnSpan(problem, 2);
+            grid.Children.Add(problem);
+            row++;
+
+            StackPanel buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+            Button ok = new Button { Content = "Add", Width = 80, Height = 24, IsDefault = true };
+            Button cancel = new Button { Content = "Cancel", Width = 80, Height = 24, Margin = new Thickness(6, 0, 0, 0), IsCancel = true };
+            buttons.Children.Add(ok);
+            buttons.Children.Add(cancel);
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(buttons, row);
+            Grid.SetColumnSpan(buttons, 2);
+            grid.Children.Add(buttons);
+
+            EaTraxSongInfo chosen = null;
+            ok.Click += (s, e) =>
+            {
+                int id, introValue, playlistValue, unlockedValue;
+                string say = null;
+                if (!BulkPlanner.TryInt(songId.Text, out id) || id < 1)
+                    say = "The songid is a whole number from 1.";
+                else if (trackSongIds.Contains(id))
+                    say = "Songid " + id + " is already a song of this bank (replace its audio with Import instead).";
+                else if (string.IsNullOrWhiteSpace(title.Text))
+                    say = "A song needs a title.";
+                else if (!BulkPlanner.TryInt(intro.Text, out introValue) || !BulkPlanner.TryInt(playlist.Text, out playlistValue)
+                         || !BulkPlanner.TryInt(unlocked.Text, out unlockedValue))
+                    say = "intro, playlistid and unlocked are whole numbers.";
+                else
+                {
+                    chosen = new EaTraxSongInfo
+                    {
+                        SongId = id, Title = title.Text.Trim(), Artist = artist.Text.Trim(), Album = album.Text.Trim(),
+                        Intro = introValue, PlaylistId = playlistValue, Unlocked = unlockedValue,
+                    };
+                    window.DialogResult = true;
+                    return;
+                }
+
+                problem.Text = say;
+                problem.Visibility = Visibility.Visible;
+            };
+
+            window.Content = grid;
+            window.Loaded += (s, e) => title.Focus();
+            return window.ShowDialog() == true ? chosen : null;
+        }
+
+        // ─── remove ────────────────────────────────────────────────────────────────────────────────────────────────────
 
         protected override void DeleteTrack(int trackIndex, FrostyTaskWindow task)
         {
-            dynamic soundWave = RootObject;
-
-            if (soundWave.StreamChunkIndex == 255)
-            { App.Logger.LogWarning("Delete Track only supported for streaming HarmonySampleBanks."); return; }
-
-            dynamic ramDyn = soundWave.Chunks[soundWave.RamChunkIndex];
-            ChunkAssetEntry ramEntry = App.AssetManager.GetChunkEntry(ramDyn.ChunkId);
-            dynamic strmDyn = soundWave.Chunks[soundWave.StreamChunkIndex];
-            ChunkAssetEntry strmEntry = App.AssetManager.GetChunkEntry(strmDyn.ChunkId);
-
-            byte[] ramData, streamData;
-            using (var r = new NativeReader(App.AssetManager.GetChunk(ramEntry))) ramData = r.ReadToEnd();
-            using (var r = new NativeReader(App.AssetManager.GetChunk(strmEntry))) streamData = r.ReadToEnd();
-
-            int toff = FindTESDOffset(ramData);
-            if (toff < 0) { App.Logger.LogWarning("Could not find streaming TESD."); return; }
-
-            int oldN = GetSongCount(ramData, toff);
-            if (trackIndex < 0 || trackIndex >= oldN) { App.Logger.LogWarning("Invalid track index."); return; }
-            if (oldN <= 1) { App.Logger.LogWarning("Cannot delete the last remaining track."); return; }
-
-            int t1es, stp, t1s, t2s, t3s, t4s, t4e;
-            GetTableLayout(ramData, toff, oldN, out t1es, out stp, out t1s, out t2s, out t3s, out t4s, out t4e);
-
-            // Read song offsets
-            List<uint> offsets = new List<uint>();
-            for (int i = 0; i < oldN; i++)
-                offsets.Add(BitConverter.ToUInt32(ramData, stp + i * 4));
-
-            // Calculate stream byte range to delete
-            uint delStart = offsets[trackIndex];
-            List<uint> sorted = new List<uint>(offsets);
-            sorted.Sort();
-            int si = sorted.IndexOf(delStart);
-            uint delEnd = (si + 1 < sorted.Count) ? sorted[si + 1] : (uint)streamData.Length;
-            int delSize = (int)(delEnd - delStart);
-
-            // Remove audio from stream
-            byte[] newStream = new byte[streamData.Length - delSize];
-            Array.Copy(streamData, 0, newStream, 0, (int)delStart);
-            if (delEnd < streamData.Length)
-                Array.Copy(streamData, (int)delEnd, newStream, (int)delStart, streamData.Length - (int)delEnd);
-
-            // Adjust offsets
-            for (int i = 0; i < oldN; i++)
-                if (offsets[i] > delStart) offsets[i] -= (uint)delSize;
-
-            int newN = oldN - 1;
-
-            // Remove entry from song offsets
-            byte[] nso = new byte[newN * 4];
-            int d = 0;
-            for (int i = 0; i < oldN; i++)
-            { if (i == trackIndex) continue; BitConverter.GetBytes(offsets[i]).CopyTo(nso, d * 4); d++; }
-
-            // Remove from Table1 and re-sequence
-            byte[] nt1 = new byte[newN * t1es];
-            for (int i = 0; i < newN; i++)
-            {
-                if (t1es == 1) nt1[i] = (byte)((i * 0x11) & 0xFF);
-                else { nt1[i * 2] = (byte)i; nt1[i * 2 + 1] = (byte)i; }
-            }
-
-            // Remove from Table2
-            byte[] tb2 = new byte[oldN * 2]; Array.Copy(ramData, t2s, tb2, 0, tb2.Length);
-            byte[] nt2 = new byte[newN * 2]; d = 0;
-            for (int i = 0; i < oldN; i++)
-            { if (i == trackIndex) continue; nt2[d * 2] = tb2[i * 2]; nt2[d * 2 + 1] = tb2[i * 2 + 1]; d++; }
-
-            // Remove from Table3
-            byte[] tb3 = new byte[oldN * 2]; Array.Copy(ramData, t3s, tb3, 0, tb3.Length);
-            byte[] nt3 = new byte[newN * 2]; d = 0;
-            for (int i = 0; i < oldN; i++)
-            { if (i == trackIndex) continue; nt3[d * 2] = tb3[i * 2]; nt3[d * 2 + 1] = tb3[i * 2 + 1]; d++; }
-
-            // Remove from Table4
-            byte[] tb4 = new byte[oldN]; Array.Copy(ramData, t4s, tb4, 0, tb4.Length);
-            byte[] nt4 = new byte[newN]; d = 0;
-            for (int i = 0; i < oldN; i++)
-            { if (i == trackIndex) continue; nt4[d] = tb4[i]; d++; }
-
-            byte[] newRam = RebuildRamChunk(ramData, toff, oldN, newN, nso, nt1, nt2, nt3, nt4, t1es, stp);
-
-            if (!WriteChunk(ramEntry, newRam, "ram chunk") || !WriteChunk(strmEntry, newStream, "stream chunk"))
-                return;
-
-            ramDyn.ChunkSize = (uint)newRam.Length;
-            strmDyn.ChunkSize = (uint)newStream.Length;
-
-            int dbgToff2 = FindTESDOffset(newRam);
-            if (dbgToff2 >= 0)
-                PatchDebugChunk(soundWave, GetSongCount(newRam, dbgToff2), (int)BitConverter.ToUInt32(newRam, dbgToff2 + 0x38));
-
-            ReloadAfterModify(task, new List<ChunkAssetEntry> { ramEntry, strmEntry });
+            RemoveTracks(new[] { trackIndex }, task);
         }
 
+        protected override void DeleteTracks(IList<int> indices, FrostyTaskWindow task)
+        {
+            RemoveTracks(indices, task);
+        }
+
+        /// <summary>Keep First N Clips; 0 empties the bank.</summary>
         protected override void KeepFirstNTracks(int keepCount, FrostyTaskWindow task)
         {
-            dynamic soundWave = RootObject;
-
-            if (soundWave.StreamChunkIndex == 255)
-            { App.Logger.LogWarning("Keep First N only supported for streaming HarmonySampleBanks."); return; }
-
-            dynamic ramDyn = soundWave.Chunks[soundWave.RamChunkIndex];
-            ChunkAssetEntry ramEntry = App.AssetManager.GetChunkEntry(ramDyn.ChunkId);
-            dynamic strmDyn = soundWave.Chunks[soundWave.StreamChunkIndex];
-            ChunkAssetEntry strmEntry = App.AssetManager.GetChunkEntry(strmDyn.ChunkId);
-
-            byte[] ramData, streamData;
-            using (var r = new NativeReader(App.AssetManager.GetChunk(ramEntry))) ramData = r.ReadToEnd();
-            using (var r = new NativeReader(App.AssetManager.GetChunk(strmEntry))) streamData = r.ReadToEnd();
-
-            int toff = FindTESDOffset(ramData);
-            if (toff < 0) { App.Logger.LogWarning("Could not find streaming TESD."); return; }
-
-            int oldN = GetSongCount(ramData, toff);
-            if (keepCount >= oldN) { App.Logger.LogWarning("Nothing to delete, track count already <= " + keepCount); return; }
-            if (keepCount < 1) { App.Logger.LogWarning("Must keep at least 1 track."); return; }
-
-            int t1es, stp, t1s, t2s, t3s, t4s, t4e;
-            GetTableLayout(ramData, toff, oldN, out t1es, out stp, out t1s, out t2s, out t3s, out t4s, out t4e);
-
-            // Read song offsets
-            List<uint> offsets = new List<uint>();
-            for (int i = 0; i < oldN; i++)
-                offsets.Add(BitConverter.ToUInt32(ramData, stp + i * 4));
-
-            // Delete tracks from the end down to keepCount, one at a time in the binary data
-            // (reverse order so offset adjustments stay valid)
-            for (int i = oldN - 1; i >= keepCount; i--)
+            int count = trackStarts.Count;
+            if (keepCount < 0 || keepCount >= count)
             {
-                int N = offsets.Count;
-                task.Update("Deleting track " + (oldN - i) + " of " + (oldN - keepCount));
-
-                uint delStart = offsets[i];
-                List<uint> sorted = new List<uint>(offsets);
-                sorted.Sort();
-                int si = sorted.IndexOf(delStart);
-                uint delEnd = (si + 1 < sorted.Count) ? sorted[si + 1] : (uint)streamData.Length;
-                int delSize = (int)(delEnd - delStart);
-
-                // Remove audio from stream
-                byte[] newStream = new byte[streamData.Length - delSize];
-                Array.Copy(streamData, 0, newStream, 0, (int)delStart);
-                if (delEnd < streamData.Length)
-                    Array.Copy(streamData, (int)delEnd, newStream, (int)delStart, streamData.Length - (int)delEnd);
-                streamData = newStream;
-
-                // Adjust offsets for remaining tracks
-                for (int j = 0; j < N; j++)
-                    if (offsets[j] > delStart) offsets[j] -= (uint)delSize;
-
-                offsets.RemoveAt(i);
-            }
-
-            int newN = keepCount;
-
-            // Rebuild tables keeping only the first N entries
-            byte[] nso = new byte[newN * 4];
-            for (int i = 0; i < newN; i++)
-                BitConverter.GetBytes(offsets[i]).CopyTo(nso, i * 4);
-
-            byte[] nt1 = new byte[newN * t1es];
-            for (int i = 0; i < newN; i++)
-            {
-                if (t1es == 1) nt1[i] = (byte)((i * 0x11) & 0xFF);
-                else { nt1[i * 2] = (byte)i; nt1[i * 2 + 1] = (byte)i; }
-            }
-
-            byte[] tb2 = new byte[oldN * 2]; Array.Copy(ramData, t2s, tb2, 0, tb2.Length);
-            byte[] nt2 = new byte[newN * 2]; Array.Copy(tb2, 0, nt2, 0, newN * 2);
-
-            byte[] tb3 = new byte[oldN * 2]; Array.Copy(ramData, t3s, tb3, 0, tb3.Length);
-            byte[] nt3 = new byte[newN * 2]; Array.Copy(tb3, 0, nt3, 0, newN * 2);
-
-            byte[] tb4 = new byte[oldN]; Array.Copy(ramData, t4s, tb4, 0, tb4.Length);
-            byte[] nt4 = new byte[newN]; Array.Copy(tb4, 0, nt4, 0, newN);
-
-            byte[] newRam = RebuildRamChunk(ramData, toff, oldN, newN, nso, nt1, nt2, nt3, nt4, t1es, stp);
-
-            if (!WriteChunk(ramEntry, newRam, "ram chunk") || !WriteChunk(strmEntry, streamData, "stream chunk"))
+                App.Logger.Log("Keep First N Clips: the bank has {0} track(s), so nothing was removed.", count);
                 return;
+            }
 
-            ramDyn.ChunkSize = (uint)newRam.Length;
-            strmDyn.ChunkSize = (uint)streamData.Length;
-
-            int dbgToff = FindTESDOffset(newRam);
-            if (dbgToff >= 0)
-                PatchDebugChunk(soundWave, GetSongCount(newRam, dbgToff), (int)BitConverter.ToUInt32(newRam, dbgToff + 0x38));
-
-            ReloadAfterModify(task, new List<ChunkAssetEntry> { ramEntry, strmEntry });
+            RemoveTracks(Enumerable.Range(keepCount, count - keepCount).ToList(), task);
         }
 
         protected override void DeleteAllExcept(int keepIndex, FrostyTaskWindow task)
         {
-            dynamic soundWave = RootObject;
-
-            if (soundWave.StreamChunkIndex == 255)
-            { App.Logger.LogWarning("Delete All Except only supported for streaming HarmonySampleBanks."); return; }
-
-            dynamic ramDyn = soundWave.Chunks[soundWave.RamChunkIndex];
-            ChunkAssetEntry ramEntry = App.AssetManager.GetChunkEntry(ramDyn.ChunkId);
-            dynamic strmDyn = soundWave.Chunks[soundWave.StreamChunkIndex];
-            ChunkAssetEntry strmEntry = App.AssetManager.GetChunkEntry(strmDyn.ChunkId);
-
-            byte[] ramData, streamData;
-            using (var r = new NativeReader(App.AssetManager.GetChunk(ramEntry))) ramData = r.ReadToEnd();
-            using (var r = new NativeReader(App.AssetManager.GetChunk(strmEntry))) streamData = r.ReadToEnd();
-
-            int toff = FindTESDOffset(ramData);
-            if (toff < 0) { App.Logger.LogWarning("Could not find streaming TESD."); return; }
-
-            int currentN = GetSongCount(ramData, toff);
-            if (keepIndex < 0 || keepIndex >= currentN) { App.Logger.LogWarning("Invalid track index."); return; }
-
-            // Delete tracks one at a time from the end, skipping the kept track
-            // This mirrors the single-delete path which is proven to work in-game
-            int currentKeep = keepIndex;
-            for (int i = currentN - 1; i >= 0; i--)
-            {
-                if (i == currentKeep) continue;
-
-                task.Update("Deleting track " + (i + 1) + " of " + currentN);
-
-                int t1es, stp, t1s, t2s, t3s, t4s, t4e;
-                int N = GetSongCount(ramData, toff);
-                GetTableLayout(ramData, toff, N, out t1es, out stp, out t1s, out t2s, out t3s, out t4s, out t4e);
-
-                // Read song offsets
-                List<uint> offsets = new List<uint>();
-                for (int j = 0; j < N; j++)
-                    offsets.Add(BitConverter.ToUInt32(ramData, stp + j * 4));
-
-                // Calculate stream byte range to delete
-                uint delStart = offsets[i];
-                List<uint> sorted = new List<uint>(offsets);
-                sorted.Sort();
-                int si = sorted.IndexOf(delStart);
-                uint delEnd = (si + 1 < sorted.Count) ? sorted[si + 1] : (uint)streamData.Length;
-                int delSize = (int)(delEnd - delStart);
-
-                // Remove audio from stream
-                byte[] newStream = new byte[streamData.Length - delSize];
-                Array.Copy(streamData, 0, newStream, 0, (int)delStart);
-                if (delEnd < streamData.Length)
-                    Array.Copy(streamData, (int)delEnd, newStream, (int)delStart, streamData.Length - (int)delEnd);
-                streamData = newStream;
-
-                // Adjust offsets
-                for (int j = 0; j < N; j++)
-                    if (offsets[j] > delStart) offsets[j] -= (uint)delSize;
-
-                int newN = N - 1;
-
-                // Remove from song offsets
-                byte[] nso = new byte[newN * 4];
-                int d = 0;
-                for (int j = 0; j < N; j++)
-                { if (j == i) continue; BitConverter.GetBytes(offsets[j]).CopyTo(nso, d * 4); d++; }
-
-                // Table1: re-sequence
-                byte[] nt1 = new byte[newN * t1es];
-                for (int j = 0; j < newN; j++)
-                {
-                    if (t1es == 1) nt1[j] = (byte)((j * 0x11) & 0xFF);
-                    else { nt1[j * 2] = (byte)j; nt1[j * 2 + 1] = (byte)j; }
-                }
-
-                // Table2: remove entry
-                byte[] tb2 = new byte[N * 2]; Array.Copy(ramData, t2s, tb2, 0, tb2.Length);
-                byte[] nt2 = new byte[newN * 2]; d = 0;
-                for (int j = 0; j < N; j++)
-                { if (j == i) continue; nt2[d * 2] = tb2[j * 2]; nt2[d * 2 + 1] = tb2[j * 2 + 1]; d++; }
-
-                // Table3: remove entry
-                byte[] tb3 = new byte[N * 2]; Array.Copy(ramData, t3s, tb3, 0, tb3.Length);
-                byte[] nt3 = new byte[newN * 2]; d = 0;
-                for (int j = 0; j < N; j++)
-                { if (j == i) continue; nt3[d * 2] = tb3[j * 2]; nt3[d * 2 + 1] = tb3[j * 2 + 1]; d++; }
-
-                // Table4: remove entry
-                byte[] tb4 = new byte[N]; Array.Copy(ramData, t4s, tb4, 0, tb4.Length);
-                byte[] nt4 = new byte[newN]; d = 0;
-                for (int j = 0; j < N; j++)
-                { if (j == i) continue; nt4[d] = tb4[j]; d++; }
-
-                ramData = RebuildRamChunk(ramData, toff, N, newN, nso, nt1, nt2, nt3, nt4, t1es, stp);
-
-                // Commit each iteration to Frosty's asset manager
-                if (!WriteChunk(ramEntry, ramData, "ram chunk") || !WriteChunk(strmEntry, streamData, "stream chunk"))
-                    return;
-
-                ramDyn.ChunkSize = (uint)ramData.Length;
-                strmDyn.ChunkSize = (uint)streamData.Length;
-
-                int daToff = FindTESDOffset(ramData);
-                if (daToff >= 0)
-                    PatchDebugChunk(soundWave, GetSongCount(ramData, daToff), (int)BitConverter.ToUInt32(ramData, daToff + 0x38));
-
-                // Adjust keepIndex if we deleted before it
-                if (i < currentKeep) currentKeep--;
-            }
-
-            ReloadAfterModify(task, new List<ChunkAssetEntry> { ramEntry, strmEntry });
+            RemoveTracks(Enumerable.Range(0, trackStarts.Count).Where(i => i != keepIndex).ToList(), task);
         }
 
         /// <summary>
+        /// Removes tracks and the songs filed under them in one edit - every track of the bank too: an EA Trax bank with no
+        /// song left is written so that no songid finds a row (<see cref="HarmonySongTable"/>), and songs can be added to it.
+        /// </summary>
+        private void RemoveTracks(IList<int> indices, FrostyTaskWindow task)
+        {
+            if (songRefusal != null)
+            {
+                App.Logger.LogWarning("A song cannot be removed from this bank: {0}.", songRefusal);
+                return;
+            }
+
+            List<int> gone = indices.Distinct().ToList();
+            if (gone.Count == 0)
+                return;
+
+            task.Update(status: "Removing " + gone.Count + " track(s)...");
+            string report;
+            if (EditSongs(null, null, gone, null, out report))
+                Reload(task, gone.Min());
+        }
+
+        // ─── bulk import ──────────────────────────────────────────────────────────────────────────────────────────────
+
+        protected override BulkTarget DescribeBulkTarget(out string refusal)
+        {
+            refusal = null;
+            BulkTarget target = base.DescribeBulkTarget(out refusal);
+            if (target == null)
+                return null;
+
+            if (songRefusal != null)
+            {
+                target.Kind = BulkKind.Clips;
+                target.CanAdd = false;
+                target.AddRefusal = "a song cannot be added to this bank: " + songRefusal;
+                return target;
+            }
+
+            target.Kind = BulkKind.Songs;
+            target.CanAdd = true;
+            target.ClipSongIds = trackSongIds.ToList();
+            target.ClipSongs = trackSongIds.Select(id => FifaNameLookup.TrySongInfo(id)).ToList();
+            return target;
+        }
+
+        protected override void RunBulkImport(BulkPlan plan, FrostyTaskWindow task)
+        {
+            if (songRefusal != null)
+            {
+                base.RunBulkImport(plan, task);
+                return;
+            }
+
+            Dictionary<string, byte[]> encoded = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<int, byte[]> replace = new Dictionary<int, byte[]>();
+            Dictionary<int, EaTraxSongInfo> metadata = new Dictionary<int, EaTraxSongInfo>();
+            List<KeyValuePair<EaTraxSongInfo, byte[]>> add = new List<KeyValuePair<EaTraxSongInfo, byte[]>>();
+            for (int n = 0; n < plan.Steps.Count; n++)
+            {
+                BulkStep step = plan.Steps[n];
+                task.Update(status: "Encoding " + (n + 1) + " / " + plan.Steps.Count + ": " + step.File, progress: (n + 1) * 80.0 / plan.Steps.Count);
+                byte[] audio;
+                if (!encoded.TryGetValue(step.Path, out audio))
+                {
+                    audio = ConvertAudioFileToPcm16Big(step.Path);
+                    encoded[step.Path] = audio;
+                }
+
+                if (audio == null || audio.Length == 0)
+                {
+                    App.Logger.LogWarning("{0} decodes to no audio, so nothing was imported.", step.File);
+                    return;
+                }
+
+                if (step.Add)
+                {
+                    add.Add(new KeyValuePair<EaTraxSongInfo, byte[]>(step.Song, audio));
+                }
+                else
+                {
+                    replace[step.Clip] = audio;
+                    if (step.Song != null)
+                        metadata[step.Clip] = step.Song;
+                }
+            }
+
+            task.Update(status: "Writing the bank...", progress: 90);
+            string report;
+            if (!EditSongs(replace, add, null, metadata, out report))
+                return;
+
+            WriteDbRows(plan.Folder, add.Select(a => a.Key).Concat(metadata.Values));
+            Reload(task, plan.Steps.Count > 0 && !plan.Steps[0].Add ? plan.Steps[0].Clip : int.MaxValue);
+        }
+
+        // ─── reading the bank ─────────────────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
         /// Where the bank's samples start, in the order the list shows them and every command addresses them: the RAM
-        /// chunk's TESD records first (a record whose `.OFF` field marks a streamed sample is dropped when the bank has
-        /// a stream chunk), then every SNR header the stream chunk holds, all sorted by offset. One method, so the list
-        /// and the commands that rewrite a sample can never disagree on which sample an index is. For EATrax_01 the
-        /// stream scan finds exactly the RAM chunk's 8 `.OFF` offsets (measured 2026-10-19).
+        /// chunk's records that state a sample in the chunk itself (`.RAM`), and every SPS stream the stream chunk holds
+        /// (<see cref="HarmonyStream.Samples"/>), all sorted by offset.
         /// </summary>
         private static void DiscoverTracks(byte[] ramData, byte[] streamData, out List<int> offsets, out List<bool> streaming,
             out int dataEndOffset)
@@ -966,124 +958,50 @@ namespace SoundEditorPlugin
 
             dataEndOffset = tesd.Count > 0 ? tesd[0] : ramData.Length;
 
-            foreach (int offset in tesd)
+            if (streamData == null)
             {
-                int at = offset + 0x3c;
-                int blockCount = BitConverter.ToUInt16(ramData, at);
-                at += 2 + 0x0a;
-
-                int fileOffset = -1;
-                bool isStream = false;
-                for (int i = 0; i < blockCount; i++)
+                foreach (int offset in tesd)
                 {
-                    uint blockType = BitConverter.ToUInt32(ramData, at);
-                    if (blockType == 0x2e4f4646)
-                    {
-                        fileOffset = BitConverter.ToInt32(ramData, at + 8);
-                        isStream = true;
-                    }
-                    else if (blockType == 0x2e52414d)
-                    {
-                        fileOffset = BitConverter.ToInt32(ramData, at + 8) + dataOffset;
-                    }
+                    int at = offset + 0x3c;
+                    int blockCount = BitConverter.ToUInt16(ramData, at);
+                    at += 2 + 0x0a;
 
-                    at += 24;
-                }
+                    for (int i = 0; i < blockCount; i++)
+                    {
+                        uint blockType = BitConverter.ToUInt32(ramData, at);
+                        if (blockType == 0x2e52414d)
+                        {
+                            offsets.Add(BitConverter.ToInt32(ramData, at + 8) + dataOffset);
+                            streaming.Add(false);
+                        }
 
-                if (fileOffset != -1)
-                {
-                    offsets.Add(fileOffset);
-                    streaming.Add(isStream);
+                        at += 24;
+                    }
                 }
             }
-
-            if (streamData != null)
+            else
             {
-                // For streaming banks the TESD records' values are not the offsets (a palette states its entry count
-                // there), so the stream chunk is scanned for its SNR headers instead.
-                for (int i = offsets.Count - 1; i >= 0; i--)
+                foreach (int start in HarmonyStream.Samples(streamData))
                 {
-                    if (streaming[i])
-                    {
-                        offsets.RemoveAt(i);
-                        streaming.RemoveAt(i);
-                    }
-                }
-
-                for (int pos = 0; pos <= streamData.Length - 16; pos++)
-                {
-                    if (streamData[pos] != 0x48 || streamData[pos + 1] != 0x00 || streamData[pos + 2] != 0x00
-                        || (streamData[pos + 3] != 0x0C && streamData[pos + 3] != 0x14))
-                        continue;
-
-                    int headerPayload = streamData[pos + 3];
-                    byte possibleCodec = streamData[pos + 4];
-                    if (possibleCodec != 0x12 && possibleCodec != 0x14 && possibleCodec != 0x15 &&
-                        possibleCodec != 0x16 && possibleCodec != 0x19 && possibleCodec != 0x1c)
-                        continue;
-
-                    ushort sr = (ushort)((streamData[pos + 6] << 8) | streamData[pos + 7]);
-                    if (sr != 8000 && sr != 11025 && sr != 12000 && sr != 16000 &&
-                        sr != 22050 && sr != 24000 && sr != 32000 && sr != 44100 && sr != 48000)
-                        continue;
-
-                    int dataBlockPos = pos + headerPayload;
-                    if (dataBlockPos >= streamData.Length || streamData[dataBlockPos] != 0x44)
-                        continue;
-
-                    offsets.Add(pos);
+                    offsets.Add(start);
                     streaming.Add(true);
-
-                    // Skip the stream by walking its blocks to its end block. Searching the bytes for `45 00 00` (what
-                    // this used to do) stops inside the audio: in EATrax_01 it does in all 8 songs, the first at 921,545
-                    // where the song ends at 7,138,804.
-                    int end = StreamEnd(streamData, pos);
-                    if (end > pos)
-                        pos = end - 1;
                 }
             }
 
-            int[] order = new int[offsets.Count];
-            for (int i = 0; i < order.Length; i++)
-                order[i] = i;
+            int[] order = Enumerable.Range(0, offsets.Count).ToArray();
             List<int> unsorted = offsets;
             Array.Sort(order, (a, b) => unsorted[a].CompareTo(unsorted[b]));
-            List<int> sortedOffsets = new List<int>();
-            List<bool> sortedStreaming = new List<bool>();
-            foreach (int i in order)
-            {
-                sortedOffsets.Add(offsets[i]);
-                sortedStreaming.Add(streaming[i]);
-            }
-
+            List<int> sortedOffsets = order.Select(i => unsorted[i]).ToList();
+            List<bool> unsortedStreaming = streaming;
+            streaming = order.Select(i => unsortedStreaming[i]).ToList();
             offsets = sortedOffsets;
-            streaming = sortedStreaming;
         }
 
-        /// <summary>
-        /// Where the SPS stream starting at <paramref name="start"/> ends: its blocks are walked by their sizes (one byte
-        /// of type, three of big-endian size) to the end block (`E`, 0x45) and past it. -1 when a block's size runs off
-        /// the data or is zero. For EATrax_01 this gives exactly the debug chunk's `SIZ.` size of all 8 songs.
-        /// </summary>
+        /// <summary>Where the SPS stream starting at <paramref name="start"/> ends (see <see cref="HarmonyStream.StreamEnd"/>).</summary>
         internal static int StreamEnd(byte[] data, int start)
         {
-            long at = start;
-            while (at + 4 <= data.Length)
-            {
-                byte type = data[at];
-                int size = (data[at + 1] << 16) | (data[at + 2] << 8) | data[at + 3];
-                if (size < 4 || at + size > data.Length)
-                    return -1;
-                at += size;
-                if (type == 0x45)
-                    return (int)at;
-            }
-
-            return -1;
+            return HarmonyStream.StreamEnd(data, start);
         }
-
-        /// <summary>The RAM, debug and stream chunks as last read, for decoding a sample when it is asked for.</summary>
-        private byte[] harmonyRam, harmonyStream;
 
         /// <summary>
         /// Lists the bank's samples from their headers and its own tables, and decodes none of them: a sample is decoded
@@ -1091,54 +1009,34 @@ namespace SoundEditorPlugin
         /// all of them (and drawing their waveforms) to open the tab is what used to take minutes.
         ///
         /// A sample is named by what its bank states (<see cref="HarmonyBankNames"/>): an EA Trax song by the game DB's
-        /// `artist - songname` for the songid it is filed under, else by its source file's name in the debug chunk.
+        /// `artist - songname` for the songid it is filed under (or what this session's Add Song or bulk import entered
+        /// for it), else by its source file's name in the debug chunk.
         /// </summary>
         protected override List<SoundDataTrack> InitialLoad(FrostyTaskWindow task)
         {
             List<SoundDataTrack> retVal = new List<SoundDataTrack>();
+            List<int> starts = new List<int>();
+            List<int> songIds = new List<int>();
 
             try
             {
-                dynamic soundWave = RootObject;
-                dynamic ramChunk = soundWave.Chunks[soundWave.RamChunkIndex];
-                ChunkAssetEntry ramChunkEntry = App.AssetManager.GetChunkEntry(ramChunk.ChunkId);
-
                 task.Update(status: "Reading the bank's chunks...");
-                byte[] ram, stream = null, debug = null;
-                using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(ramChunkEntry)))
-                    ram = reader.ReadToEnd();
-
-                if (soundWave.StreamChunkIndex != 255)
+                string why;
+                HarmonyChunks c = ReadChunks(out why);
+                if (c == null)
                 {
-                    dynamic streamChunk = soundWave.Chunks[soundWave.StreamChunkIndex];
-                    ChunkAssetEntry streamChunkEntry = App.AssetManager.GetChunkEntry(streamChunk.ChunkId);
-                    if (streamChunkEntry != null)
-                    {
-                        using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(streamChunkEntry)))
-                            stream = reader.ReadToEnd();
-                    }
+                    App.Logger.LogError("This Harmony bank cannot be read: {0}.", why);
+                    songRefusal = why;
+                    return retVal;
                 }
 
-                try
-                {
-                    if (soundWave.DebugChunkIndex != 255 && soundWave.DebugChunkIndex < soundWave.Chunks.Count)
-                    {
-                        dynamic debugChunk = soundWave.Chunks[soundWave.DebugChunkIndex];
-                        ChunkAssetEntry debugEntry = App.AssetManager.GetChunkEntry(debugChunk.ChunkId);
-                        if (debugEntry != null)
-                        {
-                            using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(debugEntry)))
-                                debug = reader.ReadToEnd();
-                        }
-                    }
-                }
-                catch (Exception)
-                {
-                    debug = null;
-                }
-
+                byte[] ram = c.Ram, stream = c.Stream, debug = c.Debug;
                 harmonyRam = ram;
                 harmonyStream = stream;
+
+                // Adding and removing songs is the EA Trax shape's; the reason it is not is shown on the buttons.
+                HarmonySongTable table = HarmonySongTable.Open(ram, debug, out why);
+                songRefusal = stream == null ? "it has no stream chunk" : (table == null ? why : null);
 
                 task.Update(status: "Finding the bank's samples...");
                 List<int> offsets;
@@ -1177,6 +1075,7 @@ namespace SoundEditorPlugin
                         }
                     }
 
+                    int songId = 0;
                     HarmonyBankNames.Sample sample;
                     if (isStream && samples.TryGetValue(fileOffset, out sample))
                     {
@@ -1185,7 +1084,11 @@ namespace SoundEditorPlugin
                             track.Name = name;
                         track.Detail = HarmonyBankNames.Describe(sample);
                         track.KeyText = sample.SongId > 0 ? "songid=" + sample.SongId.ToString(CultureInfo.InvariantCulture) : null;
+                        songId = sample.SongId;
                     }
+
+                    starts.Add(fileOffset);
+                    songIds.Add(songId);
 
                     int start = fileOffset, length = readSize;
                     track.Decoder = t =>
@@ -1212,12 +1115,20 @@ namespace SoundEditorPlugin
 
                     retVal.Add(track);
                 }
+
+                if (songRefusal == null)
+                    App.Logger.Log("EA Trax bank: {0} song(s) in its tables, {1} track(s) in its stream.", table.Songs.Count, offsets.Count);
             }
             catch (Exception ex)
             {
                 App.Logger.LogError("HarmonySampleBank load failed: " + ex.ToString());
+
+                // The list is partial, so no song is added or removed by its positions until the bank reads whole.
+                songRefusal = "the bank did not read completely (" + ex.Message + ")";
             }
 
+            trackStarts = starts;
+            trackSongIds = songIds;
             return retVal;
         }
 
@@ -1345,6 +1256,26 @@ namespace SoundEditorPlugin
             App.Logger.LogError("This asset's audio is an `irf1` impulse response whose payload encoding is not " +
                 "decoded, so the edit cannot be written; nothing was changed.");
             return false;
+        }
+
+        /// <summary>The same answer for an import into checked clips and a bulk import, which come through here.</summary>
+        protected override bool ImportFileInto(int index, string fileName, FrostyTaskWindow task)
+        {
+            App.Logger.LogError("This asset's audio is an `irf1` impulse response whose payload encoding is not " +
+                "decoded, so an audio file cannot be written into it; nothing was changed.");
+            return false;
+        }
+
+        protected override BulkTarget DescribeBulkTarget(out string refusal)
+        {
+            BulkTarget target = base.DescribeBulkTarget(out refusal);
+            if (target != null)
+            {
+                target.CanReplace = false;
+                target.ReplaceRefusal = "this asset's audio is an irf1 impulse response whose payload encoding is not decoded, so an audio file cannot be written into it";
+            }
+
+            return target;
         }
 
         protected override bool CanAddClip

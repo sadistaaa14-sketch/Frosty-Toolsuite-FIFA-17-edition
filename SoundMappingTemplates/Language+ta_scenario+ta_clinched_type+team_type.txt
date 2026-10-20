@@ -1,0 +1,55 @@
+# mapping.txt template - sound banks looked up by Language + ta_scenario + ta_clinched_type + team_type
+# 2 bank(s) of the 5,621 the census read are keyed this way (notes/sound_key_census_banks.tsv, 2026-10-19):
+#     speech/commentary/eng_us/soundwaves/bcup_ta_already_clinched.res
+#     speech/loccommentary/ara_sa/soundwaves/ara_sa_male/bm_cup_ta_already_clinched.res
+#
+# Copy this file next to your audio files as mapping.txt and give each file the key it goes under; then
+# right-click a clip of the bank in the sound editor and choose Bulk Import From Folder... The editor's
+# Write mapping.txt... writes this file for one bank with a line for every clip it has (and Export All
+# Clips writes it beside the exported files), which is the easiest start.
+#
+# One line per file:     file name.wav = parameter=value, parameter=value
+# Files are .wav, .mp3 or .ealayer3, named relative to the folder. Lines starting with # are notes.
+# A line whose values are the key of a clip the bank has replaces that clip's audio; a key the bank does
+# not have adds a clip filed under it. Two lines with one key are its first and second take (take=2
+# names one; a take the bank does not have yet is added). clip=3 replaces clip 3 whatever its key.
+# A parameter every clip of the bank has one value of may be left out: the line takes that value.
+# Every line is checked before anything is written, and the import is one edit of the bank.
+#
+# Language
+# The game's language index (+0x20 of the object at +0x548 of DAT_14472ec30); FIFA17.exe looks a clip up with that index first and with 0 when that finds nothing (FUN_146213800), so a clip under 0 is the one every language without its own falls back to.
+#   values these banks use (the census lists up to 60 a bank): 16
+#
+# ta_scenario
+# FIFA17.exe sets it to a single bit FUN_147845740 picks for +0x14 of the TABLE_ANALYSIS record, or 0.
+# Set by the code of trigger_TABLE_ANALYSIS, CUP_TABLE_ANALYSIS, LEAGUE_TABLE_ANALYSIS.
+#   value names: invalid=0, POSSIBLE_CLINCH_WITH_WIN=1, POSSIBLE_CLINCH_WITH_DRAW=2,
+#     POSSIBLE_CLINCH_WITH_HELP=4, ALREADY_CLINCHED=8, ALREADY_CLINCHED_DUE_TO_RESULTS_ELSEWHERE=16,
+#     ALREADY_CLINCHED_ABOVE_EXPECTATION=32, THE_SURPRISE_ABOVE_EXPECTATION=64,
+#     MATCH_DAY_1_GROUP_OF_DEATH=128, MATCH_DAY_1_TO_TOP=256, THE_BIG_CLASH=512, COMPETITIVE_GROUP=1024,
+#     6_POINTER=2048, 6_POINTER_HOME_COULD_LEAPFROG_AWAY=4096, 6_POINTER_AWAY_COULD_LEAPFROG_HOME=8192,
+#     MOVING_INTO_POSITION_WITH_WIN=16384, MOVING_INTO_POSITION_WITH_DRAW=32768,
+#     MOVING_INTO_POSITION_WITH_HELP=65536, MOVED_INTO_POSITION=131072, TIGHT_AT_BOTTOM=262144,
+#     TIGHT_AT_TOP=524288, CLEAR_AT_BOTTOM=1048576, CLEAR_AT_TOP=2097152, MATCH_DAY_1_TO_TOP_HOME=4194304,
+#     MATCH_DAY_1_TO_TOP_AWAY=8388608, MATCH_DAY_1_TO_TOP_BOTH=16777216,
+#     THE_SURPRISE_BELOW_EXPECTATION=33554432, POSSIBLE_CLINCH_NEGATIVE=67108864,
+#     POSSIBLE_CLINCH_NEGATIVE_BELOW_EXPECTATION=134217728, ALREADY_CLINCHED_BELOW_EXPECTATION=268435456
+#   values these banks use (the census lists up to 60 a bank): 8, 32, 33554432
+#
+# ta_clinched_type
+# FIFA17.exe sets it to a single bit FUN_147845740 picks for +0x1c of the TABLE_ANALYSIS record, or 0.
+# Set by the code of trigger_TABLE_ANALYSIS, CUP_TABLE_ANALYSIS, LEAGUE_TABLE_ANALYSIS.
+#   value names: invalid=0, CUP_TOP=1, CUP_KO_STAGES=2, CUP_KNOCKED_OUT=4, LEAGUE_TITLE=8,
+#     LEAGUE_PLAYOFF_SPOT=16, LEAGUE_PROMO=32, LEAGUE_CHAMPS_CUP=64, LEAGUE_EURO_LEAGUE=128,
+#     LEAGUE_AVOID_RELEGATION=256, LEAGUE_RELEGATION=512
+#   values these banks use (the census lists up to 60 a bank): 1, 2, 4
+#
+# team_type
+# FIFA17.exe sets it to 0, 1 or 2, worked out by each handler.
+# Set by the code of trigger_SC2_ELSEWHERE_PEN, trigger_SC2_ELSEWHERE_PEN_IMPACT, trigger_SC2_ELSEWHERE_GOAL, trigger_SC2_ELSEWHERE_GOAL_IMPACT, trigger_SAVE, trigger_PASS, trigger_MISS, trigger_INTERCEPTION and 91 more.
+#   value names: invalid=0, AWAY=1, HOME=2
+#   values these banks use (the census lists up to 60 a bank): 1, 2
+#
+# Example lines (replace the file names and values with yours):
+my_clip_01.wav = Language=0, ta_scenario=0, ta_clinched_type=0, team_type=0
+my_clip_02.wav = Language=0, ta_scenario=0, ta_clinched_type=0, team_type=0
