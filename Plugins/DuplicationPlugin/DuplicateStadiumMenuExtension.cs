@@ -45,6 +45,7 @@ namespace DuplicationPlugin
         private readonly List<string> mirrorReport = new List<string>();
         private readonly List<string> brtReport = new List<string>();
         private readonly List<string> lightingReport = new List<string>();
+        private readonly List<string> attribsysReport = new List<string>();
         private int droppedForeignBundles;
         // Bundles are only ever appended, so every bundle id >= this one was created by the
         // current run; anything below it existed before (vanilla or added by earlier runs).
@@ -195,6 +196,7 @@ namespace DuplicationPlugin
             mirrorReport.Clear();
             brtReport.Clear();
             lightingReport.Clear();
+            attribsysReport.Clear();
             droppedForeignBundles = 0;
             firstNewBundleId = App.AssetManager.EnumerateBundles().Count();
             App.Logger.Log($"Duplicating stadium: folder {oldFolder} -> {newFolder}, name {oldNameOnly} -> {newNameOnly}" +
@@ -411,6 +413,19 @@ namespace DuplicationPlugin
             task.Update("Adding to contentmanager...");
             AddToContentManager(newFolder, oldFolder);
 
+            // 8. The stadium's attribsys records (bench/manager areas, game camera limits) are found by
+            //    stadium id; copy the source's and register the copies under the new id.
+            task.Update("Adding attribsys records...");
+            try
+            {
+                AddAttribsysRecords(oldFolder, newFolder);
+            }
+            catch (Exception ex)
+            {
+                attribsysReport.Add("failed: " + ex.Message);
+                App.Logger.Log($"  Adding attribsys records failed: {ex.Message}");
+            }
+
             App.Logger.Log($"Stadium duplication complete: {duplicated.Count} assets duplicated");
 
             // Written last so it includes the pointer-remap debug captured in phase 3.
@@ -458,6 +473,11 @@ namespace DuplicationPlugin
                 sb.AppendLine();
                 sb.AppendLine($"Lighting keys: {lightingReport.Count} mesh copies keep their source's root instance GUID:");
                 foreach (string line in lightingReport)
+                    sb.AppendLine($"  {line}");
+
+                sb.AppendLine();
+                sb.AppendLine($"Attribsys ({attribsysReport.Count} lines):");
+                foreach (string line in attribsysReport)
                     sb.AppendLine($"  {line}");
 
                 sb.AppendLine();
@@ -1725,6 +1745,132 @@ namespace DuplicationPlugin
             App.AssetManager.ModifyEbx(cmPath, cmAsset);
 
             App.Logger.Log($"Added contentmanager entry: {newBundleName}");
+        }
+
+        // ─── Attribsys records ───────────────────────────────────────────────
+
+        private const string AttribsysCollectionPath = "Broadcasting/attribsys/AttribsysDataAssetsCollection";
+
+        /// <summary>
+        /// Key prefixes of the per-stadium records in Broadcasting/attribsys/AttribsysDataAssetsCollection.
+        /// The collection lists every attribsys data asset with the key (AccessKey) it is found by:
+        ///   stadium_&lt;id&gt;      -> presentation/stadium/stadium_stadium_&lt;id&gt;: subs_area_home/away,
+        ///                          manager_area_home/away, manager camera offsets
+        ///   cam_settings_&lt;id&gt; -> broadcasting/per_stad_settings/per_stad_settings_cam_settings_&lt;id&gt;:
+        ///                          game camera height/zoom limits (FIFA17.exe FUN_146d9ec80 formats
+        ///                          "cam_settings_%d" and applies the limits only when that record exists)
+        /// </summary>
+        private static readonly string[] PerStadiumAttribsysKeys = { "stadium_", "cam_settings_" };
+
+        /// <summary>
+        /// Copies the source stadium's per-stadium attribsys assets and adds records for them under the new
+        /// stadium id. Without a stadium_&lt;id&gt; record the duplicate's bench players stand in the wrong place.
+        /// Records the new id already has are left alone.
+        /// </summary>
+        private void AddAttribsysRecords(string oldFolder, string newFolder)
+        {
+            if (!TryGetStadiumId(oldFolder, out int oldId) || !TryGetStadiumId(newFolder, out int newId))
+            {
+                attribsysReport.Add($"no stadium id at the end of {oldFolder} or {newFolder}: nothing added");
+                return;
+            }
+
+            EbxAssetEntry collectionEntry = App.AssetManager.GetEbxEntry(AttribsysCollectionPath);
+            if (collectionEntry == null)
+            {
+                attribsysReport.Add($"{AttribsysCollectionPath} not found: nothing added");
+                return;
+            }
+
+            EbxAsset collection = App.AssetManager.GetEbx(collectionEntry);
+            dynamic records = ((dynamic)collection.RootObject).AttribsysDataAssets;
+            int added = 0;
+
+            foreach (string prefix in PerStadiumAttribsysKeys)
+            {
+                string oldKey = prefix + oldId;
+                string newKey = prefix + newId;
+
+                dynamic source = null;
+                bool newKeyTaken = false;
+                foreach (dynamic rec in records)
+                {
+                    string key = (string)rec.AccessKey;
+                    if (string.Equals(key, oldKey, StringComparison.OrdinalIgnoreCase))
+                        source = rec;
+                    else if (string.Equals(key, newKey, StringComparison.OrdinalIgnoreCase))
+                        newKeyTaken = true;
+                }
+
+                if (newKeyTaken)
+                {
+                    attribsysReport.Add($"{newKey}: already in the collection, left as it is");
+                    continue;
+                }
+                if (source == null)
+                {
+                    attribsysReport.Add($"{newKey}: the source has no {oldKey} record, so none added (same as the source)");
+                    continue;
+                }
+
+                PointerRef sourceRef = source.DataAsset;
+                EbxAssetEntry sourceEntry = sourceRef.Type == PointerRefType.External
+                    ? App.AssetManager.GetEbxEntry(sourceRef.External.FileGuid)
+                    : null;
+                if (sourceEntry == null)
+                {
+                    attribsysReport.Add($"{newKey}: the asset {oldKey} points at was not found, none added");
+                    continue;
+                }
+
+                string newName = ReplaceTrailingId(sourceEntry.Name, oldId, newId);
+                EbxAssetEntry newEntry = App.AssetManager.GetEbxEntry(newName);
+                string origin = "existing asset";
+                if (newEntry == null)
+                {
+                    newEntry = extensions["null"].DuplicateAsset(sourceEntry, newName, false, null);
+                    origin = "copy of " + sourceEntry.Name;
+                }
+                if (newEntry == null)
+                {
+                    attribsysReport.Add($"{newKey}: copying {sourceEntry.Name} failed, none added");
+                    continue;
+                }
+
+                EbxAsset newAsset = App.AssetManager.GetEbx(newEntry);
+                dynamic record = TypeLibrary.CreateObject(source.GetType().Name);
+                record.AccessKey = new CString(newKey);
+                record.DataAsset = new PointerRef(new EbxImportReference
+                {
+                    FileGuid = newAsset.FileGuid,
+                    ClassGuid = newAsset.RootInstanceGuid
+                });
+                records.Add(record);
+                collection.AddDependency(newAsset.FileGuid);
+                added++;
+                attribsysReport.Add($"{newKey} -> {newEntry.Name} ({origin})");
+            }
+
+            if (added > 0)
+            {
+                App.AssetManager.ModifyEbx(AttribsysCollectionPath, collection);
+                App.Logger.Log($"  Added {added} attribsys record(s) for stadium {newId}");
+            }
+        }
+
+        private static bool TryGetStadiumId(string folder, out int id)
+        {
+            id = 0;
+            int underscore = folder.LastIndexOf('_');
+            return underscore > 0 && int.TryParse(folder.Substring(underscore + 1), out id);
+        }
+
+        private static string ReplaceTrailingId(string name, int oldId, int newId)
+        {
+            string suffix = "_" + oldId;
+            return name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+                ? name.Substring(0, name.Length - suffix.Length) + "_" + newId
+                : name + "_" + newId;
         }
 
         // ─── Path / name utilities ───────────────────────────────────────────
