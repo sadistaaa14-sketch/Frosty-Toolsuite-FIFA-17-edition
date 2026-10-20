@@ -16,6 +16,13 @@ namespace SoundEditorPlugin
         public byte[] Res;
         public byte[] Chunk;
 
+        /// <summary>
+        /// In a bank that keeps each clip in its own chunk: the Chunks row the edit rewrote, and that row's new bytes
+        /// (<see cref="Chunk"/> is null there). -1 for a bank with one chunk.
+        /// </summary>
+        public int ChunkRow = -1;
+        public byte[] RowBytes;
+
         /// <summary>The Selection row the edit added, removed or replaced the clip of.</summary>
         public int NewRow;
 
@@ -123,6 +130,49 @@ namespace SoundEditorPlugin
             if (clip == null || clip.Length == 0)
                 return Refused("the clip's audio is empty");
             return Run(res, chunk, false, "the edit", editor => editor.Replace(ordinal, clip));
+        }
+
+        /// <summary>
+        /// Replaces clip <paramref name="ordinal"/>'s audio in a bank that keeps each clip in its own chunk (more than one
+        /// Chunks row): <paramref name="rows"/> are the bank's chunks in Chunks row order. The result names the row it
+        /// rewrote (<see cref="SoundBankAddResult.ChunkRow"/>) and gives that row's new bytes.
+        /// </summary>
+        public static SoundBankAddResult ReplaceClipAudioInRows(byte[] res, IList<byte[]> rows, int ordinal, byte[] clip)
+        {
+            if (clip == null || clip.Length == 0)
+                return Refused("the clip's audio is empty");
+            return RunRows(res, rows, false, editor => editor.ReplaceInRow(ordinal, clip));
+        }
+
+        /// <summary>The sentence a replace in a bank with one chunk per clip would be refused with (asked with a stand-in clip), or null.</summary>
+        public static string RefusalForReplaceInRows(byte[] res, IList<byte[]> rows, int ordinal)
+        {
+            SoundBankAddResult result = RunRows(res, rows, true, editor => editor.ReplaceInRow(ordinal, StandInClip()));
+            return result.Ok ? null : result.Refusal;
+        }
+
+        private static SoundBankAddResult RunRows(byte[] res, IList<byte[]> rows, bool askOnly, Func<BankEditor, string> edit)
+        {
+            if (res == null || res.Length == 0)
+                return Refused("this asset's clip index has not been read");
+            if (rows == null || rows.Count == 0 || rows.Any(r => r == null))
+                return Refused("a chunk of this asset is not loaded");
+
+            try
+            {
+                string why;
+                BankEditor editor = BankEditor.OpenRows(res, rows, askOnly, out why);
+                if (editor == null)
+                    return Refused(why);
+                why = edit(editor);
+                if (why != null)
+                    return Refused(why);
+                return editor.CommitRows();
+            }
+            catch (Exception ex)
+            {
+                return Refused(Fault("the edit", ex));
+            }
         }
 
         /// <summary>The sentence a copy-add would be refused with, or null when it would go through.</summary>
@@ -390,7 +440,8 @@ namespace SoundEditorPlugin
         private List<uint> clipVariationId;
         private List<uint> clipDuration;              // float32 bit pattern
         private List<long> clipOffset;                // byte offset in the chunk
-        private uint offsetFlags;                     // SamplesOffset's low bits (3: present, in the chunk)
+        private uint offsetFlags;                     // SamplesOffset's low bits: 3 in the stream chunk, 1 in the memory chunk
+        private uint memorySelector, streamSelector;  // Variations.MemoryChunkIndex and StreamChunkIndex, one value each
 
         // The selection parameters: their sorted value lists, by id, and the order a key is stated in.
         private Dictionary<uint, List<int>> paramValues;
@@ -451,6 +502,10 @@ namespace SoundEditorPlugin
             if (sel == null || var == null || seg == null || chk == null)
                 return "this bank does not carry all of Selection, Variations, Segments and Chunks, so it holds no clips of its own";
 
+            if (chk.Rows != 1)
+                return "this bank keeps its clips in " + chk.Rows + " chunks; adding or removing a clip there needs a chunk made "
+                    + "or dropped, which this editor does not do (a clip's audio can be replaced)";
+
             BankDataset subtitles = image.Dataset(BankNames.Subtitles);
             if (subtitles != null && subtitles.Rows > 0)
                 return "this bank carries subtitles, and an edit that moves clips cannot keep their rows true yet";
@@ -465,9 +520,6 @@ namespace SoundEditorPlugin
             if (var.Rows != n || seg.Rows != n)
                 return "this bank states " + n + " Selection rows, " + var.Rows + " Variations rows and " + seg.Rows
                     + " Segments rows; an edit needs one clip per row in each";
-            if (chk.Rows != 1)
-                return "this bank spreads its audio over " + chk.Rows + " chunks, and an edit keeps one chunk true";
-
             string issue = ReadSelection(n) ?? ReadVariations(n) ?? ReadSegments(n) ?? ReadChunks();
             if (issue != null)
                 return issue;
@@ -487,9 +539,11 @@ namespace SoundEditorPlugin
 
         private static string ColumnIssue(BankDataset ds, BankField field)
         {
-            if (field.Class > 2)
+            if (field.Class == 3 && (field.Palette == null || field.Indices == null))
+                return ds.Name + "." + field.Name + " is stored in class 3 (a palette) in a form this editor cannot read";
+            if (field.Class > 3)
                 return ds.Name + "." + field.Name + " is stored in class " + field.Class
-                    + " (a palette or a lookup), which this editor does not re-encode";
+                    + " (a table lookup), which this editor does not re-encode";
             return null;
         }
 
@@ -604,14 +658,29 @@ namespace SoundEditorPlugin
 
             clipDuration = durations.ToList();
             clipOffset = new List<long>();
-            offsetFlags = n > 0 ? offsets[0] & 3u : 3u;
+            // FUN_146210310: bit 0 says the segment has samples; with bit 1 clear they are at the memory chunk's address
+            // + (value & ~3), with bit 1 set at that offset of the stream chunk. A bank this editor writes keeps every
+            // clip in the one chunk the Variations select.
+            string selectors = ReadChunkSelectors();
+            if (selectors != null)
+                return selectors;
+            offsetFlags = n > 0 ? offsets[0] & 3u : (memorySelector == 1u && streamSelector == 0u ? 1u : 3u);
             for (int i = 0; i < n; i++)
             {
-                if ((offsets[i] & 3u) != offsetFlags || offsetFlags != 3u)
-                    return "clip " + i + "'s SamplesOffset does not state a clip in this bank's own chunk (its flags are "
-                        + (offsets[i] & 3u) + ", FUN_146210310 reads 3 as present and in the chunk)";
+                uint flags = offsets[i] & 3u;
+                if ((flags & 1u) == 0)
+                    return "clip " + i + "'s SamplesOffset states no samples (its low bits are " + flags
+                        + "; FUN_146210310 reads bit 0 as the segment having samples)";
+                if (flags != offsetFlags)
+                    return "clip " + i + "'s SamplesOffset puts it in the bank's " + ChunkKind(flags) + " chunk and clip 0's in its "
+                        + ChunkKind(offsetFlags) + " chunk; an edit keeps every clip in one chunk";
                 clipOffset.Add(offsets[i] & ~3u);
             }
+
+            BankField named = offsetFlags == 3u ? var.Field(BankNames.StreamChunkIndex) : var.Field(BankNames.MemoryChunkIndex);
+            if (named.Value != 1u)
+                return "this bank's clips are in its " + ChunkKind(offsetFlags) + " chunk (SamplesOffset bits " + offsetFlags
+                    + "), but its Variations." + named.Name + " is " + named.Value + ", which names no chunk";
 
             for (int i = 0; i < n; i++)
             {
@@ -625,6 +694,33 @@ namespace SoundEditorPlugin
             }
 
             return CheckIdentityGroup(seg, BankNames.SegmentIndex);
+        }
+
+        private static string ChunkKind(uint flags) { return (flags & 2u) != 0 ? "stream" : "memory"; }
+
+        /// <summary>
+        /// The chunk selectors: FUN_146211360 reads Variations.MemoryChunkIndex and StreamChunkIndex as
+        /// (Chunks row &lt;&lt; 1) | present (FUN_1461dcc70 loads the memory chunk it names by ChunkId and ChunkSize, and
+        /// FUN_146210310 adds a memory clip's offset to its address). ReadVariations has made both one value for every
+        /// clip; with the one Chunks row an edited bank has, each is 0 (none) or 1 (row 0).
+        /// </summary>
+        private string ReadChunkSelectors()
+        {
+            BankField memory = var.Field(BankNames.MemoryChunkIndex), stream = var.Field(BankNames.StreamChunkIndex);
+            if (memory == null || stream == null)
+                return "this bank's Variations dataset does not state MemoryChunkIndex and StreamChunkIndex, so the chunk its clips are in is not named";
+            foreach (BankField field in new[] { memory, stream })
+            {
+                if (field.Class != 0)
+                    return "this bank's Variations." + field.Name + " differs from clip to clip, which this editor does not maintain";
+                if (field.Value > 1u)
+                    return "this bank's Variations." + field.Name + " is " + field.Value + ", which names Chunks row "
+                        + (field.Value >> 1) + " of a bank with one";
+            }
+
+            memorySelector = memory.Value;
+            streamSelector = stream.Value;
+            return null;
         }
 
         private string ReadChunks()
@@ -1247,6 +1343,321 @@ namespace SoundEditorPlugin
             return null;
         }
 
+        // ─── a bank with one chunk per clip ──────────────────────────────────────────────────────────────────
+
+        private List<byte[]> chunkRows;               // the chunks, in Chunks row order (OpenRows)
+        private int[] clipRow;                        // clip ordinal -> its Chunks row
+        private long[] clipRowOffset;                 // clip ordinal -> where it starts in its row
+        private uint[] rowSizes;                      // Chunks.ChunkSize per row, as planned
+        private BankField fChunkId;
+        private int editedChunkRow = -1;
+        private Dictionary<uint, Dictionary<uint, uint[]>> columnsAsRead;   // dataset -> field -> values, before the edit
+        private byte[] tailAsRead;
+
+        /// <summary>
+        /// Reads and checks a bank that keeps each clip in its own chunk; null with the sentence when this editor cannot
+        /// keep it true. The game's model, which every check below is: FUN_146211360 reads the variation's
+        /// MemoryChunkIndex (SamplesOffset bits 01) or StreamChunkIndex (bits 11) as (Chunks row &lt;&lt; 1) | present, and
+        /// FUN_146210310 finds the clip at SamplesOffset &amp; ~3 of that row's chunk.
+        /// </summary>
+        public static BankEditor OpenRows(byte[] res, IList<byte[]> rows, bool askOnly, out string why)
+        {
+            BankEditor editor = new BankEditor(askOnly);
+            why = editor.LoadRows(res, rows);
+            return why == null ? editor : null;
+        }
+
+        private string LoadRows(byte[] res, IList<byte[]> rows)
+        {
+            string error;
+            image = BankImage.Read(res, out error);
+            if (image == null)
+                return error;
+
+            string chain = image.CheckChainIsKnown();
+            if (chain != null)
+                return "this bank cannot be edited: " + chain;
+
+            sel = image.Dataset(BankNames.Selection);
+            var = image.Dataset(BankNames.Variations);
+            seg = image.Dataset(BankNames.Segments);
+            chk = image.Dataset(BankNames.Chunks);
+            if (sel == null || var == null || seg == null || chk == null)
+                return "this bank does not carry all of Selection, Variations, Segments and Chunks, so it holds no clips of its own";
+            if (!image.HasTail)
+                return "this bank names no chunks (it has no tail)";
+
+            int n = var.Rows;
+            if (sel.Rows != n || seg.Rows != n)
+                return "this bank states " + sel.Rows + " Selection rows, " + n + " Variations rows and " + seg.Rows
+                    + " Segments rows; an edit needs one clip per row in each";
+            if (chk.Rows != rows.Count)
+                return "this bank states " + chk.Rows + " chunks and " + rows.Count + " were found for it";
+
+            foreach (BankDataset ds in new[] { seg, chk })
+            {
+                if (ds.LayoutProblem != null)
+                    return "this bank's " + ds.Name + " dataset cannot be laid out again: " + ds.LayoutProblem;
+            }
+
+            fDuration = seg.Field(BankNames.Duration);
+            fOffset = seg.Field(BankNames.SamplesOffset);
+            fChunkSize = chk.Field(BankNames.ChunkSize);
+            fChunkId = chk.Field(BankNames.ChunkId);
+            if (fDuration == null || fOffset == null || fChunkSize == null || fChunkId == null)
+                return "this bank does not state Segments.Duration, Segments.SamplesOffset, Chunks.ChunkSize and Chunks.ChunkId";
+            foreach (KeyValuePair<BankDataset, BankField> pair in new[] {
+                new KeyValuePair<BankDataset, BankField>(seg, fDuration), new KeyValuePair<BankDataset, BankField>(chk, fChunkSize) })
+            {
+                string issue = ColumnIssue(pair.Key, pair.Value);
+                if (issue != null)
+                    return issue;
+            }
+
+            string selection = ReadSelection(n);
+            if (selection != null)
+                return selection;
+
+            BankField memoryField = var.Field(BankNames.MemoryChunkIndex), streamField = var.Field(BankNames.StreamChunkIndex);
+            BankField firstField = var.Field(BankNames.FirstSegmentIndex), countField = var.Field(BankNames.SegmentCount);
+            if (memoryField == null || streamField == null || firstField == null || countField == null)
+                return "this bank's Variations dataset does not state MemoryChunkIndex, StreamChunkIndex, FirstSegmentIndex and SegmentCount";
+
+            uint[] memory = memoryField.Decode(n), stream = streamField.Decode(n), first = firstField.Decode(n), count = countField.Decode(n);
+            uint[] offsets = fOffset.Decode(n), durations = fDuration.Decode(n);
+            uint[] sizes = fChunkSize.Decode(chk.Rows);
+            if (memory == null || stream == null || first == null || count == null || offsets == null || durations == null || sizes == null)
+                return "this bank's Variations, Segments or Chunks columns cannot be read";
+
+            clipRow = new int[n];
+            clipRowOffset = new long[n];
+            int[] clipsInRow = new int[rows.Count];
+            for (int o = 0; o < n; o++)
+            {
+                if (count[o] != 1 || first[o] != o)
+                    return "this bank's clip " + o + " is not one segment of its own (FirstSegmentIndex " + first[o]
+                        + ", SegmentCount " + count[o] + ")";
+                uint flags = offsets[o] & 3u;
+                if ((flags & 1u) == 0)
+                    return "clip " + o + "'s SamplesOffset states no samples (its low bits are " + flags + ")";
+                uint selector = flags == 1u ? memory[o] : stream[o];
+                if ((selector & 1u) == 0 || (selector >> 1) >= rows.Count)
+                    return "clip " + o + "'s " + (flags == 1u ? "MemoryChunkIndex" : "StreamChunkIndex") + " is " + selector
+                        + ", which names no Chunks row of " + rows.Count;
+                // FUN_146211360 opens a streamed clip's chunk by the GUID of row MemoryChunkIndex >> 1 and states its size
+                // from row StreamChunkIndex >> 1 (+0x44, +0x54); an edit is only made where those are one row.
+                if (flags == 3u && (memory[o] >> 1) != (stream[o] >> 1))
+                    return "clip " + o + " is streamed, and the game takes its chunk's GUID from Chunks row " + (memory[o] >> 1)
+                        + " (MemoryChunkIndex) but its size from row " + (stream[o] >> 1) + " (StreamChunkIndex), so it is not edited";
+                int row = (int)(selector >> 1);
+                clipRow[o] = row;
+                clipRowOffset[o] = offsets[o] & ~3u;
+                clipsInRow[row]++;
+                if (clipRowOffset[o] >= rows[row].LongLength)
+                    return string.Format(CultureInfo.InvariantCulture, "clip {0} starts at {1}, outside the {2}-byte chunk of row {3}",
+                        o, clipRowOffset[o], rows[row].LongLength, row);
+                if (!SoundDurationScale.IsClipHeader(rows[row], clipRowOffset[o]))
+                    return "clip " + o + " does not start with a clip header at byte " + clipRowOffset[o] + " of its chunk (row " + row + ")";
+            }
+
+            for (int r = 0; r < rows.Count; r++)
+            {
+                if (clipsInRow[r] != 1)
+                    return "Chunks row " + r + " holds " + clipsInRow[r] + " clips; an edit here keeps one clip per chunk";
+                if (sizes[r] != rows[r].LongLength)
+                    return "this bank's Chunks.ChunkSize of row " + r + " says " + sizes[r].ToString("N0", CultureInfo.InvariantCulture)
+                        + " bytes and its chunk holds " + rows[r].LongLength.ToString("N0", CultureInfo.InvariantCulture);
+            }
+
+            string groups = ReadGroups(n);
+            if (groups != null)
+                return groups;
+
+            chunkRows = rows.ToList();
+            rowSizes = sizes.ToArray();
+            clipDuration = durations.ToList();
+            survivingFrom = Enumerable.Range(0, n).ToList();
+
+            columnsAsRead = new Dictionary<uint, Dictionary<uint, uint[]>>();
+            foreach (BankDataset ds in image.Datasets)
+            {
+                Dictionary<uint, uint[]> columns = new Dictionary<uint, uint[]>();
+                foreach (BankField field in ds.Fields)
+                    columns[field.Id] = field.Decode(ds.Rows);
+                columnsAsRead[ds.NameHash] = columns;
+            }
+
+            tailAsRead = new byte[image.TailLength];
+            Buffer.BlockCopy(image.Data, image.TailOffset, tailAsRead, 0, image.TailLength);
+            return null;
+        }
+
+        /// <summary>Clip <paramref name="ordinal"/>'s chunk takes <paramref name="clip"/> after the bytes before its old clip, padded to 4.</summary>
+        public string ReplaceInRow(int ordinal, byte[] clip)
+        {
+            onlyRemovals = false;
+            int n = clipRow.Length;
+            if (ordinal < 0 || ordinal >= n)
+                return "clip " + ordinal + " is outside 0.." + (n - 1);
+
+            double seconds;
+            int samples, rate;
+            if (!SoundDurationScale.TryClipSeconds(clip, 0, out seconds, out samples, out rate))
+                return "the audio handed in does not start a clip header (an SNR word, a codec and a sample rate), so its length cannot be stated";
+
+            int row = clipRow[ordinal];
+            long start = clipRowOffset[ordinal];
+            long length = start + Align4(clip.Length);
+            if (length > uint.MaxValue)
+                return "the chunk would outgrow the 32-bit size the bank states";
+
+            long before = chunkRows[row].LongLength;
+            if (!askOnly)
+            {
+                byte[] next = new byte[length];
+                Buffer.BlockCopy(chunkRows[row], 0, next, 0, (int)start);
+                Buffer.BlockCopy(clip, 0, next, (int)start, clip.Length);
+                chunkRows[row] = next;
+            }
+
+            rowSizes[row] = (uint)length;
+            clipDuration[ordinal] = SoundDurationScale.Float32Bits(seconds);
+            survivingFrom[ordinal] = -1;
+
+            int selRow = RowOf(ordinal);
+            kind = "replaced";
+            editedRow = selRow;
+            editedOrdinal = ordinal;
+            editedChunkRow = row;
+            editedVariationId = clipVariationId == null ? rowVariationId[selRow] : clipVariationId[ordinal];
+            editedSampleId = rowSampleId == null ? 0 : unchecked((int)rowSampleId[selRow]);
+            editedOffset = start;
+            editedBytes = clip.Length;
+
+            report.Add(string.Format(CultureInfo.InvariantCulture,
+                "replaced clip {0}'s audio (Selection row {1}, {2}) in its own chunk (Chunks row {3}): {4:N0} -> {5:N0} bytes, {6:F6} s",
+                ordinal, selRow, Describe(rowKey[selRow]), row, before - start, clip.Length, seconds));
+            return null;
+        }
+
+        public SoundBankAddResult CommitRows()
+        {
+            string issue = EncodeColumn(seg, fDuration, clipDuration.ToArray(), "Duration")
+                ?? EncodeColumn(chk, fChunkSize, rowSizes.ToArray(), "ChunkSize");
+            if (issue != null)
+                return Refuse(issue);
+
+            seg.Relay = true;
+            chk.Relay = true;
+
+            string error;
+            byte[] written = image.Write(out error);
+            if (written == null)
+                return Refuse(error);
+
+            List<string> failures = ReadBackRows(written);
+            if (failures.Count > 0)
+                return Refuse("refusing to keep the edit: the file does not read back the way the game reads it - "
+                    + failures[0] + (failures.Count > 1 ? " (and " + (failures.Count - 1) + " more)" : ""));
+
+            report.Add(string.Format(CultureInfo.InvariantCulture, "bank {0:N0} -> {1:N0} bytes, chunk row {2} {3:N0} bytes, {4} clips in {5} chunks",
+                image.Data.Length, written.Length, editedChunkRow, editedChunkRow >= 0 ? rowSizes[editedChunkRow] : 0, clipRow.Length, chunkRows.Count));
+            report.Add("read back as the game reads it: the relocation chain (FUN_14798a760), every column (the edited row's "
+                + "Duration and ChunkSize as planned, every other value as read), the tail, and every clip's place in its chunk (" + checks + " checks)");
+
+            return new SoundBankAddResult
+            {
+                Ok = true,
+                Res = written,
+                Chunk = null,
+                ChunkRow = editedChunkRow,
+                RowBytes = askOnly || editedChunkRow < 0 ? null : chunkRows[editedChunkRow],
+                NewRow = editedRow,
+                Ordinal = editedOrdinal,
+                VariationId = editedVariationId,
+                SampleId = editedSampleId,
+                ClipOffset = editedOffset,
+                ClipBytes = editedBytes,
+                Key = editedRow >= 0 && editedRow < rowKey.Count ? Describe(rowKey[editedRow]) : null,
+                Report = string.Join(Environment.NewLine, report.ToArray()),
+            };
+        }
+
+        /// <summary>
+        /// The written bank, read the way the game reads it: the chain walks and is the known one; every dataset and
+        /// row is there; every column decodes to what it was, except Segments.Duration and Chunks.ChunkSize, which decode
+        /// to the plan; the tail is byte for byte the one read (the GUIDs ChunkId names and any subtitle strings); and
+        /// every clip starts a clip header at SamplesOffset &amp; ~3 of the chunk its selector names, each chunk as long as
+        /// its ChunkSize.
+        /// </summary>
+        private List<string> ReadBackRows(byte[] written)
+        {
+            List<string> failures = new List<string>();
+            string error;
+            BankImage back = BankImage.Read(written, out error);
+            if (back == null)
+            {
+                failures.Add("it does not parse: " + error);
+                return failures;
+            }
+
+            Expect(failures, back.ChainProblem == null, "the relocation chain: " + back.ChainProblem);
+            Expect(failures, back.CheckChainIsKnown() == null, "the relocation chain does not carry every pointer");
+            Expect(failures, back.HasTail && back.TailLength == tailAsRead.Length, "the tail is not " + tailAsRead.Length + " bytes");
+            if (back.HasTail && back.TailLength == tailAsRead.Length)
+            {
+                bool same = true;
+                for (int i = 0; i < tailAsRead.Length && same; i++)
+                    same = written[back.TailOffset + i] == tailAsRead[i];
+                Expect(failures, same, "the tail's bytes changed");
+            }
+
+            Expect(failures, back.Datasets.Count == image.Datasets.Count, "the bank has " + back.Datasets.Count + " datasets, not " + image.Datasets.Count);
+            foreach (BankDataset original in image.Datasets)
+            {
+                BankDataset ds = back.Dataset(original.NameHash);
+                if (ds == null)
+                {
+                    failures.Add(original.Name + " is missing");
+                    continue;
+                }
+
+                Expect(failures, ds.Rows == original.Rows, ds.Name + " has " + ds.Rows + " rows, not " + original.Rows);
+                foreach (KeyValuePair<uint, uint[]> column in columnsAsRead[original.NameHash])
+                {
+                    if (column.Value == null)
+                        continue;   // not decodable here (its dataset is copied byte for byte, never re-laid)
+                    BankField field = ds.Field(column.Key);
+                    uint[] planned = column.Value;
+                    if (original.NameHash == BankNames.Segments && column.Key == BankNames.Duration)
+                        planned = clipDuration.ToArray();
+                    else if (original.NameHash == BankNames.Chunks && column.Key == BankNames.ChunkSize)
+                        planned = rowSizes;
+                    Expect(failures, field != null && planned != null && Same(field.Decode(ds.Rows), planned), ds.Name + "." + BankNames.Field(column.Key));
+                }
+            }
+
+            BankDataset s = back.Dataset(BankNames.Segments), c = back.Dataset(BankNames.Chunks);
+            if (s != null && c != null)
+            {
+                Expect(failures, CheckIdentityGroup(s, BankNames.SegmentIndex) == null, "Segments rows are not found by their own index");
+                Expect(failures, CheckIdentityGroup(c, BankNames.ChunkIndex) == null, "Chunks rows are not found by their own index");
+                uint[] offsets = s.Field(BankNames.SamplesOffset).Decode(s.Rows);
+                uint[] sizes = c.Field(BankNames.ChunkSize).Decode(c.Rows);
+                for (int o = 0; offsets != null && sizes != null && o < clipRow.Length; o++)
+                {
+                    int row = clipRow[o];
+                    byte[] bytes = chunkRows[row];
+                    if (askOnly && row == editedChunkRow)
+                        continue;
+                    Expect(failures, sizes[row] == bytes.LongLength, "chunk row " + row + " is not ChunkSize long");
+                    Expect(failures, SoundDurationScale.IsClipHeader(bytes, offsets[o] & ~3u), "clip " + o + " does not start a clip header in its chunk");
+                }
+            }
+
+            return failures;
+        }
+
         // ─── the commit ──────────────────────────────────────────────────────────────────────────────────────
 
         public SoundBankAddResult Commit()
@@ -1318,10 +1729,35 @@ namespace SoundEditorPlugin
         /// <summary>
         /// States a column's values in the class the field already uses when that class can hold them, otherwise in
         /// the cheapest one that can: one value for every row (class 0), a start and a step (class 1, the step a
-        /// signed 16-bit word), an array (class 2, element = (value - bias) >> shift, bias the value word).
+        /// signed 16-bit word), an array (class 2, element = (value - bias) >> shift, bias the value word), or - for
+        /// a column the bank states as a palette - a palette again (class 3: the distinct values ascending, the
+        /// fewest bits per row that hold them, each row the index of its value, as the shipped class-3 columns are).
+        /// A palette that would need more than 256 entries, or an entry its size cannot hold, becomes an array.
         /// </summary>
         private static string EncodeColumn(BankDataset ds, BankField field, uint[] values, string what)
         {
+            if (field.Class == 3 && values.Length > 1 && values.Any(v => v != values[0]))
+            {
+                uint[] palette = values.Distinct().OrderBy(v => v).ToArray();
+                int bits = BankField.PaletteBits(palette.Length);
+                int size = field.Width;
+                if (bits > 0 && palette.All(v => BankField.PaletteHolds(v, size)))
+                {
+                    Dictionary<uint, byte> index = new Dictionary<uint, byte>();
+                    for (int i = 0; i < palette.Length; i++)
+                        index[palette[i]] = (byte)i;
+                    field.Type = (field.Type & 0xFF) | (3u << 8) | ((uint)bits << 16) | ((uint)size << 24);
+                    field.Value = (uint)palette.Length;
+                    field.Palette = palette;
+                    field.Indices = values.Select(v => index[v]).ToArray();
+                    field.Elements = null;
+                    return null;
+                }
+            }
+
+            field.Palette = null;
+            field.Indices = null;
+
             int n = values.Length;
             bool allEqual = n == 0 || values.All(v => v == values[0]);
             int step = 0;
@@ -1473,9 +1909,11 @@ namespace SoundEditorPlugin
         }
 
         /// <summary>
-        /// Every Selection group's start table, from the rows' keys: entry k is how many rows sort before index k.
-        /// A group of uniform blocks stays one only while every block is still the same length; otherwise it gets a
-        /// table of its own (its record's +0x18 width becomes the table's element width).
+        /// Every Selection group's blocks, from the rows' keys: entry k of its start table is how many rows sort before
+        /// index k. A group is then stated the way the shipped banks state theirs (measured over 513 .res, 2,070 groups,
+        /// no exception): when every block is one length it states no table and its record's +0x18 word is that length
+        /// (block length x combinations = rows in all 1,932 such groups); otherwise it states the table, its entries at
+        /// the narrowest width that holds the row count (all 138 tables).
         /// </summary>
         private string EncodeGroups(int n)
         {
@@ -1508,26 +1946,26 @@ namespace SoundEditorPlugin
 
                 starts[combos] = running;
 
-                if (group.Starts == null)
-                {
-                    int block = group.TableWidth;
-                    bool uniform = block > 0;
-                    for (long k = 0; uniform && k <= combos; k++)
-                        uniform = starts[k] == (uint)(block * k);
-                    if (uniform)
-                        continue;
+                long block = combos > 0 && n % combos == 0 ? n / combos : -1;
+                bool oneLength = block > 0;
+                for (long k = 0; oneLength && k <= combos; k++)
+                    oneLength = starts[k] == (uint)(block * k);
 
-                    int width = BankBytes.Narrowest((uint)n);
-                    group.W18 = (group.W18 & 0xFF000000u) | (uint)width;
-                    group.Starts = starts;
-                    report.Add("Selection group " + group.Index + " no longer has blocks of one length, so it now states a start table");
+                bool hadTable = group.Starts != null;
+                if (oneLength)
+                {
+                    if (hadTable)
+                        report.Add("Selection group " + group.Index + " now has blocks of one length (" + block + " rows), so it states no start table");
+                    else if (block != group.TableWidth)
+                        report.Add("Selection group " + group.Index + "'s blocks are now " + block + " rows each (were " + group.TableWidth + ")");
+                    group.W18 = (group.W18 & 0xFF000000u) | (uint)block;
+                    group.Starts = null;
                     continue;
                 }
 
-                int tableWidth = group.TableWidth;
-                if (!BankBytes.Fits((uint)n, tableWidth))
-                    tableWidth = BankBytes.Narrowest((uint)n);
-                group.W18 = (group.W18 & 0xFF000000u) | (uint)tableWidth;
+                if (!hadTable)
+                    report.Add("Selection group " + group.Index + " no longer has blocks of one length, so it now states a start table");
+                group.W18 = (group.W18 & 0xFF000000u) | (uint)BankBytes.Narrowest((uint)n);
                 group.Starts = starts;
             }
 
@@ -1579,6 +2017,9 @@ namespace SoundEditorPlugin
             Expect(failures, Same(v.Field(BankNames.VariationId).Decode(n), clipVariationId), "Variations.VariationId");
             Expect(failures, Same(g.Field(BankNames.Duration).Decode(n), clipDuration), "Segments.Duration");
             Expect(failures, Same(g.Field(BankNames.SamplesOffset).Decode(n), clipOffset.Select(o => (uint)o | offsetFlags)), "Segments.SamplesOffset");
+            BankField memoryBack = v.Field(BankNames.MemoryChunkIndex), streamBack = v.Field(BankNames.StreamChunkIndex);
+            Expect(failures, memoryBack != null && Same(memoryBack.Decode(n), Enumerable.Repeat(memorySelector, n)), "Variations.MemoryChunkIndex");
+            Expect(failures, streamBack != null && Same(streamBack.Decode(n), Enumerable.Repeat(streamSelector, n)), "Variations.StreamChunkIndex");
             Expect(failures, c.Field(BankNames.ChunkSize).Value == chunkLength, "Chunks.ChunkSize is not the chunk's length");
 
             // Each clip table finds row i by index i.

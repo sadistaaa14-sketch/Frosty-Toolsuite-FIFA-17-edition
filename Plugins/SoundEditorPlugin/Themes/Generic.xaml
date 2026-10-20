@@ -90,11 +90,22 @@
                                     </DockPanel>
                                 </Border>
 
-                                <!-- Row 1: what is open, in one line -->
+                                <!-- Row 1: what is open, in one line; in select mode (a 3-second hold on a clip) the check count and its commands -->
                                 <Border Grid.Row="1" Background="{StaticResource ControlBackground}" Margin="1,0,1,0">
-                                    <TextBlock x:Name="PART_BankSummary" Margin="8,0" VerticalAlignment="Center"
-                                               TextTrimming="CharacterEllipsis" Opacity="0.6"
-                                               Text="" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+                                    <Grid>
+                                        <TextBlock x:Name="PART_BankSummary" Margin="8,0" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis" Opacity="0.6"
+                                                   Text="" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+                                        <DockPanel x:Name="PART_SelectBar" Visibility="Collapsed" LastChildFill="False" Margin="6,0">
+                                            <TextBlock x:Name="PART_SelectCountText" DockPanel.Dock="Left" VerticalAlignment="Center" Text="0 clips checked"/>
+                                            <Button x:Name="PART_SelectDoneButton" DockPanel.Dock="Right" Height="16" Padding="6,0" Margin="4,0,0,0"
+                                                    Content="Done" ToolTip="Leave select mode (Esc)"/>
+                                            <Button x:Name="PART_SelectNoneButton" DockPanel.Dock="Right" Height="16" Padding="6,0" Margin="4,0,0,0"
+                                                    Content="None"/>
+                                            <Button x:Name="PART_SelectAllButton" DockPanel.Dock="Right" Height="16" Padding="6,0" Margin="4,0,0,0"
+                                                    Content="All"/>
+                                        </DockPanel>
+                                    </Grid>
                                 </Border>
 
                                 <!-- Row 2: the clips -->
@@ -127,7 +138,7 @@
                                             </MenuItem>
                                             <Separator/>
                                             <MenuItem x:Name="PART_SoundCopyNameMenuItem" Header="Copy Name"/>
-                                            <MenuItem x:Name="PART_SoundCopyKeysMenuItem" Header="Copy Keys"/>
+                                            <MenuItem x:Name="PART_SoundCopyKeysMenuItem" Header="Copy Key"/>
                                             <MenuItem x:Name="PART_SoundRenameMenuItem" Header="Rename Clip..."/>
                                             <Separator/>
                                             <MenuItem x:Name="PART_SoundExportMenuItem" Header="Export Clip">
@@ -156,9 +167,21 @@
                                         </ContextMenu>
                                     </ListView.ContextMenu>
                                     <ListView.View>
+                                        <!--
+                                            The check box column is 0 wide until select mode (a 3-second hold on a clip)
+                                            opens it; a click on the row checks it, Shift-click checks a range.
+                                        -->
                                         <GridView>
+                                            <GridViewColumn Header="" Width="0">
+                                                <GridViewColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <CheckBox IsChecked="{Binding Path=IsChecked, Mode=OneWay}" IsHitTestVisible="False"
+                                                                  Focusable="False" VerticalAlignment="Center"/>
+                                                    </DataTemplate>
+                                                </GridViewColumn.CellTemplate>
+                                            </GridViewColumn>
                                             <GridViewColumn Header="#" Width="52" DisplayMemberBinding="{Binding Path=Index}"/>
-                                            <GridViewColumn Header="Name" Width="300">
+                                            <GridViewColumn Header="Name" Width="420">
                                                 <GridViewColumn.CellTemplate>
                                                     <DataTemplate>
                                                         <TextBlock Text="{Binding Path=Name}" VerticalAlignment="Center"
@@ -168,33 +191,21 @@
                                             </GridViewColumn>
                                             <GridViewColumn Header="Time" Width="80"
                                                             DisplayMemberBinding="{Binding Path=Duration, StringFormat={}{0:0.00}s}"/>
-                                            <GridViewColumn Header="Codec" Width="90" DisplayMemberBinding="{Binding Path=Codec}"/>
-                                            <!--
-                                                Which row of its key's block the clip is ("1 of 2"), when the bank
-                                                files more than one clip under the same selection key: the place in
-                                                the block is what tells such clips apart. Empty when the key finds
-                                                one clip.
-                                            -->
-                                            <GridViewColumn Header="Variation" Width="120" DisplayMemberBinding="{Binding Path=Variation}"/>
-                                            <GridViewColumn Header="Key" Width="180">
-                                                <GridViewColumn.CellTemplate>
-                                                    <DataTemplate>
-                                                        <TextBlock Text="{Binding Path=KeyText}" VerticalAlignment="Center" Opacity="0.55"
-                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Path=KeyText}"/>
-                                                    </DataTemplate>
-                                                </GridViewColumn.CellTemplate>
-                                            </GridViewColumn>
                                         </GridView>
                                     </ListView.View>
                                 </ListView>
 
-                                <!-- Row 3: the selected clip's waveform, and where playback is -->
+                                <!-- Row 3: the selected clip's waveform, and where playback is; one line while it decodes -->
                                 <Border Grid.Row="3" Background="{StaticResource ControlBackground}" Margin="1,0,1,0">
-                                    <Canvas x:Name="PART_WaveFormCanvas" ClipToBounds="True" Background="Transparent">
-                                        <Image x:Name="PART_WaveFormImage" Stretch="Fill" Canvas.Top="0" Canvas.Left="0"/>
-                                        <Line x:Name="PART_ProgressLine" Y1="0" Y2="96" X1="0" X2="0" StrokeThickness="1"
-                                              Stroke="White" RenderOptions.EdgeMode="Aliased" SnapsToDevicePixels="True"/>
-                                    </Canvas>
+                                    <Grid>
+                                        <Canvas x:Name="PART_WaveFormCanvas" ClipToBounds="True" Background="Transparent">
+                                            <Image x:Name="PART_WaveFormImage" Stretch="Fill" Canvas.Top="0" Canvas.Left="0"/>
+                                            <Line x:Name="PART_ProgressLine" Y1="0" Y2="96" X1="0" X2="0" StrokeThickness="1"
+                                                  Stroke="White" RenderOptions.EdgeMode="Aliased" SnapsToDevicePixels="True"/>
+                                        </Canvas>
+                                        <TextBlock x:Name="PART_WaveFormStatus" Visibility="Collapsed" HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" Opacity="0.7" TextTrimming="CharacterEllipsis" Margin="8,0"/>
+                                    </Grid>
                                 </Border>
 
                                 <!-- Row 4: what the selected clip is -->

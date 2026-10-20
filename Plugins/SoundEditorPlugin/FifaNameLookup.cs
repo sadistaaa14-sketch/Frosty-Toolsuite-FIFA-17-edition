@@ -10,8 +10,8 @@ namespace SoundEditorPlugin
 {
     /// <summary>
     /// The names behind the ids a FIFA 17 sound bank carries: the commentary selection parameters the
-    /// research named, and the people behind a <c>player_db_ID</c>, <c>asset_team_ID</c> or
-    /// <c>surname_ID</c> key.
+    /// research named, the player or team behind a player or team id, the commentary name behind a
+    /// <c>surname_ID</c>, and the song behind an EA Trax songid.
     ///
     /// A person is resolved from the game's own DB (<c>data/db/fifa_ng_db.db</c>, read through the FIFA
     /// database plugin's reader when that plugin is loaded) and from the eng_us strings
@@ -126,7 +126,9 @@ namespace SoundEditorPlugin
         private static bool databaseTried;
         private static Dictionary<int, string> teamNames;
         private static Dictionary<int, string> playerNames;
-        private static Dictionary<int, string> surnameNames;
+        private static Dictionary<int, string> commentaryNames;
+        private static Dictionary<int, string> stadiumNames;
+        private static Dictionary<int, string> leagueNames;
         private static string databaseNote = "not read yet";
 
         private static bool playerClubsTried;
@@ -238,7 +240,7 @@ namespace SoundEditorPlugin
         }
 
         /// <summary>
-        /// True when the game's DB answered with tables, so a team, player or surname id has a name here.
+        /// True when the game's DB answered with tables, so a team, player or commentary id has a name here.
         ///
         /// A dialog that asks for an id has to be able to say what it will do with a number it cannot name,
         /// and "the DB is not in this profile" is a different answer from "the DB holds no such id" - one of
@@ -249,7 +251,8 @@ namespace SoundEditorPlugin
             get
             {
                 EnsureDatabase();
-                return CountOf(teamNames) > 0 || CountOf(playerNames) > 0 || CountOf(surnameNames) > 0;
+                return CountOf(teamNames) > 0 || CountOf(playerNames) > 0 || CountOf(commentaryNames) > 0
+                    || CountOf(stadiumNames) > 0 || CountOf(leagueNames) > 0;
             }
         }
 
@@ -330,18 +333,38 @@ namespace SoundEditorPlugin
             }
         }
 
-        /// <summary>A surname from the game DB, or false.</summary>
-        public static bool TrySurname(int surnameId, out string name)
-        {
-            string source;
-            return TrySurname(surnameId, out name, out source);
-        }
-
-        /// <summary>A surname and where it came from, or false.</summary>
-        public static bool TrySurname(int surnameId, out string name, out string source)
+        /// <summary>
+        /// The name the commentator says for a commentary id - the value a <c>surname_ID</c> key carries - from the
+        /// game's DB, or false. The DB's <c>commentarynames</c> table states it (<c>commentaryid</c> -&gt;
+        /// <c>commentarystring</c>); an id only <c>playernames</c> holds is named from there when one name alone holds it
+        /// (900000, which 25,049 of its names share, names none).
+        /// </summary>
+        public static bool TryCommentaryName(int commentaryId, out string name, out string source)
         {
             EnsureDatabase();
-            return FromTable(surnameNames, surnameId, "db", out name, out source);
+            return FromTable(commentaryNames, commentaryId, "db", out name, out source);
+        }
+
+        /// <summary>
+        /// A stadium's name from the game's DB (<c>stadiums.stadiumid</c> -&gt; <c>stadiums.name</c>), or false. The value a
+        /// <c>stadium_ID</c> or <c>pa_stadium_id</c> key carries is the match setup's stadium id, which FIFA17.exe looks the
+        /// <c>audiostadium</c> table up by (FUN_147850760).
+        /// </summary>
+        public static bool TryStadiumName(int stadiumId, out string name, out string source)
+        {
+            EnsureDatabase();
+            return FromTable(stadiumNames, stadiumId, "db", out name, out source);
+        }
+
+        /// <summary>
+        /// A league's name from the game's DB (<c>leagues.leagueid</c> -&gt; <c>leagues.leaguename</c>), or false. The value a
+        /// <c>pa_league_id</c> key carries is the first of the match setup's two leagueids (+0x84), which FIFA17.exe's match builder
+        /// queries the <c>leagues</c> table by (FUN_147aea0b0).
+        /// </summary>
+        public static bool TryLeagueName(int leagueId, out string name, out string source)
+        {
+            EnsureDatabase();
+            return FromTable(leagueNames, leagueId, "db", out name, out source);
         }
 
         /// <summary>One line naming what this lookup can currently answer with, for a log or a UI.</summary>
@@ -414,13 +437,45 @@ namespace SoundEditorPlugin
         //  The game's DB
         // ─────────────────────────────────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Reads the DB now, when it has not been read yet, so the first clip list that names players does not pay
+        /// for it in the middle of being built. Safe on any thread; the DB is read once per session.
+        /// </summary>
+        public static void Preload()
+        {
+            EnsureDatabase();
+        }
+
+        /// <summary>
+        /// An EA Trax song as the DB's `eatrax` table states it, `artist - songname`, by its `songid`; false when the
+        /// DB is not reachable or holds no such song. FIFA17.exe reads the same table by the same id
+        /// (FUN_14789d6a0: `SELECT eatrax.songid, unlocked, songname, artist, album, intro FROM songplaylistlinks
+        /// INNER JOIN eatrax ...`).
+        /// </summary>
+        public static bool TrySongName(int songId, out string name)
+        {
+            string source;
+            EnsureDatabase();
+            return FromTable(songNames, songId, "db", out name, out source);
+        }
+
         private static void EnsureDatabase()
         {
-            if (databaseTried)
-                return;
+            lock (databaseGate)
+            {
+                if (databaseTried)
+                    return;
 
-            databaseTried = true;
+                databaseTried = true;
+                ReadDatabase();
+            }
+        }
 
+        private static readonly object databaseGate = new object();
+        private static Dictionary<int, string> songNames;
+
+        private static void ReadDatabase()
+        {
             try
             {
                 if (App.AssetManager == null)
@@ -482,11 +537,21 @@ namespace SoundEditorPlugin
 
                 teamNames = ReadPeople(database, new[] { "teams", "team" }, new[] { "teamid", "id", "team_id" },
                     new[] { "teamname", "name", "longname", "shortname", "team_name" }, true);
-                playerNames = ReadPeople(database, new[] { "players", "player" }, new[] { "playerid", "id", "player_id" },
-                    new[] { "commonname", "playername", "lastname", "surname", "name", "firstname" }, false);
-                surnameNames = ReadPeople(database, new[] { "commentarynames", "surnames", "lastnames", "names", "surname" },
-                    new[] { "commentarynameid", "surnameid", "nameid", "id" },
-                    new[] { "commentaryname", "surname", "name", "text", "stringid" }, true);
+
+                // FIFA 17's players table holds no name text: `firstnameid`, `lastnameid` and `commonnameid` are ids into
+                // `playernames` (nameid -> name), which is what FIFA17.exe reads its names from (FUN_147463a30:
+                // "SELECT nameid, name FROM playernames ORDER BY nameid ASC;"). Measured on the shipped DB's export:
+                // 158023 = firstnameid 15448 "Lionel" + lastnameid 17518 "Messi", 20801 = commonnameid 5696
+                // "Cristiano Ronaldo". A DB whose players table carries the names as text is still read the old way.
+                Dictionary<int, string> nameIds = ReadPeople(database, new[] { "playernames" }, new[] { "nameid" },
+                    new[] { "name" }, true);
+                playerNames = ReadPlayersByNameIds(database, nameIds)
+                    ?? ReadPeople(database, new[] { "players", "player" }, new[] { "playerid", "id", "player_id" },
+                        new[] { "commonname", "playername", "lastname", "surname", "name", "firstname" }, false);
+                commentaryNames = ReadCommentaryNames(database);
+                songNames = ReadSongs(database);
+                stadiumNames = ReadPeople(database, new[] { "stadiums" }, new[] { "stadiumid" }, new[] { "name" }, true);
+                leagueNames = ReadPeople(database, new[] { "leagues" }, new[] { "leagueid" }, new[] { "leaguename" }, true);
 
                 // The player-club links are read here with the name tables and the database is let go: the table is
                 // ~899,000 rows and the map built from it is ~18,000 entries, so holding the whole DB for it would
@@ -506,7 +571,8 @@ namespace SoundEditorPlugin
                 }
 
                 databaseNote = string.Format(CultureInfo.InvariantCulture,
-                    "db teams {0}, players {1}, surnames {2}", CountOf(teamNames), CountOf(playerNames), CountOf(surnameNames));
+                    "db teams {0}, players {1}, commentary names {2}, songs {3}, stadiums {4}, leagues {5}", CountOf(teamNames),
+                    CountOf(playerNames), CountOf(commentaryNames), CountOf(songNames), CountOf(stadiumNames), CountOf(leagueNames));
             }
             catch (Exception ex)
             {
@@ -681,6 +747,114 @@ namespace SoundEditorPlugin
 
                 if (!string.IsNullOrEmpty(text) && !result.ContainsKey(id))
                     result[id] = text;
+            }
+
+            return result.Count > 0 ? result : null;
+        }
+
+        /// <summary>
+        /// `players` read through `playernames`: a player is named by his common name when he has one (Neymar,
+        /// Cristiano Ronaldo), else by first and last name. Null when the table has no name-id columns, so the caller
+        /// can fall back to a DB that states the names as text.
+        /// </summary>
+        private static Dictionary<int, string> ReadPlayersByNameIds(object database, Dictionary<int, string> nameIds)
+        {
+            if (nameIds == null || nameIds.Count == 0)
+                return null;
+
+            object table = FindTable(database, new[] { "players", "player" });
+            System.Collections.IEnumerable rows = table == null ? null : RowsOf(table);
+            if (rows == null)
+                return null;
+
+            Dictionary<int, string> result = new Dictionary<int, string>();
+            foreach (object row in rows)
+            {
+                int id = ToInt(ReadColumn(row, new[] { "playerid" }));
+                if (id == 0 || result.ContainsKey(id))
+                    continue;
+
+                string common = NameOf(nameIds, ReadColumn(row, new[] { "commonnameid" }));
+                string text = common;
+                if (string.IsNullOrEmpty(text))
+                {
+                    string first = NameOf(nameIds, ReadColumn(row, new[] { "firstnameid" }));
+                    string last = NameOf(nameIds, ReadColumn(row, new[] { "lastnameid" }));
+                    text = !string.IsNullOrEmpty(first) && !string.IsNullOrEmpty(last) ? first + " " + last
+                        : (!string.IsNullOrEmpty(last) ? last : first);
+                }
+
+                if (!string.IsNullOrEmpty(text))
+                    result[id] = text;
+            }
+
+            return result.Count > 0 ? result : null;
+        }
+
+        private static string NameOf(Dictionary<int, string> nameIds, object id)
+        {
+            string name;
+            int key = ToInt(id);
+            return key != 0 && nameIds.TryGetValue(key, out name) && !string.IsNullOrWhiteSpace(name) ? name.Trim() : null;
+        }
+
+        /// <summary>
+        /// `commentaryid -&gt; name` for the commentary names: `commentarynames` (`commentarystring`) first, then the ids
+        /// that only `playernames` states, each kept only when every row holding it has the same name. Null when neither
+        /// table is there.
+        /// </summary>
+        private static Dictionary<int, string> ReadCommentaryNames(object database)
+        {
+            Dictionary<int, string> result = ReadPeople(database, new[] { "commentarynames" }, new[] { "commentaryid" },
+                new[] { "commentarystring" }, true) ?? new Dictionary<int, string>();
+
+            object table = FindTable(database, new[] { "playernames" });
+            System.Collections.IEnumerable rows = table == null ? null : RowsOf(table);
+            if (rows != null)
+            {
+                Dictionary<int, string> single = new Dictionary<int, string>();
+                HashSet<int> shared = new HashSet<int>();
+                foreach (object row in rows)
+                {
+                    int id = ToInt(ReadColumn(row, new[] { "commentaryid" }));
+                    string text = AsText(ReadColumn(row, new[] { "name" }));
+                    if (id == 0 || string.IsNullOrWhiteSpace(text) || result.ContainsKey(id) || shared.Contains(id))
+                        continue;
+
+                    string known;
+                    if (!single.TryGetValue(id, out known))
+                        single[id] = text.Trim();
+                    else if (!string.Equals(known, text.Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        single.Remove(id);
+                        shared.Add(id);
+                    }
+                }
+
+                foreach (KeyValuePair<int, string> pair in single)
+                    result[pair.Key] = pair.Value;
+            }
+
+            return result.Count > 0 ? result : null;
+        }
+
+        /// <summary>The `eatrax` table as `songid -> artist - songname`, or null when the DB has no such table.</summary>
+        private static Dictionary<int, string> ReadSongs(object database)
+        {
+            object table = FindTable(database, new[] { "eatrax" });
+            System.Collections.IEnumerable rows = table == null ? null : RowsOf(table);
+            if (rows == null)
+                return null;
+
+            Dictionary<int, string> result = new Dictionary<int, string>();
+            foreach (object row in rows)
+            {
+                int id = ToInt(ReadColumn(row, new[] { "songid" }));
+                string song = AsText(ReadColumn(row, new[] { "songname" }));
+                string artist = AsText(ReadColumn(row, new[] { "artist" }));
+                if (id == 0 || result.ContainsKey(id) || string.IsNullOrEmpty(song))
+                    continue;
+                result[id] = string.IsNullOrEmpty(artist) ? song : artist + " - " + song;
             }
 
             return result.Count > 0 ? result : null;

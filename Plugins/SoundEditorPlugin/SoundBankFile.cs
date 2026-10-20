@@ -53,6 +53,16 @@ namespace SoundEditorPlugin
 
         public string ChunkFileName { get; private set; }
 
+        /// <summary>The bank's Chunks rows.</summary>
+        public int ChunkRows { get; private set; }
+
+        /// <summary>
+        /// The GUID each Chunks row's ChunkId names, in row order: ChunkId is 1 + the GUID's byte offset in the bank's
+        /// tail (FUN_147982a40 adds *(TESD + 0x18); its users read 16 bytes at that address minus 1). A row whose ChunkId
+        /// does not land on 16 bytes inside the tail is null; empty when the bank has no tail or no Chunks dataset.
+        /// </summary>
+        public IList<string> ChunkGuids { get; private set; }
+
         /// <summary>Selection rows (one per clip in a bank this editor lists).</summary>
         public uint RowCount { get; private set; }
 
@@ -69,6 +79,13 @@ namespace SoundEditorPlugin
 
         /// <summary>A note about the clips that is not a refusal (they do not tile the chunk exactly, say).</summary>
         public string ClipNote { get; private set; }
+
+        /// <summary>
+        /// Where the game reads the clips from, by SamplesOffset bit 1 (FUN_146210310): "memory" when every clip is in
+        /// the bank's memory chunk (loaded whole), "stream" when every clip is streamed from its stream chunk, null when
+        /// the clips disagree or state no samples. Set by <see cref="ResolveClips"/>.
+        /// </summary>
+        public string ClipStore { get; private set; }
 
         /// <summary>The Selection groups, the way the game reads them.</summary>
         public IList<SoundBankGroup> Groups { get; private set; }
@@ -152,6 +169,20 @@ namespace SoundEditorPlugin
             {
                 TailGuid = Guid19(image.Data, image.TailOffset);
                 ChunkFileName = TailGuid + ".chunk";
+            }
+
+            ChunkGuids = new List<string>();
+            BankDataset chk = image.Dataset(BankNames.Chunks);
+            ChunkRows = chk == null ? 0 : chk.Rows;
+            if (OwnsChunk && chk != null)
+            {
+                BankField chunkId = chk.Field(BankNames.ChunkId);
+                uint[] ids = chunkId == null ? null : chunkId.Decode(chk.Rows);
+                for (int r = 0; ids != null && r < ids.Length; r++)
+                {
+                    long at = ids[r] == 0 ? -1 : image.TailOffset + (long)ids[r] - 1;
+                    ChunkGuids.Add(at >= image.TailOffset && at + 16 <= image.Data.Length ? Guid19(image.Data, (int)at) : null);
+                }
             }
 
             BankDataset sel = image.Dataset(BankNames.Selection);
@@ -321,6 +352,7 @@ namespace SoundEditorPlugin
         {
             Clips = new List<SoundBankClip>();
             ClipNote = null;
+            ClipStore = null;
 
             BankDataset seg = image == null ? null : image.Dataset(BankNames.Segments);
             if (seg == null)
@@ -349,12 +381,20 @@ namespace SoundEditorPlugin
             List<long> starts = new List<long>();
             for (int i = 0; i < values.Length; i++)
             {
-                // FUN_146210310: bit 0 says the clip is present, bit 1 that it is in the bank's chunk, and the offset
-                // is the value with both cleared.
-                if ((values[i] & 3u) != 3u)
-                    ClipNote = ClipNote ?? "clip " + i + "'s SamplesOffset flags are " + (values[i] & 3u) + ", not 3 (present, in this chunk)";
+                // FUN_146210310: bit 0 says the segment has samples, which are at the memory chunk's address + offset
+                // when bit 1 is clear and at that offset of the stream chunk when it is set; the offset is the value
+                // with both bits cleared.
+                uint flags = values[i] & 3u;
+                if ((flags & 1u) == 0)
+                    ClipNote = ClipNote ?? "clip " + i + "'s SamplesOffset states no samples (its low bits are " + flags + ")";
+                else if (flags != (values[0] & 3u))
+                    ClipNote = ClipNote ?? "clip " + i + "'s SamplesOffset is in a different chunk (memory or stream) from clip 0's";
                 starts.Add(values[i] & ~3u);
             }
+
+            uint firstFlags = values.Length > 0 ? values[0] & 3u : 0u;
+            if (values.All(v => (v & 3u) == firstFlags))
+                ClipStore = firstFlags == 1u ? "memory" : firstFlags == 3u ? "stream" : null;
 
             if (starts[0] != 0)
                 return "the clip offsets do not start at the beginning of the chunk";
@@ -374,6 +414,90 @@ namespace SoundEditorPlugin
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Maps every clip of a bank with more than one Chunks row to its row and its byte range there, the way the game
+        /// finds it: the Variations row's MemoryChunkIndex (SamplesOffset bits 01) or StreamChunkIndex (bits 11) is
+        /// (Chunks row &lt;&lt; 1) | present (FUN_146211360), and the clip starts at SamplesOffset &amp; ~3 of that row's
+        /// chunk (FUN_146210310) and runs to the next clip in the same row, or to the row's end. <paramref name="rows"/>
+        /// are the chunks in Chunks row order. Each clip's <see cref="SoundBankClip.ChunkRow"/> is its row and its
+        /// <see cref="SoundBankClip.Offset"/> is inside that row. Null on success, or the sentence to show.
+        /// </summary>
+        public string ResolveClipRows(IList<byte[]> rows)
+        {
+            Clips = new List<SoundBankClip>();
+            ClipNote = null;
+            ClipStore = null;
+
+            BankDataset var = image == null ? null : image.Dataset(BankNames.Variations);
+            BankDataset seg = image == null ? null : image.Dataset(BankNames.Segments);
+            BankDataset chk = image == null ? null : image.Dataset(BankNames.Chunks);
+            if (var == null || seg == null || chk == null)
+                return "this bank does not state Variations, Segments and Chunks, so it holds no clips of its own";
+            if (rows == null || rows.Count != chk.Rows)
+                return "this bank states " + chk.Rows + " chunks and " + (rows == null ? 0 : rows.Count) + " were found for it";
+
+            uint[] memory = Column(var, BankNames.MemoryChunkIndex), stream = Column(var, BankNames.StreamChunkIndex);
+            uint[] first = Column(var, BankNames.FirstSegmentIndex), offsets = Column(seg, BankNames.SamplesOffset);
+            if (memory == null || stream == null || first == null || offsets == null)
+                return "this bank's Variations or Segments columns cannot be read, so its clips cannot be placed in its chunks";
+
+            int n = var.Rows;
+            int[] rowOf = new int[n];
+            long[] at = new long[n];
+            uint store = n > 0 ? offsets[Math.Min((int)first[0], offsets.Length - 1)] & 3u : 0u;
+            for (int o = 0; o < n; o++)
+            {
+                if (first[o] >= offsets.Length)
+                    return "clip " + o + "'s FirstSegmentIndex " + first[o] + " is outside its " + offsets.Length + " Segments rows";
+                uint word = offsets[first[o]];
+                uint flags = word & 3u;
+                if ((flags & 1u) == 0)
+                    return "clip " + o + "'s SamplesOffset states no samples (its low bits are " + flags + ")";
+                if (flags != store)
+                    store = 0u;
+                uint selector = flags == 1u ? memory[o] : stream[o];
+                if ((selector & 1u) == 0 || (selector >> 1) >= rows.Count)
+                    return "clip " + o + "'s " + (flags == 1u ? "MemoryChunkIndex" : "StreamChunkIndex") + " is " + selector
+                        + ", which names no Chunks row of " + rows.Count;
+                // A streamed clip's chunk is opened by the GUID of row MemoryChunkIndex >> 1 and its size is that of row
+                // StreamChunkIndex >> 1 (FUN_146211360: +0x44 and +0x54); where the two differ, what plays is not settled.
+                if (flags == 3u && (memory[o] >> 1) != (stream[o] >> 1))
+                    return "clip " + o + " is streamed, and the game takes its chunk's GUID from Chunks row " + (memory[o] >> 1)
+                        + " (MemoryChunkIndex) but its size from row " + (stream[o] >> 1) + " (StreamChunkIndex), so its bytes cannot be placed";
+                rowOf[o] = (int)(selector >> 1);
+                at[o] = word & ~3u;
+                byte[] row = rows[rowOf[o]];
+                if (row == null)
+                    return "chunk row " + rowOf[o] + " of this bank is not loaded";
+                if (at[o] >= row.LongLength)
+                    return string.Format(CultureInfo.InvariantCulture, "clip {0} starts at {1}, outside the {2}-byte chunk of row {3}",
+                        o, at[o], row.LongLength, rowOf[o]);
+            }
+
+            for (int o = 0; o < n; o++)
+            {
+                long end = rows[rowOf[o]].LongLength;
+                for (int p = 0; p < n; p++)
+                {
+                    if (rowOf[p] == rowOf[o] && at[p] > at[o] && at[p] < end)
+                        end = at[p];
+                }
+
+                SoundBankClip clip = new SoundBankClip { Ordinal = o, Offset = at[o], Length = end - at[o], ChunkRow = rowOf[o] };
+                ReadClipHeader(clip, rows[rowOf[o]]);
+                Clips.Add(clip);
+            }
+
+            ClipStore = store == 1u ? "memory" : store == 3u ? "stream" : null;
+            return null;
+        }
+
+        private static uint[] Column(BankDataset ds, uint id)
+        {
+            BankField field = ds.Field(id);
+            return field == null ? null : field.Decode(ds.Rows);
         }
 
         private static void ReadClipHeader(SoundBankClip clip, byte[] chunk)
@@ -445,6 +569,67 @@ namespace SoundEditorPlugin
             return key;
         }
 
+        /// <summary>
+        /// The subtitles the game shows with clip <paramref name="ordinal"/>, in the bank's own words. FUN_1461dcc70
+        /// (when the voice's +0xA8 names no other source, which this editor cannot see) reads Subtitles rows
+        /// FirstSubtitleIndex + n for n below SubtitleCount - the Variations row's two fields, which FUN_146211360
+        /// copies to the voice - through FUN_146210550: the row's Time (a float, seconds into the clip) and its
+        /// StringId, read through FUN_147986e30 as value + *(TESD + 0x18) minus 1, i.e. the NUL-terminated string at
+        /// byte StringId - 1 of the tail (0 names none). The game hands that string to its subtitle sink when the
+        /// clip reaches Time. Empty when the bank has no Subtitles dataset or the clip names none.
+        /// </summary>
+        public IList<SoundBankSubtitle> SubtitlesOfClip(int ordinal)
+        {
+            List<SoundBankSubtitle> list = new List<SoundBankSubtitle>();
+            BankDataset var = image == null ? null : image.Dataset(BankNames.Variations);
+            BankDataset sub = image == null ? null : image.Dataset(BankNames.Subtitles);
+            if (var == null || sub == null || ordinal < 0 || ordinal >= var.Rows)
+                return list;
+
+            uint[] first = Column(var, BankNames.FirstSubtitleIndex), count = Column(var, BankNames.SubtitleCount);
+            if (first == null || count == null)
+                return list;
+            uint[] time = Column(sub, BankNames.SubtitleTime), text = Column(sub, BankNames.SubtitleStringId);
+
+            for (long n = 0; n < count[ordinal] && n < 256; n++)
+            {
+                long row = first[ordinal] + n;
+                SoundBankSubtitle item = new SoundBankSubtitle { Row = (int)row };
+                if (row >= sub.Rows)
+                {
+                    item.Problem = "Subtitles row " + row + " is past the dataset's " + sub.Rows + " rows";
+                }
+                else
+                {
+                    if (time != null)
+                        item.Time = BitConverter.ToSingle(BitConverter.GetBytes(time[row]), 0);
+                    item.Text = text == null ? null : TailString(text[row]);
+                    if (text != null && text[row] != 0 && item.Text == null)
+                        item.Problem = "its StringId " + text[row] + " names no string in the bank's tail";
+                }
+
+                list.Add(item);
+            }
+
+            return list;
+        }
+
+        /// <summary>The NUL-terminated string at byte <paramref name="value"/> - 1 of the tail, or null (0, or outside it).</summary>
+        private string TailString(uint value)
+        {
+            if (value == 0 || image == null || !image.HasTail)
+                return null;
+            long at = image.TailOffset + (long)value - 1;
+            byte[] data = image.Data;
+            if (at < image.TailOffset || at >= data.Length)
+                return null;
+
+            StringBuilder text = new StringBuilder();
+            for (long i = at; i < data.Length && data[i] != 0; i++)
+                text.Append(data[i] >= 0x20 && data[i] < 0x7F ? (char)data[i] : '?');
+            return text.ToString();
+        }
+
         /// <summary>Where the clip's row sits in its block of the most specific group: which of the block's variations it is.</summary>
         public SoundBankRowPlace PlaceOfClip(int ordinal)
         {
@@ -470,6 +655,13 @@ namespace SoundEditorPlugin
                 text.Append(" · ").Append(ChainProblem);
             if (KeyProblem != null)
                 text.Append(" · keys: ").Append(KeyProblem);
+            if (ChunkRows > 1)
+                text.Append(" · ").Append(ChunkRows.ToString(CultureInfo.InvariantCulture)).Append(" chunks");
+            if (ClipStore == "memory")
+                text.Append(ChunkRows > 1 ? " · its clips are in memory chunks, which the game loads whole"
+                    : " · its clips are in its memory chunk, which the game loads whole");
+            else if (ClipStore == "stream")
+                text.Append(" · its clips are streamed from its chunk");
             return text.ToString();
         }
 
@@ -563,10 +755,31 @@ namespace SoundEditorPlugin
         }
     }
 
+    /// <summary>One Subtitles row a clip shows (<see cref="SoundBankFile.SubtitlesOfClip"/>).</summary>
+    public sealed class SoundBankSubtitle
+    {
+        public int Row;
+        public float Time;
+        public string Text;
+        public string Problem;
+
+        public override string ToString()
+        {
+            if (Problem != null)
+                return "subtitle row " + Row + ": " + Problem;
+            return "subtitle " + (Text == null ? "(no string)" : "'" + Text + "'") + " at "
+                + Time.ToString("0.000", CultureInfo.InvariantCulture) + " s (Subtitles row " + Row + ")";
+        }
+    }
+
     /// <summary>One clip: a byte range of the chunk and the header it starts with.</summary>
     public sealed class SoundBankClip
     {
         public int Ordinal;
+
+        /// <summary>The bank's Chunks row the clip is in when the bank has more than one (then <see cref="Offset"/> is
+        /// inside that row's chunk), else -1.</summary>
+        public int ChunkRow = -1;
         public long Offset;
         public long Length;
         public byte HeaderSize;

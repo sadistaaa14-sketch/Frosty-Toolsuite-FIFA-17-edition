@@ -23,19 +23,43 @@ namespace SoundEditorPlugin
     //    class - 0 the value word for every row, 1 value + step*row with the step the signed short at +0x06, 2 an
     //    array behind the pointer, element (width = byte 3) shifted left by byte 2 and added to the value word, 3 a
     //    bit-packed palette, 4 a table lookup. Byte 0 is the data type (5 is a float read as its 32-bit pattern).
+    //  * Class 3 is read by FUN_147983090 (indexed) and FUN_147982ed0 (a run of rows): byte 2 is the bits per row
+    //    (1, 2, 4 or 8), byte 3 the size of a palette entry (1, 2, 4 or 8 bytes), the value word the number of
+    //    entries; behind the pointer sit the entries, then the rows' indices packed low bits first, 8 / bits to a
+    //    byte. A row's value is the entry its index names (entries of 1 or 2 bytes read signed). Shipped banks
+    //    state the entries ascending and distinct, every one used, and the fewest bits that hold their count.
     //  * A group record (0x20) and its parameter records (0x18) are read by FUN_147986980 (match by count and ids),
     //    FUN_147986690 (values to one index, mixed radix, last parameter least significant) and FUN_147986f40
     //    (index to a start and a count: uniform blocks of the +0x18 width, or a start table of that element width,
     //    or a count table at +0x08). FUN_147987300 maps the start through a u32 table at +0x10 when there is one.
     //  * FUN_146210710 reads a Selection row's VariationIndex and uses it as a Variations row directly.
-    //  * FUN_146210310 reads Segments.SamplesOffset as (byte offset & ~3) | flags (bit 0: present, bit 1: in the
-    //    bank's chunk) and Segments.Duration through FUN_147982530, element + value word as integers.
+    //  * FUN_146211360 reads Variations.MemoryChunkIndex and StreamChunkIndex as (Chunks row << 1) | present and
+    //    copies the memory chunk's ChunkId GUID and ChunkSize into the voice (+0x30, +0x40), and the stream chunk's
+    //    ChunkSize (+0x54) with a GUID (+0x44) that it reads from the memory chunk's row; FUN_1461dcc70 loads the
+    //    memory chunk by that GUID and size (FUN_146207350) and keeps its address (FUN_146203520, voice +0xB8).
+    //  * FUN_146210310 reads Segments.SamplesOffset as (byte offset & ~3) | flags: bit 0 says the segment has
+    //    samples, and they are at the memory chunk's address + offset when bit 1 is clear, at that offset of the
+    //    stream chunk when it is set. It reads Segments.Duration through FUN_147982530, element + value word as
+    //    integers.
+    //
+    //  * A field the game reads through FUN_147986e30 -> FUN_147982a40 - Chunks.ChunkId (data type 8) and
+    //    Subtitles.StringId (data type 7, via FUN_14620e180) - is its value + *(TESD + 0x18), the bank's tail, and its
+    //    users read at that address minus 1 (a value of 0 stays 0). So ChunkId is 1 + the byte offset of the chunk's
+    //    16-byte GUID in the tail, and StringId 1 + the offset of a NUL-terminated string. The tail (SBle+0x20) runs to
+    //    the end of the file: the Chunks rows' GUIDs, row order, then - in banks with subtitles - their strings.
+    //
+    //  * FUN_1461dcc70 shows a clip's subtitles (when the voice's +0xA8 names no other source): Subtitles rows
+    //    FirstSubtitleIndex + n for n below SubtitleCount (copied to the voice's +0x68 / +0x6C by FUN_146211360), each
+    //    read by FUN_146210550 - its Time (a float, seconds into the clip) and its StringId's string, which is handed to
+    //    the game's subtitle sink (the object at DAT_144729e18) when the clip reaches that time.
     //
     //  The layout of a dataset's data area is the shipped one: field arrays in record order, then the parameter
     //  value arrays (one array shared by several records written once), then the value dictionaries (each a sorted,
-    //  de-duplicated copy of a column's values minus its minimum, at the column's width, ordered by data type then
-    //  record), then the group start tables, every block aligned to its element width and the region padded to 16
-    //  bytes. Nothing points at a dictionary, so the game never reads one; they are kept so an edited bank has the
+    //  de-duplicated copy of a class 1, 2 or 3 column's values minus its minimum, at the narrowest width that holds
+    //  them - for an array, at least its element width - ordered by data type then record), then the group start
+    //  tables (only for a group whose blocks differ in length), every block aligned to its element width, the region
+    //  padded to 16 bytes - except the last, which ends at its last byte, or at the next 4-byte boundary before the
+    //  tail. Nothing points at a dictionary, so the game never reads one; they are kept so an edited bank has the
     //  shape a shipped one has. A dataset whose data area this rule does not reproduce exactly is never re-laid.
     // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -112,7 +136,9 @@ namespace SoundEditorPlugin
         public const uint VariationIndex = 0x6AC4E4EA, SampleId = 0x80268F2E, VariationId = 0xF5F914D9,
             Duration = 0x6CFCCE5B, SamplesOffset = 0xE8E591DD, SeekTableOffset = 0xD506D74E, ChunkSize = 0xDC19107B,
             ChunkId = 0xF4369173, SegmentIndex = 0xD06D5A58, ChunkIndex = 0x603CFF80, FirstSegmentIndex = 0xE4660A62,
-            SegmentCount = 0xD00A6005, Language = 0xE6CEA7B7, ParameterId = 0x8D21F9A1, ParameterIndex = 0x0E6AC212;
+            SegmentCount = 0xD00A6005, Language = 0xE6CEA7B7, ParameterId = 0x8D21F9A1, ParameterIndex = 0x0E6AC212,
+            MemoryChunkIndex = 0x4E5B3721, StreamChunkIndex = 0x678C1CBC, FirstSubtitleIndex = 0xD7C152C5,
+            SubtitleCount = 0x4AF36C62, SubtitleTime = 0x7C8865D0, SubtitleStringId = 0xD2C4765D, SubtitleIndex = 0x4B9FE83F;
 
         private static readonly Dictionary<uint, string> Tables = new Dictionary<uint, string>
         {
@@ -123,13 +149,15 @@ namespace SoundEditorPlugin
         private static readonly Dictionary<uint, string> Fields = new Dictionary<uint, string>
         {
             { ParameterIndex, "ParameterIndex" }, { ParameterId, "ParameterId" }, { VariationIndex, "VariationIndex" },
-            { SampleId, "SampleId" }, { VariationId, "VariationId" }, { 0x678C1CBC, "StreamChunkIndex" },
+            { SampleId, "SampleId" }, { VariationId, "VariationId" }, { StreamChunkIndex, "StreamChunkIndex" },
+            { MemoryChunkIndex, "MemoryChunkIndex" },   // the engine hash of this name; the string is not in FIFA17.exe
             { SegmentCount, "SegmentCount" }, { SegmentIndex, "SegmentIndex" }, { Duration, "Duration" },
             { SamplesOffset, "SamplesOffset" }, { ChunkId, "ChunkId" }, { ChunkSize, "ChunkSize" },
             { SeekTableOffset, "SeekTableOffset" }, { FirstSegmentIndex, "FirstSegmentIndex" },
             { 0x03DA5B4E, "LastLoopSegmentIndex" }, { 0x6B89F83E, "FirstLoopSegmentIndex" }, { ChunkIndex, "ChunkIndex" },
-            { Language, "Language" }, { 0x4AF36C62, "SubtitleCount" }, { 0xD7C152C5, "FirstSubtitleIndex" },
-            { 0xF5EBA192, "Persistence" },
+            { Language, "Language" }, { SubtitleCount, "SubtitleCount" }, { FirstSubtitleIndex, "FirstSubtitleIndex" },
+            { 0xF5EBA192, "Persistence" }, { SubtitleTime, "Time" }, { SubtitleStringId, "StringId" },
+            { SubtitleIndex, "SubtitleIndex" },        // the engine hash of this name; in FIFA17.exe the string occurs only inside FirstSubtitleIndex
         };
 
         public static string Table(uint hash)
@@ -158,7 +186,9 @@ namespace SoundEditorPlugin
         public uint Pad;                // +0x0C, kept as read
         public uint Ptr;                // +0x10, SBle-relative, as read
         public uint[] Elements;         // class 2: the raw elements
-        public int ArrayOffset;         // class 2: where the elements were read (file offset), 0 when none
+        public uint[] Palette;          // class 3: the entries, as the game reads them (sign-extended when 1 or 2 bytes)
+        public byte[] Indices;          // class 3: each row's entry
+        public int ArrayOffset;         // class 2 and 3: where the block was read (file offset), 0 when none
 
         public string Name { get { return BankNames.Field(Id) ?? BankBytes.Hex(Id); } }
         public int DataType { get { return (int)(Type & 0xFF); } }
@@ -166,7 +196,57 @@ namespace SoundEditorPlugin
         public int Shift { get { return (int)((Type >> 16) & 0xFF); } }
         public int Width { get { return (int)(Type >> 24); } }
         public int Step { get { return unchecked((short)(Type >> 16)); } }
+        public int Bits { get { return (int)((Type >> 16) & 0xFF); } }   // class 3: bits per row
 
+        /// <summary>The bytes the field's block holds behind its pointer for <paramref name="rows"/> rows.</summary>
+        public int BlockLength(int rows)
+        {
+            if (Class == 3)
+            {
+                int perByte = 8 / Math.Max(Bits, 1);
+                return (Palette == null ? 0 : Palette.Length * Width) + (rows + perByte - 1) / perByte;
+            }
+
+            return rows * Width;
+        }
+
+        /// <summary>The fewest bits per row (1, 2, 4 or 8) a class-3 column of <paramref name="entries"/> entries needs, or -1.</summary>
+        public static int PaletteBits(int entries)
+        {
+            foreach (int bits in new[] { 1, 2, 4, 8 })
+                if ((1 << bits) >= entries)
+                    return bits;
+            return -1;
+        }
+
+        /// <summary>True when an entry of <paramref name="size"/> bytes reads back as <paramref name="value"/> (sizes 1 and 2 signed).</summary>
+        public static bool PaletteHolds(uint value, int size)
+        {
+            if (size == 1)
+                return unchecked((uint)(int)(sbyte)value) == value;
+            if (size == 2)
+                return unchecked((uint)(int)(short)value) == value;
+            return size == 4 || size == 8;
+        }
+
+        /// <summary>The block a class-3 field states: its entries, then its rows' indices packed low bits first.</summary>
+        public byte[] PaletteBlock()
+        {
+            int size = Width, bits = Bits, perByte = 8 / bits;
+            byte[] bytes = new byte[Palette.Length * size + (Indices.Length + perByte - 1) / perByte];
+            for (int i = 0; i < Palette.Length; i++)
+            {
+                if (size == 8)
+                    BankBytes.W32(bytes, i * 8, Palette[i]);
+                else
+                    BankBytes.WElem(bytes, i * size, size, size == 4 ? Palette[i] : Palette[i] & ((1u << (8 * size)) - 1u));
+            }
+
+            int at = Palette.Length * size;
+            for (int r = 0; r < Indices.Length; r++)
+                bytes[at + r / perByte] |= (byte)(Indices[r] << ((r % perByte) * bits));
+            return bytes;
+        }
         /// <summary>The value of every row, the way FUN_147981bc0 reads them (arithmetic modulo 2^32).</summary>
         public uint[] Decode(int rows)
         {
@@ -187,6 +267,16 @@ namespace SoundEditorPlugin
                     for (int i = 0; i < rows; i++)
                         values[i] = unchecked((Elements[i] << Shift) + Value);
                     return values;
+                case 3:
+                    if (Palette == null || Indices == null || Indices.Length < rows)
+                        return null;
+                    for (int i = 0; i < rows; i++)
+                    {
+                        if (Indices[i] >= Palette.Length)
+                            return null;
+                        values[i] = Palette[Indices[i]];
+                    }
+                    return values;
                 default:
                     return null;
             }
@@ -196,6 +286,8 @@ namespace SoundEditorPlugin
         {
             BankField copy = (BankField)MemberwiseClone();
             copy.Elements = Elements == null ? null : (uint[])Elements.Clone();
+            copy.Palette = Palette == null ? null : (uint[])Palette.Clone();
+            copy.Indices = Indices == null ? null : (byte[])Indices.Clone();
             return copy;
         }
     }
@@ -397,8 +489,9 @@ namespace SoundEditorPlugin
         public int Sble;
         public int TocRel;              // SBle-relative
         public List<BankDataset> Datasets = new List<BankDataset>();
-        public bool HasTail;            // the SBle+0x20 slot points at a 16-byte tail (the chunk's GUID)
+        public bool HasTail;            // the SBle+0x20 slot points at a tail: the Chunks rows' GUIDs (and strings)
         public int TailOffset;
+        public int TailLength;          // to the end of the file; 16 in a bank with one chunk and no subtitles
 
         /// <summary>The slots the file's chain carries, as walked; null with <see cref="ChainProblem"/> when broken.</summary>
         public List<int> Chain;
@@ -490,8 +583,9 @@ namespace SoundEditorPlugin
             }
 
             uint tail = BankBytes.U32(data, sble + 0x20);
-            image.HasTail = tail != 0 && tail != 0xFFFFFFFF && sble + (long)tail == data.Length - 16;
+            image.HasTail = tail != 0 && tail != 0xFFFFFFFF && sble + (long)tail <= data.Length - 16;
             image.TailOffset = image.HasTail ? sble + (int)tail : data.Length;
+            image.TailLength = data.Length - image.TailOffset;
 
             List<int> offsets = new List<int>();
             for (int i = 0; i < count; i++)
@@ -678,10 +772,16 @@ namespace SoundEditorPlugin
                     continue;
 
                 int at = sble + (int)field.Ptr;
+                if (field.Class == 3)
+                {
+                    ReadPalette(data, ds, field, at, dataStart);
+                    continue;
+                }
+
                 if (field.Class != 2)
                 {
                     ds.LayoutProblem = ds.LayoutProblem ?? field.Name + " is stored in class " + field.Class
-                        + " (a palette or a lookup), which this editor reads but does not write";
+                        + " (a table lookup), which this editor does not read or write";
                     continue;
                 }
 
@@ -773,6 +873,69 @@ namespace SoundEditorPlugin
             }
         }
 
+        /// <summary>A class-3 field's entries and row indices, read the way FUN_147983090 reads them.</summary>
+        private static void ReadPalette(byte[] data, BankDataset ds, BankField field, int at, int dataStart)
+        {
+            int bits = field.Bits, size = field.Width;
+            long entries = field.Value;
+            if (bits != 1 && bits != 2 && bits != 4 && bits != 8)
+            {
+                ds.LayoutProblem = ds.LayoutProblem ?? field.Name + " states " + bits + " bits per row";
+                return;
+            }
+
+            if (size != 1 && size != 2 && size != 4 && size != 8)
+            {
+                ds.LayoutProblem = ds.LayoutProblem ?? field.Name + " states palette entries of " + size + " bytes";
+                return;
+            }
+
+            if (entries < 1 || entries > (1L << bits))
+            {
+                ds.LayoutProblem = ds.LayoutProblem ?? field.Name + " states " + entries + " palette entries for " + bits + " bits per row";
+                return;
+            }
+
+            int perByte = 8 / bits;
+            long length = entries * size + (ds.Rows + perByte - 1) / perByte;
+            if (at < dataStart || at + length > ds.End)
+            {
+                ds.LayoutProblem = ds.LayoutProblem ?? field.Name + "'s palette is outside " + ds.Name + "'s data area";
+                return;
+            }
+
+            uint[] palette = new uint[entries];
+            for (int i = 0; i < entries; i++)
+            {
+                int e = at + i * size;
+                if (size == 1)
+                    palette[i] = unchecked((uint)(int)(sbyte)data[e]);
+                else if (size == 2)
+                    palette[i] = unchecked((uint)(int)(short)BankBytes.U16(data, e));
+                else
+                    palette[i] = BankBytes.U32(data, e);      // an 8-byte entry is read as its low 32 bits
+            }
+
+            byte[] indices = new byte[ds.Rows];
+            int packed = at + (int)entries * size;
+            for (int r = 0; r < ds.Rows; r++)
+            {
+                int index = (data[packed + r / perByte] >> ((r % perByte) * bits)) & ((1 << bits) - 1);
+                if (index >= entries)
+                {
+                    ds.LayoutProblem = ds.LayoutProblem ?? field.Name + "'s row " + r + " names palette entry " + index
+                        + " of " + entries;
+                    return;
+                }
+
+                indices[r] = (byte)index;
+            }
+
+            field.ArrayOffset = at;
+            field.Palette = palette;
+            field.Indices = indices;
+        }
+
         // ── the layout ────────────────────────────────────────────────────────────────────────────────────────
 
         private sealed class Piece
@@ -797,14 +960,18 @@ namespace SoundEditorPlugin
             return bytes;
         }
 
-        /// <summary>The width a column's dictionary is written at: its array's, or the narrowest holding its range.</summary>
+        /// <summary>
+        /// The width a column's dictionary is written at: the narrowest that holds the values' range, or an array's
+        /// element width when that is wider. Measured over the 513 staged .res: all 17 palette (class 3) dictionaries
+        /// are at the narrowest width of the range, two of them 2 bytes wide under 4-byte entries; all 1,644 array
+        /// (class 2) dictionaries at the wider of the element width and that (which is that width in all of them).
+        /// </summary>
         public static int DictionaryWidth(BankField field, uint[] values)
         {
+            int range = values == null || values.Length == 0 ? 1 : BankBytes.Narrowest(unchecked(values.Max() - values.Min()));
             if (field.Class == 2)
-                return field.Width;
-            if (values == null || values.Length == 0)
-                return 1;
-            return BankBytes.Narrowest(unchecked(values.Max() - values.Min()));
+                return Math.Max(field.Width, range);
+            return range;
         }
 
         /// <summary>
@@ -816,6 +983,12 @@ namespace SoundEditorPlugin
             List<Piece> pieces = new List<Piece>();
             foreach (BankField field in ds.Fields)
             {
+                if (field.Class == 3 && field.Palette != null && field.Indices != null)
+                {
+                    pieces.Add(new Piece { Kind = "field", Align = field.Width, Bytes = field.PaletteBlock(), Owner = field });
+                    continue;
+                }
+
                 if (field.Class != 2 || field.Elements == null)
                     continue;
 
@@ -845,6 +1018,10 @@ namespace SoundEditorPlugin
 
             foreach (BankField field in withDictionary.OrderBy(f => f.DataType).ThenBy(f => f.Index))
             {
+                // A column stated as one value has no dictionary in the shipped banks (CheckLayout looks for none), so
+                // a column an edit turned into one value loses the dictionary it had.
+                if (field.Class != 1 && field.Class != 2 && field.Class != 3)
+                    continue;
                 uint[] values = field.Decode(ds.Rows);
                 if (values == null || values.Length == 0)
                     continue;
@@ -883,7 +1060,7 @@ namespace SoundEditorPlugin
             List<KeyValuePair<int, int>> taken = new List<KeyValuePair<int, int>>();
             foreach (BankField field in ds.Fields)
                 if (field.ArrayOffset > 0)
-                    taken.Add(new KeyValuePair<int, int>(field.ArrayOffset, field.ArrayOffset + ds.Rows * field.Width));
+                    taken.Add(new KeyValuePair<int, int>(field.ArrayOffset, field.ArrayOffset + field.BlockLength(ds.Rows)));
             foreach (BankParam param in ds.Params)
                 if (param.ArrayOffset > 0)
                     taken.Add(new KeyValuePair<int, int>(param.ArrayOffset, param.ArrayOffset + param.Count * param.Width));
@@ -895,7 +1072,7 @@ namespace SoundEditorPlugin
             {
                 foreach (BankField field in ds.Fields)
                 {
-                    if ((field.Class != 1 && field.Class != 2) || field.Id == BankNames.VariationIndex)
+                    if ((field.Class != 1 && field.Class != 2 && field.Class != 3) || field.Id == BankNames.VariationIndex)
                         continue;
 
                     uint[] values = field.Decode(ds.Rows);
@@ -1004,8 +1181,9 @@ namespace SoundEditorPlugin
             int sble = Sble;
             int count = Datasets.Count;
 
-            // Where each dataset goes: after the TOC, 16-aligned; each region padded to 16 except the last one of a
-            // bank with no tail, which ends at its last byte (both as the shipped files state them).
+            // Where each dataset goes: after the TOC, 16-aligned; each region padded to 16 except the last one, which
+            // ends at its last byte in a bank with no tail and is padded to 4 before the tail (as the shipped files
+            // state them).
             List<BankDataset> order = Datasets.OrderBy(d => d.Offset).ToList();
             Dictionary<BankDataset, int> newOffset = new Dictionary<BankDataset, int>();
             Dictionary<BankDataset, byte[]> area = new Dictionary<BankDataset, byte[]>();
@@ -1034,7 +1212,7 @@ namespace SoundEditorPlugin
                     Dictionary<Piece, int> placed = new Dictionary<Piece, int>();
                     byte[] natural = Lay(pieces, dataStart, -1, placed);
                     int end = dataStart + natural.Length;
-                    int padded = last && !HasTail ? end : BankBytes.Align(end, 16);
+                    int padded = last ? (HasTail ? BankBytes.Align(end, 4) : end) : BankBytes.Align(end, 16);
                     bytes = new byte[padded - dataStart];
                     Buffer.BlockCopy(natural, 0, bytes, 0, natural.Length);
 
@@ -1056,7 +1234,7 @@ namespace SoundEditorPlugin
                 cursor = dataStart + bytes.Length;
             }
 
-            int length = cursor + (HasTail ? 16 : 0);
+            int length = cursor + (HasTail ? TailLength : 0);
             byte[] output = new byte[length];
 
             // Everything before the first dataset is copied: the 16 bytes before the SBle, the header, the TOC.
@@ -1162,7 +1340,7 @@ namespace SoundEditorPlugin
             }
 
             if (HasTail)
-                Buffer.BlockCopy(Data, TailOffset, output, cursor, 16);
+                Buffer.BlockCopy(Data, TailOffset, output, cursor, TailLength);
 
             // The chain: every pointer slot the file now has, ascending, each linked to the next.
             List<int> slots = ExpectedSlots(output, newOffset);

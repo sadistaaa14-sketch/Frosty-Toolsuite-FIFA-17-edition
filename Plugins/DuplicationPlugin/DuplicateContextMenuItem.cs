@@ -26,29 +26,6 @@ namespace DuplicationPlugin
     {
         #region --Extensions--
 
-        public class SoundWaveExtension : DuplicateAssetExtension
-        {
-            public override string AssetType => "SoundWaveAsset";
-
-            public override EbxAssetEntry DuplicateAsset(EbxAssetEntry entry, string newName, bool createNew, Type newType)
-            {
-                EbxAssetEntry refEntry = base.DuplicateAsset(entry, newName, createNew, newType);
-
-                EbxAsset refAsset = App.AssetManager.GetEbx(refEntry);
-                dynamic refRoot = refAsset.RootObject;
-
-                foreach (dynamic chkref in refRoot.Chunks)
-                {
-                    ChunkAssetEntry soundChunk = App.AssetManager.GetChunkEntry(chkref.ChunkId);
-                    ChunkAssetEntry newSoundChunk = DuplicateChunk(soundChunk);
-                    chkref.ChunkId = newSoundChunk.Id;
-                }
-                App.AssetManager.ModifyEbx(refEntry.Name, refAsset);
-
-                return refEntry;
-            }
-        }
-
         public class PathfindingExtension : DuplicateAssetExtension
         {
 
@@ -597,27 +574,6 @@ namespace DuplicationPlugin
             }
         }
 
-        public class NewWaveExtension : DuplicateAssetExtension
-        {
-            public override string AssetType => "NewWaveAsset";
-
-            public override EbxAssetEntry DuplicateAsset(EbxAssetEntry entry, string newName, bool createNew, Type newType)
-            {
-                EbxAssetEntry newEntry = base.DuplicateAsset(entry, newName, createNew, newType);
-
-                // NewWaveAsset carries no resource id field; the backing .res is
-                // matched by name (same path as the EBX itself).
-                ResAssetEntry resEntry = App.AssetManager.GetResEntry(entry.Name);
-                if (resEntry != null)
-                {
-                    ResAssetEntry newResEntry = DuplicateRes(resEntry, newName, ResourceType.NewWaveResource);
-                    if (newResEntry != null)
-                        newEntry.LinkAsset(newResEntry);
-                }
-                return newEntry;
-            }
-        }
-
         #endregion
 
         public class DuplicateAssetExtension
@@ -771,6 +727,14 @@ namespace DuplicationPlugin
                 string newName = win.SelectedPath + "/" + win.SelectedName;
                 newName = newName.Trim('/');
 
+                // AddEbx hands back the existing entry for a name that is taken, and the extension would then
+                // write the duplicate's data into that asset.
+                if (App.AssetManager.GetEbxEntry(newName) != null)
+                {
+                    App.Logger.LogWarning("An asset named {0} already exists, so nothing was duplicated.", newName);
+                    return;
+                }
+
                 Type newType = win.SelectedType;
                 FrostyTaskWindow.Show("Duplicating asset", "", (task) =>
                 {
@@ -794,7 +758,7 @@ namespace DuplicationPlugin
                     }
                     catch (Exception e)
                     {
-                        App.Logger.Log($"Failed to duplicate {entry.Name}");
+                        App.Logger.Log("Failed to duplicate {0}: {1}", entry.Name, e.Message);
                     }
                 });
 

@@ -50,6 +50,16 @@ namespace SoundEditorPlugin
         private readonly List<byte[]> _bankChunkDatas = new List<byte[]>();
         private readonly List<ChunkAssetEntry> _bankChunkEntries = new List<ChunkAssetEntry>();
 
+        /// <summary>Every Chunks row's GUID as the asset states it, parallel to <see cref="_bankChunkDatas"/>.</summary>
+        private readonly List<Guid> _bankChunkGuids = new List<Guid>();
+
+        /// <summary>
+        /// For a bank that keeps each clip in its own chunk (more than one Chunks row in its .res): the asset's chunk row
+        /// (an index into <see cref="_bankChunkDatas"/>) of each of the bank's Chunks rows, matched by GUID. Null for a
+        /// bank with one chunk.
+        /// </summary>
+        private int[] _bankResRowToAsset;
+
         /// <summary>Those chunks end to end, which is the buffer the clips' offsets address.</summary>
         private byte[] _bankChunk;
 
@@ -57,6 +67,15 @@ namespace SoundEditorPlugin
         private byte[] _bankResData;
         private string _bankAddRefusal;
         private string _bankRemoveRefusal;
+
+        /// <summary>
+        /// True while the writer is being asked, in the background, whether this bank can take an add and a remove.
+        /// Asking runs the whole edit in memory (a few hundred milliseconds on a bank of 7,000 clips), so it is not
+        /// part of opening the tab; the two buttons say "checking" until it answers. <see cref="_loadGeneration"/>
+        /// keeps an answer about a bank that has since been reloaded from being applied.
+        /// </summary>
+        private volatile bool _bankProbing;
+        private int _loadGeneration;
 
         /// <summary>
         /// What `Add Clip` was answered with on the UI thread: which clip the key was suggested from, the name the
@@ -87,7 +106,7 @@ namespace SoundEditorPlugin
         {
             get
             {
-                if (!_isLocalizedWave || _bank == null || _bankResData == null || _bankChunk == null)
+                if (!_isLocalizedWave || _bank == null || _bankResData == null || _bankChunk == null || _bankProbing)
                     return false;
                 return _bankAddRefusal == null && _bankClipSources != null;
             }
@@ -107,6 +126,8 @@ namespace SoundEditorPlugin
                     return base.AddClipRefusal;
                 if (_bankResData == null || _bankChunk == null)
                     return "This bank's own clip index or its audio is not loaded, so a new clip has nothing to be written into.";
+                if (_bankProbing)
+                    return "Checking whether this bank can take a new clip\u2026";
                 if (_bankAddRefusal != null)
                     return _bankAddRefusal;
                 return "Add a clip from an audio file.";
@@ -122,6 +143,8 @@ namespace SoundEditorPlugin
                         + "), so a clip cannot be removed from it.";
                 if (!_isLocalizedWave || _bank == null || _bankResData == null || _bankChunk == null)
                     return base.RemoveClipRefusal;
+                if (_bankProbing)
+                    return "Checking whether a clip can be removed from this bank\u2026";
                 if (_bankRemoveRefusal != null)
                     return _bankRemoveRefusal;
                 if (SelectedTrackIndex < 0)
@@ -143,7 +166,7 @@ namespace SoundEditorPlugin
 
                 StringBuilder text = new StringBuilder();
                 if (_bank.ChainProblem != null)
-                    text.Append("NOT LOADABLE BY THE GAME: ").Append(_bank.ChainProblem).Append(" · ");
+                    text.Append("NOT LOADABLE BY THE GAME: ").Append(_bank.ChainProblem).Append(" \u00b7 ");
 
                 int clipCount = _bank.Clips == null ? 0 : _bank.Clips.Count;
                 text.Append(clipCount.ToString("N0", CultureInfo.InvariantCulture)).Append(clipCount == 1 ? " clip" : " clips");
@@ -152,24 +175,39 @@ namespace SoundEditorPlugin
                 {
                     SoundBankClip first = _bank.Clips[0];
                     if (!string.IsNullOrEmpty(first.CodecName))
-                        text.Append(" · ").Append(first.CodecName);
+                        text.Append(" \u00b7 ").Append(first.CodecName);
                     if (first.SampleRate > 0)
-                        text.Append(" · ").Append(first.SampleRate.ToString("N0", CultureInfo.InvariantCulture)).Append(" Hz");
+                        text.Append(" ").Append(first.SampleRate.ToString("N0", CultureInfo.InvariantCulture)).Append(" Hz");
                 }
 
-                if (_bank.KeyParameters.Count > 0)
+                List<string> keys = _bank.KeyParameters.Where(id => id != BankNames.Language).Select(SoundBankParameterTable.NameOf).ToList();
+                if (keys.Count > 0)
+                    text.Append(" \u00b7 keyed by ").Append(string.Join(" + ", keys.ToArray()));
+
+                return text.ToString();
+            }
+        }
+
+        /// <summary>
+        /// The summary's tooltip: the summary, then what each of the bank's key parameters is - the DB column its values
+        /// are, what FIFA17.exe sets it to and the events whose code sets it (<see cref="SoundParameterFacts"/>).
+        /// </summary>
+        protected override string BankSummaryToolTip
+        {
+            get
+            {
+                string summary = BankSummary;
+                if (summary == null || _bank == null || _bank.KeyParameters == null || _bank.KeyParameters.Count == 0)
+                    return summary;
+
+                StringBuilder text = new StringBuilder(summary);
+                foreach (uint id in _bank.KeyParameters)
                 {
-                    text.Append(" · looked up by ")
-                        .Append(string.Join(" + ", _bank.KeyParameters.Select(SoundBankParameterTable.NameOf).ToArray()));
-                    if (_bank.Groups.Count > 1)
-                        text.Append(" (").Append(_bank.Groups.Count).Append(" groups)");
-                }
-                else
-                {
-                    text.Append(" · no selection parameter (the clips are the bank's variations)");
+                    string description = SoundParameterFacts.Describe(SoundBankParameterTable.NameOf(id));
+                    if (!string.IsNullOrEmpty(description))
+                        text.AppendLine().AppendLine().Append(description);
                 }
 
-                text.Append(" · ").Append(_bankPath ?? "sound bank");
                 return text.ToString();
             }
         }
@@ -190,12 +228,39 @@ namespace SoundEditorPlugin
             _isLocalizedWave = false;
             _bank = null;
             _bankClipSources = null;
+            _bankResRowToAsset = null;
             return InitialLoadNewWave(task);
         }
 
-        protected override void ImportSound(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
+        /// <summary>
+        /// Replaces clip <paramref name="index"/>'s audio with an audio file: for a bank, the writer's replace (the clip's
+        /// bytes leave its chunk, the new ones take their place, and the .res states the clip's new length); for a
+        /// NewWaveAsset that is not a bank, the chunk itself.
+        /// </summary>
+        protected override bool ImportFileInto(int index, string fileName, FrostyTaskWindow task)
         {
-            if (_isLocalizedWave) { ImportSoundBank(ofd, task); return; }
+            if (_isLocalizedWave)
+            {
+                if (index < 0 || _bankClipSources == null || index >= _bankClipSources.Count)
+                {
+                    App.Logger.LogWarning("There is no clip #{0} in this bank to import into.", index + 1);
+                    return false;
+                }
+
+                task.Update(status: "Encoding the audio file...");
+                byte[] clip = ConvertAudioFileToPcm16Big(fileName);
+                if (clip == null || clip.Length == 0)
+                {
+                    App.Logger.LogWarning("The file chosen decodes to no audio, so nothing was written.");
+                    return false;
+                }
+
+                if (!ReplaceClip(index, _bankClipSources[index], clip, task, true))
+                    return false;
+
+                App.Logger.Log("Imported {0} into clip #{1}: {2:N0} bytes of audio.", Path.GetFileName(fileName), index + 1, clip.Length);
+                return true;
+            }
 
             // A bank whose index could not be read still has one: writing a chunk under it would leave the .res
             // stating offsets and sizes for audio that is no longer there.
@@ -203,25 +268,156 @@ namespace SoundEditorPlugin
             {
                 App.Logger.LogWarning("This asset's clip index ({0}) could not be read ({1}), so importing over its chunk would leave "
                     + "the index describing audio that is no longer there; nothing was written.", _bankPath, _noIndexReason ?? "see above");
+                return false;
+            }
+
+            return ImportSoundNewWave(index, fileName, task);
+        }
+
+        /// <summary>
+        /// Many imports into a bank in one edit: every replace is made in memory, one after the other, and the bank is
+        /// written and read back once. Any refusal stops the whole import before anything is written. A bank whose
+        /// asset splits one chunk over several rows takes them one at a time instead.
+        /// </summary>
+        protected override void ImportFilesInto(IList<KeyValuePair<int, string>> plan, FrostyTaskWindow task)
+        {
+            bool oneRow = _isLocalizedWave && _bankResRowToAsset == null && _bankChunkDatas.Count == 1;
+            bool rows = _isLocalizedWave && _bankResRowToAsset != null;
+            if (!oneRow && !rows)
+            {
+                base.ImportFilesInto(plan, task);
                 return;
             }
 
-            ImportSoundNewWave(ofd, task);
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(_bankPath);
+            if (resEntry == null)
+            {
+                App.Logger.LogWarning("This asset's .res clip index is not in the loaded game data, so nothing was imported.");
+                return;
+            }
+
+            Dictionary<string, byte[]> encoded = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            byte[] res = _bankResData;
+            byte[] chunk = _bankChunk;
+            List<byte[]> resRows = rows ? BankRowsInResOrder() : null;
+            HashSet<int> touchedResRows = new HashSet<int>();
+            StringBuilder report = new StringBuilder();
+
+            for (int n = 0; n < plan.Count; n++)
+            {
+                int ordinal = plan[n].Key;
+                string file = plan[n].Value;
+                task.Update(status: "Importing " + (n + 1) + " / " + plan.Count, progress: ((n + 1) / (double)plan.Count) * 90.0d);
+
+                byte[] clip;
+                if (!encoded.TryGetValue(file, out clip))
+                {
+                    clip = ConvertAudioFileToPcm16Big(file);
+                    encoded[file] = clip;
+                }
+
+                if (clip == null || clip.Length == 0)
+                {
+                    App.Logger.LogWarning("{0} decodes to no audio, so nothing was imported.", Path.GetFileName(file));
+                    return;
+                }
+
+                SoundBankAddResult replaced = rows
+                    ? SoundBankWriter.ReplaceClipAudioInRows(res, resRows, ordinal, clip)
+                    : SoundBankWriter.ReplaceClipAudio(res, chunk, ordinal, clip);
+                if (!replaced.Ok)
+                {
+                    App.Logger.LogWarning("Clip #{0}: {1} Nothing was imported.", ordinal + 1, replaced.Refusal);
+                    return;
+                }
+
+                res = replaced.Res;
+                if (rows)
+                {
+                    resRows[replaced.ChunkRow] = replaced.RowBytes;
+                    touchedResRows.Add(replaced.ChunkRow);
+                }
+                else
+                {
+                    chunk = replaced.Chunk;
+                }
+
+                if (!string.IsNullOrEmpty(replaced.Report))
+                    report.AppendLine(replaced.Report);
+            }
+
+            Dictionary<int, byte[]> changed = new Dictionary<int, byte[]>();
+            if (rows)
+            {
+                foreach (int r in touchedResRows)
+                    changed[_bankResRowToAsset[r]] = resRows[r];
+            }
+            else
+            {
+                changed[0] = chunk;
+            }
+
+            SoundBankAddResult edit = new SoundBankAddResult { Ok = true, Res = res, Chunk = rows ? null : chunk };
+            int select = plan.Count > 0 ? plan[0].Key : 0;
+            if (!WriteBankEdit(resEntry, edit, changed, task, select))
+                return;
+
+            if (rows && _bankChunk == null)
+                RebuildBankChunk();
+            LogReport(report.ToString());
+            App.Logger.Log("Imported audio into {0} clip(s) of {1} in one edit.", plan.Count, _bankPath);
         }
 
-        private void ImportSoundNewWave(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
+        /// <summary>Many deletes from a bank in one edit (the writer's RemoveClips), written and read back once.</summary>
+        protected override void DeleteTracks(IList<int> indices, FrostyTaskWindow task)
         {
-            byte[] resultBuf = ConvertAudioFileToPcm16Big(ofd);
+            if (_bank == null || _bankResData == null || _bankChunk == null)
+            {
+                base.DeleteTracks(indices, task);
+                return;
+            }
 
-            int index = 0;
-            Dispatcher?.Invoke(() => { index = SelectedTrackIndex; });
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(_bankPath);
+            if (resEntry == null)
+            {
+                App.Logger.LogWarning("This asset's .res clip index is not in the loaded game data, so no clip was removed.");
+                return;
+            }
+
+            List<int> gone = indices.Distinct().OrderBy(i => i).ToList();
+            task.Update(status: "Removing " + gone.Count + " clips...");
+            SoundBankAddResult removed = SoundBankWriter.RemoveClips(_bankResData, _bankChunk, gone);
+            if (!removed.Ok)
+            {
+                App.Logger.LogWarning(removed.Refusal);
+                return;
+            }
+
+            int clipsAfter = (_bank.Clips == null ? gone.Count : _bank.Clips.Count) - gone.Count;
+            if (!WriteBankEdit(resEntry, removed, CutChunkRows(removed.CutSpans), task, Math.Max(0, Math.Min(gone[0], clipsAfter - 1))))
+                return;
+
+            LogReport(removed.Report);
+            App.Logger.Log("Removed {0} clip(s) from {1}: {2:N0} bytes left the chunk, and the bank now has {3} clips.",
+                gone.Count, _bankPath, removed.ClipBytes, clipsAfter);
+        }
+
+        private bool ImportSoundNewWave(int index, string fileName, FrostyTaskWindow task)
+        {
+            byte[] resultBuf = ConvertAudioFileToPcm16Big(fileName);
 
             dynamic newWave = RootObject;
+            if (index < 0 || index >= (int)newWave.Chunks.Count)
+            {
+                App.Logger.LogWarning("There is no clip #{0} in this asset to import into.", index + 1);
+                return false;
+            }
+
             dynamic soundDataChunk = newWave.Chunks[index];
             ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(soundDataChunk.ChunkId);
 
             if (!WriteChunk(chunkEntry, resultBuf, "clip's chunk"))
-                return;
+                return false;
 
             soundDataChunk.ChunkSize = (uint)resultBuf.Length;
 
@@ -237,9 +433,16 @@ namespace SoundEditorPlugin
                 EbxAssetEntry assetEntry = AssetEntry as EbxAssetEntry;
                 assetEntry.LinkAsset(chunkEntry);
                 SetTrackList(tracks);
+                RefreshTrackListChrome();
             });
+            return true;
         }
 
+        /// <summary>
+        /// One track per chunk of a NewWaveAsset that is not a bank, listed from each chunk's clip header: codec, rate,
+        /// channels and length are read there, and the audio is decoded when the clip is selected, played or exported
+        /// (<see cref="SoundDataTrack.Decoder"/>), not all of it to open the tab.
+        /// </summary>
         private List<SoundDataTrack> InitialLoadNewWave(FrostyTaskWindow task)
         {
             List<SoundDataTrack> retVal = new List<SoundDataTrack>();
@@ -248,114 +451,58 @@ namespace SoundEditorPlugin
             int index = 0;
             foreach (dynamic soundDataChunk in newWave.Chunks)
             {
-                SoundDataTrack track = new SoundDataTrack {Name = "Track #" + ((index++) + 1)};
+                index++;
+                SoundDataTrack track = new SoundDataTrack { Index = index, Name = "Track #" + index, SegmentCount = 1 };
                 ChunkAssetEntry chunkEntry = App.AssetManager.GetChunkEntry(soundDataChunk.ChunkId);
                 if (chunkEntry == null)
-                { App.Logger.LogWarning($"SoundChunk {soundDataChunk.ChunkId} doesn't exist. This could be because its a LocalizedChunk that is not loaded by your game."); }
-                else
                 {
-                    using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(chunkEntry)))
-                    {
-                        List<short> decodedSoundBuf = new List<short>();
-                        reader.Position = 0;
-                        uint headerSize = reader.ReadUInt(Endian.Big) & 0x00ffffff;
-                        byte codec = reader.ReadByte();
-                        int channels = (reader.ReadByte() >> 2) + 1;
-                        ushort sampleRate = reader.ReadUShort(Endian.Big);
-                        uint sampleCount = reader.ReadUInt(Endian.Big) & 0x00ffffff;
-                        switch (codec)
-                        {
-                            case 0x12: track.Codec = "Pcm16Big"; break;
-                            case 0x14: track.Codec = "Xas1"; break;
-                            case 0x15: track.Codec = "EaLayer31"; break;
-                            case 0x16: track.Codec = "EaLayer32Pcm"; break;
-                            case 0x1c: track.Codec = "EaOpus"; break;
-                            case 0x19: track.Codec = "EaSpeex"; break;
-                            default: track.Codec = "Unknown (" + codec.ToString("x2") + ")"; break;
-                        }
-                        reader.Position = 0;
-                        byte[] soundBuf = reader.ReadToEnd();
-                        double duration = 0.0;
-                        // One chunk that cannot be decoded must not fail the whole load. The native EA
-                        // Layer 3 decoder faults outright on streams it cannot take, and that exception
-                        // used to leave InitialLoad - and so left the editor with an empty track list. It
-                        // now costs this track's audio, and the reason goes to the log.
-                        string decodeFailure = null;
-                        short[] decodedSamples = null;
-
-                        try
-                        {
-                            if (codec == 0x12)
-                                decodedSamples = Pcm16b.Decode(soundBuf);
-                            else if (codec == 0x14)
-                                decodedSamples = XAS.Decode(soundBuf);
-                            else if (codec == 0x15 || codec == 0x16)
-                            {
-                                decodedSamples = EALayer3.TryDecode(soundBuf);
-                                if (decodedSamples == null)
-                                    decodeFailure = EALayer3.DescribeFailure();
-                            }
-                            else if (codec == 0x19 || codec == 0x1c)
-                                decodeFailure = "no decoder is installed for this codec (vgmstream-cli.exe)";
-                            else
-                                decodeFailure = "codec 0x" + codec.ToString("x2") + " is not supported by this editor";
-                        }
-                        catch (Exception ex)
-                        {
-                            decodeFailure = ex.Message;
-                            decodedSamples = null;
-                        }
-
-                        if (decodedSamples == null || decodedSamples.Length == 0)
-                        {
-                            // EA Speex and EA Opus are decoded by vgmstream, and an EA Layer 3 stream the
-                            // native decoder refuses is worth one attempt there too.
-                            int vgmChannels, vgmSampleRate;
-                            short[] viaVgmstream = DecodeWithVgmstream(soundBuf, out vgmChannels, out vgmSampleRate);
-                            if (viaVgmstream != null && viaVgmstream.Length > 0)
-                            {
-                                decodedSamples = viaVgmstream;
-                                channels = vgmChannels;
-                                sampleRate = (ushort)vgmSampleRate;
-                                decodeFailure = null;
-                            }
-                        }
-
-                        if (decodedSamples != null && decodedSamples.Length > 0)
-                        {
-                            decodedSoundBuf.AddRange(decodedSamples);
-                            duration += (decodedSamples.Length / channels) / (double)sampleRate;
-                        }
-                        else
-                        {
-                            App.Logger.LogWarning("Track #{0} ({1}): {2}. It is listed without audio.",
-                                index, track.Codec, decodeFailure ?? "no decoder could read this chunk");
-                        }
-
-                        track.SampleRate = sampleRate; track.ChannelCount = channels; track.Duration += duration; track.Samples = decodedSoundBuf.ToArray();
-
-                        var topSpacerColor = System.Drawing.Color.FromArgb(64, 83, 22, 3);
-                        var wfSettings = new SoundCloudBlockWaveFormSettings(System.Drawing.Color.FromArgb(196, 197, 53, 0), topSpacerColor, System.Drawing.Color.FromArgb(196, 79, 26, 0), System.Drawing.Color.FromArgb(64, 79, 79, 79))
-                        { Name = "SoundCloud Orange Transparent Blocks", PixelsPerPeak = 2, SpacerPixels = 1, TopSpacerGradientStartColor = topSpacerColor, BackgroundColor = System.Drawing.Color.Transparent, Width = 800, TopHeight = 50, BottomHeight = 30 };
-                        try
-                        {
-                            var renderer = new WaveFormRenderer();
-                            var image = renderer.Render(decodedSoundBuf.ToArray(), new MaxPeakProvider(), wfSettings);
-                            using (var ms = new MemoryStream())
-                            {
-                                image.Save(ms, ImageFormat.Png); ms.Seek(0, SeekOrigin.Begin);
-                                var bitmapImage = new BitmapImage(); bitmapImage.BeginInit(); bitmapImage.CacheOption = BitmapCacheOption.OnLoad; bitmapImage.StreamSource = ms; bitmapImage.EndInit();
-                                var target = new RenderTargetBitmap(bitmapImage.PixelWidth, bitmapImage.PixelHeight, bitmapImage.DpiX, bitmapImage.DpiY, PixelFormats.Pbgra32);
-                                var visual = new DrawingVisual(); using (var r = visual.RenderOpen()) { r.DrawImage(bitmapImage, new Rect(0, 0, bitmapImage.Width, bitmapImage.Height)); }
-                                target.Render(visual); target.Freeze(); track.WaveForm = target;
-                            }
-                        }
-                        catch (Exception) { }
-                        track.SegmentCount = 1;
-                    }
+                    App.Logger.LogWarning($"SoundChunk {soundDataChunk.ChunkId} doesn't exist. This could be because its a LocalizedChunk that is not loaded by your game.");
+                    track.DecodeFailure = "its chunk is not in the loaded game data";
+                    retVal.Add(track);
+                    continue;
                 }
+
+                byte[] header = new byte[20];
+                using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(chunkEntry)))
+                {
+                    int got = (int)Math.Min(header.Length, reader.Length);
+                    byte[] head = reader.ReadBytes(got);
+                    Buffer.BlockCopy(head, 0, header, 0, head.Length);
+                }
+
+                long samples;
+                int rate, channels;
+                if (SoundDurationScale.TryHeader(header, 0, out samples, out rate, out channels))
+                {
+                    track.SampleRate = rate;
+                    track.ChannelCount = channels;
+                    track.Duration = samples / (double)rate;
+                }
+
+                track.Codec = CodecName(header[4]);
+                ChunkAssetEntry entry = chunkEntry;
+                track.Decoder = t =>
+                {
+                    byte[] soundBuf;
+                    using (NativeReader reader = new NativeReader(App.AssetManager.GetChunk(entry)))
+                        soundBuf = reader.ReadToEnd();
+
+                    int decodedChannels, decodedRate;
+                    string reason;
+                    short[] decoded = DecodeClipAudio(soundBuf, out decodedChannels, out decodedRate, out reason);
+                    if (decoded == null || decoded.Length == 0)
+                        return reason ?? "no decoder produced audio";
+
+                    t.ChannelCount = decodedChannels;
+                    t.SampleRate = decodedRate;
+                    t.Duration = SoundEdits.DurationSeconds(decoded, decodedChannels, decodedRate);
+                    t.Samples = decoded;
+                    return null;
+                };
+
                 retVal.Add(track);
             }
+
             return retVal;
         }
 
@@ -379,6 +526,7 @@ namespace SoundEditorPlugin
             _bankAddRefusal = null;
             _bankRemoveRefusal = null;
             _bankClipSources = null;
+            _bankResRowToAsset = null;
 
             string assetName = AssetNameOnUiThread();
             _bankPath = assetName;
@@ -393,8 +541,9 @@ namespace SoundEditorPlugin
                 return new List<SoundDataTrack>();
             }
 
-            // The clips' offsets address the asset's chunk rows laid end to end. A row the game data does not hold
-            // leaves a hole the offsets after it would be read across, so the bank is not read through its index.
+            // A row the game data does not hold leaves a hole: in a bank with one chunk the clips' offsets address the
+            // rows laid end to end and would be read across it, and in a bank with a chunk per clip that clip has no
+            // bytes. Either way the bank is not read through its index.
             int missing = _bankChunkEntries.FindIndex(e => e == null);
             if (missing >= 0)
                 return ListChunksWithoutIndex(task, "chunk row " + missing + " of this asset is not loaded from the game data, so "
@@ -407,7 +556,14 @@ namespace SoundEditorPlugin
             if (bank == null || !bank.IsBank)
                 return ListChunksWithoutIndex(task, refusal ?? "no clip index was found for it");
 
-            string clipRefusal = bank.ResolveClips(_bankChunk);
+            // A bank that keeps each clip in its own chunk is read the way the game reads it: per clip the chunk its
+            // MemoryChunkIndex (or StreamChunkIndex) names and the clip's offset there (SoundBankFile.ResolveClipRows).
+            _bankResRowToAsset = null;
+            string clipRefusal;
+            if (bank.ChunkRows > 1)
+                clipRefusal = MapBankRows(bank) ?? bank.ResolveClipRows(BankRowsInResOrder());
+            else
+                clipRefusal = bank.ResolveClips(_bankChunk);
             if (clipRefusal != null || bank.Clips == null || bank.Clips.Count == 0)
                 return ListChunksWithoutIndex(task, clipRefusal ?? "it states no clips");
 
@@ -423,26 +579,22 @@ namespace SoundEditorPlugin
             if (bank.KeyProblem != null)
                 App.Logger.LogWarning("Sound bank {0}: its Selection groups do not state one key per row ({1}).", assetName, bank.KeyProblem);
 
-            // Whether a clip can be added or removed, asked once per load: the answer is a property of the file.
-            task.Update(status: "Checking which edits this bank can take...");
-            _bankAddRefusal = SoundBankWriter.RefusalForAudio(_bankResData, _bankChunk, 0, "frosty-probe-" + Guid.NewGuid().ToString("N"));
-            if (_bankAddRefusal != null)
-                App.Logger.Log("Sound bank {0}: a clip cannot be added - {1}", assetName, _bankAddRefusal);
-
-            _bankRemoveRefusal = SoundBankWriter.RefusalForRemove(_bankResData, _bankChunk, 0);
-            if (_bankRemoveRefusal != null)
-                App.Logger.Log("Sound bank {0}: a clip cannot be removed - {1}", assetName, _bankRemoveRefusal);
-
             App.Logger.Log("Sound bank {0}: {1}", assetName, bank.Describe());
+
+            // The names need the game's DB; it is read once per session, and reading it here says so in the task
+            // window instead of stalling the first name.
+            task.Update(status: "Reading the game database for names...");
+            FifaNameLookup.Preload();
 
             List<SoundDataTrack> tracks = new List<SoundDataTrack>(bank.Clips.Count);
             _bankClipSources = new List<BankClipSource>(bank.Clips.Count);
+            List<string> names = new List<string>(bank.Clips.Count);
 
             for (int i = 0; i < bank.Clips.Count; i++)
             {
                 SoundBankClip clip = bank.Clips[i];
 
-                if (i % 250 == 0 || i == bank.Clips.Count - 1)
+                if (i % 500 == 0 || i == bank.Clips.Count - 1)
                     task.Update(status: "Reading clip " + (i + 1) + " / " + bank.Clips.Count,
                         progress: ((i + 1) / (double)bank.Clips.Count) * 100.0d);
 
@@ -455,35 +607,95 @@ namespace SoundEditorPlugin
                     SegmentCount = 1,
                 };
 
-                long local;
-                int chunkIndex = ChunkOf(clip.Offset, out local);
+                long local, offset;
+                int chunkIndex;
+                if (clip.ChunkRow >= 0 && _bankResRowToAsset != null)
+                {
+                    // The clip's offset is inside its own chunk; its place in the rows laid end to end follows from it.
+                    chunkIndex = _bankResRowToAsset[clip.ChunkRow];
+                    local = clip.Offset;
+                    offset = RowStart(chunkIndex) + local;
+                    track.ClipText = string.Format("chunk {0} · 0x{1:X} + {2:N0} B", clip.ChunkRow, clip.Offset, clip.Length);
+                }
+                else
+                {
+                    chunkIndex = ChunkOf(clip.Offset, out local);
+                    offset = clip.Offset;
+                    track.ClipText = string.Format("0x{0:X} + {1:N0} B", clip.Offset, clip.Length);
+                }
 
-                track.ClipText = string.Format("0x{0:X} + {1:N0} B", clip.Offset, clip.Length);
-                NameClip(track, clip, i);
+                // Its length from its own header, so the list shows every clip's time before anything is decoded.
+                track.Duration = SoundDurationScale.HeaderSeconds(_bankChunk, offset);
+
+                string name, key, detail;
+                SoundTrackNaming.Label(bank, _bankPath, i, out name, out key, out detail);
+                names.Add(name);
+                track.KeyText = key;
+                track.Detail = detail;
 
                 tracks.Add(track);
                 _bankClipSources.Add(new BankClipSource
                 {
                     ChunkIndex = chunkIndex,
                     ChunkOffset = local,
-                    Offset = clip.Offset,
+                    Offset = offset,
                     Length = clip.Length,
                 });
             }
+
+            // Several takes under one key have the same words; the second and later are numbered.
+            SoundTrackNaming.NumberRepeats(names);
+            for (int i = 0; i < tracks.Count; i++)
+                tracks[i].Name = names[i];
+
+            StartEditProbe();
 
             App.Logger.Log("Sound bank {0}: {1} clips listed, nothing decoded yet.", assetName, tracks.Count);
             return tracks;
         }
 
-        /// <summary>The list's words for one clip: its key in the game's words, which variation of its block it is, the raw key.</summary>
-        private void NameClip(SoundDataTrack track, SoundBankClip clip, int ordinal)
+        /// <summary>
+        /// Asks the writer, off the UI thread, whether this bank can take an add and a remove, and says so on the
+        /// buttons when it answers. The answer is a property of the file; it is asked once per load.
+        /// </summary>
+        private void StartEditProbe()
         {
-            string name, variation, key, detail;
-            SoundTrackNaming.Label(_bank, _bankPath, ordinal, clip.CodecName, out name, out variation, out key, out detail);
-            track.Name = name;
-            track.Variation = variation;
-            track.KeyText = key;
-            track.Detail = detail;
+            int generation = System.Threading.Interlocked.Increment(ref _loadGeneration);
+            byte[] res = _bankResData, chunk = _bankChunk;
+            string assetName = _bankPath;
+            _bankAddRefusal = null;
+            _bankRemoveRefusal = null;
+            _bankProbing = true;
+
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                string add = null, remove = null;
+                try
+                {
+                    add = SoundBankWriter.RefusalForAudio(res, chunk, 0, "frosty-probe-" + Guid.NewGuid().ToString("N"));
+                    remove = SoundBankWriter.RefusalForRemove(res, chunk, 0);
+                }
+                catch (Exception ex)
+                {
+                    add = add ?? "the writer stopped on an error (" + ex.Message + ")";
+                    remove = remove ?? add;
+                }
+
+                RunOnUiThread(() =>
+                {
+                    if (generation != _loadGeneration)
+                        return;
+
+                    _bankAddRefusal = add;
+                    _bankRemoveRefusal = remove;
+                    _bankProbing = false;
+                    if (add != null)
+                        App.Logger.Log("Sound bank {0}: a clip cannot be added - {1}", assetName, add);
+                    if (remove != null)
+                        App.Logger.Log("Sound bank {0}: a clip cannot be removed - {1}", assetName, remove);
+                    UpdateCommandState();
+                });
+            });
         }
 
         /// <summary>
@@ -496,6 +708,7 @@ namespace SoundEditorPlugin
         {
             List<SoundDataTrack> tracks = new List<SoundDataTrack>();
             _bankClipSources = new List<BankClipSource>();
+            _bankResRowToAsset = null;
             _noIndexReason = reason;
 
             App.Logger.LogWarning("This sound asset's clip index could not be read ({0}), so each of its {1} chunk(s) is listed " +
@@ -522,7 +735,7 @@ namespace SoundEditorPlugin
                     ChannelCount = (data[5] >> 2) + 1,
                     SampleRate = (data[6] << 8) | data[7],
                     SegmentCount = 1,
-                    Detail = "whole chunk · no clip index was readable",
+                    Duration = SoundDurationScale.HeaderSeconds(data, 0),
                 };
 
                 track.ClipText = string.Format("0x0 + {0:N0} B", data.Length);
@@ -540,6 +753,7 @@ namespace SoundEditorPlugin
         {
             _bankChunkDatas.Clear();
             _bankChunkEntries.Clear();
+            _bankChunkGuids.Clear();
             _bankChunk = null;
 
             try
@@ -547,7 +761,9 @@ namespace SoundEditorPlugin
                 dynamic localizedWave = RootObject;
                 foreach (dynamic sdc in localizedWave.Chunks)
                 {
-                    ChunkAssetEntry entry = App.AssetManager.GetChunkEntry(sdc.ChunkId);
+                    Guid chunkGuid = (Guid)sdc.ChunkId;
+                    _bankChunkGuids.Add(chunkGuid);
+                    ChunkAssetEntry entry = App.AssetManager.GetChunkEntry(chunkGuid);
                     if (entry == null)
                     {
                         App.Logger.LogWarning("A sound chunk of this asset is not loaded from the game data, so the clips " +
@@ -570,6 +786,22 @@ namespace SoundEditorPlugin
                 App.Logger.LogError("This sound asset's chunks could not be read: " + ex.Message);
             }
 
+            RebuildBankChunk();
+        }
+
+        /// <summary><see cref="_bankChunk"/> from <see cref="_bankChunkDatas"/>: the rows end to end, or null when they hold nothing.</summary>
+        private void RebuildBankChunk()
+        {
+            _bankChunk = null;
+
+            // One row is the chunk itself; copying it (44 MB for the biggest name bank) bought nothing. Every edit
+            // makes new arrays, so the row and the chunk never change under each other.
+            if (_bankChunkDatas.Count == 1)
+            {
+                _bankChunk = _bankChunkDatas[0] != null && _bankChunkDatas[0].Length > 0 ? _bankChunkDatas[0] : null;
+                return;
+            }
+
             int total = 0;
             foreach (byte[] data in _bankChunkDatas)
                 total += data?.Length ?? 0;
@@ -589,6 +821,46 @@ namespace SoundEditorPlugin
             }
 
             _bankChunk = all;
+        }
+
+        /// <summary>Where asset chunk row <paramref name="row"/> starts in <see cref="_bankChunk"/>.</summary>
+        private long RowStart(int row)
+        {
+            long at = 0;
+            for (int i = 0; i < row && i < _bankChunkDatas.Count; i++)
+                at += _bankChunkDatas[i]?.Length ?? 0;
+            return at;
+        }
+
+        /// <summary>
+        /// Matches the bank's Chunks rows to the asset's chunk rows by GUID (<see cref="_bankResRowToAsset"/>); null on
+        /// success, or why the clips cannot be placed.
+        /// </summary>
+        private string MapBankRows(SoundBankFile bank)
+        {
+            _bankResRowToAsset = null;
+            int[] map = new int[bank.ChunkRows];
+            for (int r = 0; r < bank.ChunkRows; r++)
+            {
+                Guid guid;
+                string stated = r < bank.ChunkGuids.Count ? bank.ChunkGuids[r] : null;
+                if (stated == null || !Guid.TryParse(stated, out guid))
+                    return "the bank's Chunks row " + r + " names no GUID in its .res tail";
+                map[r] = _bankChunkGuids.IndexOf(guid);
+                if (map[r] < 0)
+                    return "the bank's Chunks row " + r + " names chunk " + stated + ", which is not one of this asset's chunks";
+                if (_bankChunkDatas[map[r]] == null)
+                    return "chunk " + stated + " (the bank's Chunks row " + r + ") is not loaded from the game data";
+            }
+
+            _bankResRowToAsset = map;
+            return null;
+        }
+
+        /// <summary>The asset's chunks in the bank's Chunks row order (<see cref="_bankResRowToAsset"/> must be set).</summary>
+        private List<byte[]> BankRowsInResOrder()
+        {
+            return _bankResRowToAsset.Select(i => _bankChunkDatas[i]).ToList();
         }
 
         /// <summary>Which Chunks row a byte offset falls in, and where inside that row it is.</summary>
@@ -930,9 +1202,11 @@ namespace SoundEditorPlugin
         }
 
         /// <summary>
-        /// The dialog: one box per parameter the bank's clips are looked up by, starting on the selected clip's own
-        /// values, and the name whose engine hash becomes the clip's VariationId. The line under the boxes is the
-        /// writer's own answer to exactly what is typed, so a key the bank cannot take is said before anything runs.
+        /// The Add Clip window, shaped by what the bank's clips are filed under: one field per selection parameter whose
+        /// value differs between the bank's clips or that is a player or team id, and nothing else. A parameter every
+        /// clip shares a value of (the Language of a commentary bank) takes that value without asking, so a bank of
+        /// player lines asks for the player id and that is all. A value with names (`home`, `away`) is picked from them; an id or a number is typed.
+        /// The clip's VariationId is the engine hash of a name made here, unique in the bank. Null when cancelled.
         /// </summary>
         private string AskForNewClip(int source, out SoundBankClipKey key)
         {
@@ -941,148 +1215,246 @@ namespace SoundEditorPlugin
             IList<uint> parameters = _bank.KeyParameters;
             IList<SoundBankKeyValue> sourceKey = _bank.KeyOfClip(source);
 
+            // Which values each parameter takes across the bank's clips.
+            Dictionary<uint, HashSet<int>> seen = parameters.ToDictionary(id => id, id => new HashSet<int>());
+            for (int i = 0; _bank.Clips != null && i < _bank.Clips.Count; i++)
+            {
+                IList<SoundBankKeyValue> clipKey = _bank.KeyOfClip(i);
+                if (clipKey == null)
+                    continue;
+                foreach (SoundBankKeyValue kv in clipKey)
+                {
+                    HashSet<int> set;
+                    if (seen.TryGetValue(kv.ParameterId, out set))
+                        set.Add(kv.Value);
+                }
+            }
+
+            SoundBankClipKey fixedKey = new SoundBankClipKey();
+            List<uint> asked = new List<uint>();
+            foreach (uint id in parameters)
+            {
+                // An id is always asked, even when every clip of the bank has the same one: adding a clip for another
+                // player or team is what a new clip in such a bank is usually for.
+                string name = SoundBankParameterTable.NameOf(id) ?? "";
+                bool isId = SoundTrackNaming.DatabaseSpace(name) != null
+                    || name.EndsWith("_id", StringComparison.OrdinalIgnoreCase);
+                if (seen[id].Count == 1 && !isId)
+                    fixedKey.Set(id, seen[id].First());
+                else
+                    asked.Add(id);
+            }
+
             Window window = new Window
             {
                 Title = "Add Clip",
-                Width = 620,
+                Width = 460,
                 SizeToContent = SizeToContent.Height,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 ResizeMode = ResizeMode.NoResize,
+                ShowInTaskbar = false,
                 Owner = Window.GetWindow(this),
             };
 
-            StackPanel panel = new StackPanel { Margin = new Thickness(12) };
-            panel.Children.Add(new TextBlock
-            {
-                Text = parameters.Count == 0
-                    ? "This bank has no selection parameter: the game plays its clips for an event that passes none, so a new "
-                        + "clip is one more of its variations."
-                    : "The game finds this bank's clips by " + string.Join(" + ", parameters.Select(SoundBankParameterTable.NameOf).ToArray())
-                        + ". The new clip is played for the values below (they start on the selected clip's, so keeping them "
-                        + "adds another variation of that clip). A value the bank does not have yet is added to its list.",
-                TextWrapping = TextWrapping.Wrap,
-            });
+            Grid grid = new Grid { Margin = new Thickness(12) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            List<TextBox> boxes = new List<TextBox>();
-            List<TextBlock> notes = new List<TextBlock>();
-            foreach (uint id in parameters)
+            List<Func<int?>> readers = new List<Func<int?>>();
+            Control firstInput = null;
+            for (int i = 0; i < asked.Count; i++)
             {
+                uint id = asked[i];
+                string parameter = SoundBankParameterTable.NameOf(id);
+                string space = SoundTrackNaming.DatabaseSpace(parameter);
+                SoundBankKeyValue start = sourceKey == null ? null : sourceKey.FirstOrDefault(v => v.ParameterId == id);
+
+                // The caption is the parameter's own name; hovering it says what FIFA17.exe sets it to.
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                TextBlock caption = new TextBlock { Text = parameter, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 6, 10, 3) };
+                string about = SoundParameterFacts.Describe(parameter);
+                if (!string.IsNullOrEmpty(about))
+                {
+                    caption.ToolTip = new TextBlock { Text = about, TextWrapping = TextWrapping.Wrap, MaxWidth = 520 };
+                    ToolTipService.SetShowDuration(caption, 60000);
+                }
+                Grid.SetRow(caption, i);
+                grid.Children.Add(caption);
+
                 SoundBankParameterTable.Entry entry = SoundBankParameterTable.Find(id);
-                StringBuilder label = new StringBuilder(SoundBankParameterTable.NameOf(id));
+                Control input;
                 if (entry != null && entry.Values.Length > 0)
                 {
-                    label.Append("  (");
-                    label.Append(string.Join(", ", entry.Values.Select((v, i) => v.ToString(CultureInfo.InvariantCulture) + " = " + entry.ValueNames[i]).ToArray()));
-                    label.Append(")");
-                }
-                else if (id == BankNames.Language)
-                {
-                    label.Append("  (the game looks up its language index first and 0 when that finds nothing)");
-                }
-
-                panel.Children.Add(new TextBlock { Text = label.ToString(), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
-                TextBox box = new TextBox { Margin = new Thickness(0, 3, 0, 0) };
-                SoundBankKeyValue start = sourceKey == null ? null : sourceKey.FirstOrDefault(v => v.ParameterId == id);
-                if (start != null)
-                    box.Text = start.Value.ToString(CultureInfo.InvariantCulture);
-                panel.Children.Add(box);
-                boxes.Add(box);
-                TextBlock note = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.75, Margin = new Thickness(0, 2, 0, 0) };
-                panel.Children.Add(note);
-                notes.Add(note);
-            }
-
-            panel.Children.Add(new TextBlock
-            {
-                Text = "Name (the clip's VariationId is the engine hash of it, so it has to be one no clip of this bank uses):",
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 10, 0, 0),
-            });
-            TextBox nameBox = new TextBox { Margin = new Thickness(0, 3, 0, 0), Text = FallbackClipName() };
-            panel.Children.Add(nameBox);
-
-            TextBlock preview = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.8, Margin = new Thickness(0, 10, 0, 0) };
-            panel.Children.Add(preview);
-
-            Button ok = new Button
-            {
-                Content = "Add Clip",
-                Width = 90,
-                Height = 24,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 12, 0, 0),
-            };
-            panel.Children.Add(ok);
-
-            SoundBankClipKey typedKey = null;
-            Action refresh = () =>
-            {
-                typedKey = new SoundBankClipKey();
-                bool parsed = true;
-                for (int i = 0; i < parameters.Count; i++)
-                {
-                    int value;
-                    string text = boxes[i].Text == null ? "" : boxes[i].Text.Trim();
-                    if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+                    ComboBox combo = new ComboBox { Margin = new Thickness(0, 3, 0, 3) };
+                    List<int> values = new List<int>();
+                    for (int v = 0; v < entry.Values.Length; v++)
                     {
-                        notes[i].Text = text.Length == 0 ? "A value is needed." : "\"" + text + "\" is not a whole number.";
-                        parsed = false;
-                        continue;
+                        combo.Items.Add(entry.ValueNames[v]);
+                        values.Add(entry.Values[v]);
+                    }
+                    // A value the bank files clips under that has no name of its own is shown as its bits' names when
+                    // it is a combination of named bits (CROSSBAR_IN + POST_IN), else as its number.
+                    foreach (int other in seen[id].OrderBy(v => v))
+                    {
+                        if (!values.Contains(other))
+                        {
+                            string words = SoundTrackNaming.ValueWords(new SoundBankKeyValue { ParameterId = id, Parameter = parameter, Value = other });
+                            string number = other.ToString(CultureInfo.InvariantCulture);
+                            combo.Items.Add(string.IsNullOrEmpty(words) || words == parameter + " " + number ? number : words + " (" + number + ")");
+                            values.Add(other);
+                        }
                     }
 
-                    typedKey.Set(parameters[i], value);
-                    SoundBankKeyValue kv = SoundBankKeyValue.Of(parameters[i], value);
-                    string dbSource;
-                    string dbName = SoundTrackNaming.DatabaseName(kv, out dbSource);
-                    notes[i].Text = kv.ValueName != null ? kv.ValueName
-                        : (dbName != null ? dbName + " (game DB, " + dbSource + ")" : "");
+                    int startAt = start == null ? -1 : values.IndexOf(start.Value);
+                    combo.SelectedIndex = startAt >= 0 ? startAt : 0;
+                    readers.Add(() => combo.SelectedIndex < 0 ? (int?)null : values[combo.SelectedIndex]);
+                    input = combo;
                 }
-
-                string name = nameBox.Text == null ? "" : nameBox.Text.Trim();
-                if (!parsed || name.Length == 0)
+                else
                 {
-                    preview.Text = name.Length == 0 ? "A name is needed." : "Every value has to be a whole number.";
-                    ok.IsEnabled = false;
-                    return;
+                    // An id is typed fresh: the point of adding is usually a player or team the bank does not have yet.
+                    TextBox box = new TextBox { Margin = new Thickness(0, 3, 0, 3) };
+                    if (space == null && start != null)
+                        box.Text = start.Value.ToString(CultureInfo.InvariantCulture);
+                    readers.Add(() =>
+                    {
+                        int value;
+                        return int.TryParse((box.Text ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value)
+                            ? value : (int?)null;
+                    });
+                    input = box;
                 }
 
-                string refusal = SoundBankWriter.RefusalForAudio(_bankResData, _bankChunk, source, name, typedKey);
+                Grid.SetRow(input, i);
+                Grid.SetColumn(input, 1);
+                grid.Children.Add(input);
+                if (firstInput == null)
+                    firstInput = input;
+
+                // Under a typed field: for a DB id, what the game's DB calls the id typed, as it is typed; for any other
+                // number, the values the bank already files clips under.
+                TextBox idBox = input as TextBox;
+                if (idBox != null)
+                {
+                    TextBlock said = new TextBlock
+                    {
+                        Margin = new Thickness(0, 0, 0, 3),
+                        Foreground = Brushes.Gray,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                    };
+                    string spaceName = parameter;
+                    if (space != null)
+                    {
+                        idBox.TextChanged += (sender, e) => said.Text = SoundTrackNaming.DescribeTypedId(spaceName, idBox.Text);
+                        said.Text = SoundTrackNaming.DescribeTypedId(spaceName, idBox.Text);
+                    }
+                    else
+                    {
+                        said.Text = SoundTrackNaming.DescribeBankValues(seen[id]);
+                        said.ToolTip = said.Text;
+                    }
+
+                    StackPanel stack = new StackPanel();
+                    grid.Children.Remove(input);
+                    stack.Children.Add(input);
+                    stack.Children.Add(said);
+                    Grid.SetRow(stack, i);
+                    Grid.SetColumn(stack, 1);
+                    grid.Children.Add(stack);
+                }
+            }
+
+            TextBlock problem = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brushes.IndianRed,
+                Margin = new Thickness(0, 6, 0, 0),
+                Visibility = Visibility.Collapsed,
+            };
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(problem, asked.Count);
+            Grid.SetColumnSpan(problem, 2);
+            grid.Children.Add(problem);
+
+            StackPanel buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+            Button ok = new Button { Content = "Add", Width = 80, Height = 24, IsDefault = true };
+            Button cancel = new Button { Content = "Cancel", Width = 80, Height = 24, Margin = new Thickness(6, 0, 0, 0), IsCancel = true };
+            buttons.Children.Add(ok);
+            buttons.Children.Add(cancel);
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(buttons, asked.Count + 1);
+            Grid.SetColumnSpan(buttons, 2);
+            grid.Children.Add(buttons);
+
+            SoundBankClipKey chosen = null;
+            string chosenName = null;
+            ok.Click += (sender, e) =>
+            {
+                SoundBankClipKey typed = new SoundBankClipKey();
+                foreach (KeyValuePair<uint, int> pair in fixedKey.Values)
+                    typed.Set(pair.Key, pair.Value);
+                for (int i = 0; i < asked.Count; i++)
+                {
+                    int? value = readers[i]();
+                    if (value == null)
+                    {
+                        problem.Text = "Enter a whole number.";
+                        problem.Visibility = Visibility.Visible;
+                        return;
+                    }
+                    typed.Set(asked[i], value.Value);
+                }
+
+                string name = NewClipName(typed);
+                string refusal = SoundBankWriter.RefusalForAudio(_bankResData, _bankChunk, source, name, parameters.Count == 0 ? null : typed);
                 if (refusal != null)
                 {
-                    preview.Text = refusal;
-                    ok.IsEnabled = false;
+                    problem.Text = refusal;
+                    problem.Visibility = Visibility.Visible;
                     return;
                 }
 
-                int already = CountClipsWithKey(typedKey);
-                preview.Text = parameters.Count == 0
-                    ? "The bank has no selection parameter, so the new clip becomes row " + (_bank.Clips.Count + 1)
-                        + " of its one block of rows."
-                    : (already == 0
-                        ? "No clip of this bank is filed under these values yet: the new clip is the only row they find."
-                        : "These values find " + already + (already == 1 ? " clip" : " clips") + " now; with the new one their block holds "
-                            + (already + 1) + " rows.");
-                ok.IsEnabled = true;
+                chosen = typed;
+                chosenName = name;
+                window.DialogResult = true;
             };
 
-            foreach (TextBox box in boxes)
-                box.TextChanged += (sender, e) => refresh();
-            nameBox.TextChanged += (sender, e) => refresh();
-            ok.Click += (sender, e) => { window.DialogResult = true; };
+            window.Content = grid;
+            window.Loaded += (sender, e) => (firstInput ?? (Control)ok).Focus();
 
-            window.Content = panel;
-            refresh();
-            if (boxes.Count > 0)
-                boxes[0].Focus();
-            else
-                nameBox.Focus();
+            // A bank whose clips all share one key, or that is looked up by nothing, has nothing to ask.
+            if (asked.Count == 0)
+            {
+                key = parameters.Count == 0 ? null : fixedKey;
+                return NewClipName(fixedKey);
+            }
 
-            if (window.ShowDialog() != true)
+            if (window.ShowDialog() != true || chosen == null)
                 return null;
 
-            key = parameters.Count == 0 ? null : typedKey;
-            string chosen = nameBox.Text == null ? "" : nameBox.Text.Trim();
-            return chosen.Length == 0 ? null : chosen;
+            key = parameters.Count == 0 ? null : chosen;
+            return chosenName;
+        }
+
+        /// <summary>
+        /// The name whose engine hash becomes the new clip's VariationId: the bank's name, the key's values and a number,
+        /// the first of those no clip of the bank already carries the hash of.
+        /// </summary>
+        private string NewClipName(SoundBankClipKey key)
+        {
+            string stem = SoundTrackNaming.BankTitle(_bankPath);
+            if (key != null && key.Values.Count > 0)
+                stem += " " + string.Join(" ", key.Values.Where(p => p.Key != BankNames.Language)
+                    .Select(p => p.Value.ToString(CultureInfo.InvariantCulture)).ToArray());
+
+            for (int n = 1; n < 100000; n++)
+            {
+                string name = stem.Trim() + " added " + n.ToString(CultureInfo.InvariantCulture);
+                if (!ClipNameTaken(name))
+                    return name;
+            }
+
+            return stem + " " + Guid.NewGuid().ToString("N");
         }
 
         /// <summary>How many of the bank's clips are filed under exactly this key.</summary>
@@ -1110,21 +1482,6 @@ namespace SoundEditorPlugin
             }
 
             return count;
-        }
-
-        /// <summary>A default name for a new clip: the bank's own name and the clip's number, unique in the bank.</summary>
-        private string FallbackClipName()
-        {
-            string title = SoundTrackNaming.BankTitle(_bankPath);
-            int number = _bank == null || _bank.Clips == null ? 1 : _bank.Clips.Count + 1;
-            string baseName = title + " " + number.ToString(CultureInfo.InvariantCulture);
-            if (!ClipNameTaken(baseName))
-                return baseName;
-
-            int suffix = 2;
-            while (ClipNameTaken(baseName + " (" + suffix.ToString(CultureInfo.InvariantCulture) + ")"))
-                suffix++;
-            return baseName + " (" + suffix.ToString(CultureInfo.InvariantCulture) + ")";
         }
 
         /// <summary>True when a clip of this bank already carries the engine hash of this name as its VariationId.</summary>
@@ -1192,25 +1549,29 @@ namespace SoundEditorPlugin
         /// </summary>
         protected override bool EnsureSamples(SoundDataTrack track, int trackIndex)
         {
-            if (_bankClipSources == null || _bankChunk == null)
+            // Read once: an edit on the task window's thread can replace these while a decode runs here.
+            List<BankClipSource> sources = _bankClipSources;
+            byte[] chunk = _bankChunk;
+            if (sources == null || chunk == null)
                 return base.EnsureSamples(track, trackIndex);
 
-            if (track == null || trackIndex < 0 || trackIndex >= _bankClipSources.Count)
+            if (track == null || trackIndex < 0 || trackIndex >= sources.Count)
                 return false;
 
-            if (track.SamplesLoaded && track.Samples != null && track.Samples.Length > 0)
+            if (track.HasSamples)
                 return true;
 
-            BankClipSource source = _bankClipSources[trackIndex];
-            if (source.Length <= 0 || source.Offset < 0 || source.Offset + source.Length > _bankChunk.Length)
+            BankClipSource source = sources[trackIndex];
+            if (source.Length <= 0 || source.Offset < 0 || source.Offset + source.Length > chunk.Length)
             {
+                track.DecodeFailure = "its byte range is outside the chunk that was loaded";
                 App.Logger.LogWarning("Clip #{0} states a byte range outside the chunk that was loaded, so it cannot be decoded.",
                     track.Index);
                 return false;
             }
 
             byte[] clipBytes = new byte[source.Length];
-            Buffer.BlockCopy(_bankChunk, (int)source.Offset, clipBytes, 0, clipBytes.Length);
+            Buffer.BlockCopy(chunk, (int)source.Offset, clipBytes, 0, clipBytes.Length);
 
             int channels, sampleRate;
             string reason;
@@ -1218,17 +1579,17 @@ namespace SoundEditorPlugin
 
             if (decoded == null || decoded.Length == 0)
             {
-                App.Logger.LogWarning("Clip #{0} ({1}) could not be decoded: {2}", track.Index, track.Codec,
-                    reason ?? "no decoder produced audio");
+                track.DecodeFailure = reason ?? "no decoder produced audio";
+                App.Logger.LogWarning("Clip #{0} ({1}) could not be decoded: {2}", track.Index, track.Codec, track.DecodeFailure);
                 return false;
             }
 
-            track.Samples = decoded;
             track.ChannelCount = channels;
             track.SampleRate = sampleRate;
             track.Duration = SoundEdits.DurationSeconds(decoded, channels, sampleRate);
             track.SegmentCount = 1;
-            track.SamplesLoaded = true;
+            track.DecodeFailure = null;
+            track.Samples = decoded;
             return true;
         }
 
@@ -1346,6 +1707,9 @@ namespace SoundEditorPlugin
                 return false;
             }
 
+            if (_bankResRowToAsset != null)
+                return ReplaceClipInOwnChunk(ordinal, bytes, task, reloadList);
+
             if (source.ChunkIndex < 0 || source.ChunkIndex >= _bankChunkDatas.Count || _bankChunkEntries[source.ChunkIndex] == null)
             {
                 App.Logger.LogWarning("This clip's chunk is not loaded from the game data, so the edit cannot be written.");
@@ -1398,6 +1762,45 @@ namespace SoundEditorPlugin
             return true;
         }
 
+        /// <summary>
+        /// Replaces a clip's audio in a bank that keeps each clip in its own chunk: only that chunk changes - the bytes
+        /// before the clip stay, the new clip (padded to 4 bytes) takes the rest - and the bank's .res states the row's
+        /// new ChunkSize and the clip's new Duration (<see cref="SoundBankWriter.ReplaceClipAudioInRows"/>).
+        /// </summary>
+        private bool ReplaceClipInOwnChunk(int ordinal, byte[] bytes, FrostyTaskWindow task, bool reloadList)
+        {
+            ResAssetEntry resEntry = App.AssetManager.GetResEntry(_bankPath);
+            if (resEntry == null)
+            {
+                App.Logger.LogWarning("This asset's .res clip index is not in the loaded game data, so the clip cannot be replaced.");
+                return false;
+            }
+
+            task.Update(status: "Replacing the clip in its chunk...");
+            SoundBankAddResult replaced = SoundBankWriter.ReplaceClipAudioInRows(_bankResData, BankRowsInResOrder(), ordinal, bytes);
+            if (!replaced.Ok)
+            {
+                App.Logger.LogWarning(replaced.Refusal);
+                return false;
+            }
+
+            int assetRow = _bankResRowToAsset[replaced.ChunkRow];
+            if (reloadList)
+            {
+                if (!WriteBankEdit(resEntry, replaced, new Dictionary<int, byte[]> { { assetRow, replaced.RowBytes } }, task, ordinal))
+                    return false;
+            }
+            else if (!WriteBankEditWithoutReload(resEntry, replaced, assetRow, replaced.RowBytes))
+            {
+                return false;
+            }
+
+            if (_bankChunk == null)
+                RebuildBankChunk();
+            LogReport(replaced.Report);
+            return true;
+        }
+
         /// <summary><see cref="WriteBankEdit"/> for one row, leaving the list to the caller.</summary>
         private bool WriteBankEditWithoutReload(ResAssetEntry resEntry, SoundBankAddResult edit, int row, byte[] data)
         {
@@ -1423,39 +1826,6 @@ namespace SoundEditorPlugin
             });
             LinkToAssetOnUiThread(new AssetEntry[] { entry, resEntry });
             return true;
-        }
-
-        /// <summary>
-        /// Imports a file into the selected clip: the clip's audio is replaced by the file's, of any length.
-        ///
-        /// A bank's clip is a byte range of a shared chunk, so changing its length is a cut and an insert:
-        /// `SoundBankWriter.ReplaceClipAudio` pads the new bytes to a 4-byte boundary, moves every clip after it, and
-        /// states the row's `Segments.Duration` as the float32 bits of the new clip's length (FUN_147982530).
-        /// </summary>
-        private void ImportSoundBank(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
-        {
-            int index = 0;
-            Dispatcher?.Invoke(() => { index = SelectedTrackIndex; });
-
-            if (index < 0 || _bankClipSources == null || index >= _bankClipSources.Count)
-            {
-                App.Logger.LogWarning("Select a clip to import into first.");
-                return;
-            }
-
-            task.Update(status: "Encoding the audio file...");
-            byte[] resultBuf = ConvertAudioFileToPcm16Big(ofd);
-            if (resultBuf == null || resultBuf.Length == 0)
-            {
-                App.Logger.LogWarning("The file chosen decodes to no audio, so nothing was written.");
-                return;
-            }
-
-            if (!ReplaceClip(index, _bankClipSources[index], resultBuf, task, true))
-                return;
-
-            App.Logger.Log("Imported {0} into clip #{1}: {2:N0} bytes of audio.",
-                Path.GetFileName(ofd.FileName), index + 1, resultBuf.Length);
         }
 
         // ═══════════════════════════════════════════════════════════

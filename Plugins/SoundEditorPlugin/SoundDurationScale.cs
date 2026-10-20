@@ -48,6 +48,35 @@ namespace SoundEditorPlugin
             return true;
         }
 
+        /// <summary>
+        /// A clip's sample count, rate and channel count from its header, with the sample count read in full: the low
+        /// 29 bits of the big-endian word at +0x08 (the top three are the header type and the loop flag), which is what
+        /// a song longer than 2^24 samples needs. For the list's Time column; the writer keeps <see cref="TryClipSeconds"/>.
+        /// </summary>
+        public static bool TryHeader(byte[] data, long offset, out long samples, out int sampleRate, out int channels)
+        {
+            samples = 0;
+            sampleRate = 0;
+            channels = 0;
+
+            if (!IsClipHeader(data, offset))
+                return false;
+
+            int at = (int)offset;
+            sampleRate = ((data[at + 5] & 0x03) << 16) | (data[at + 6] << 8) | data[at + 7];
+            channels = (data[at + 5] >> 2) + 1;
+            samples = ((long)(data[at + 8] & 0x1F) << 24) | ((long)data[at + 9] << 16) | ((long)data[at + 10] << 8) | data[at + 11];
+            return sampleRate > 0;
+        }
+
+        /// <summary>A clip's length in seconds from its header (<see cref="TryHeader"/>), or 0.</summary>
+        public static double HeaderSeconds(byte[] data, long offset)
+        {
+            long samples;
+            int rate, channels;
+            return TryHeader(data, offset, out samples, out rate, out channels) ? samples / (double)rate : 0.0;
+        }
+
         /// <summary>A length as the float32 bit pattern `Segments.Duration` states.</summary>
         public static uint Float32Bits(double seconds)
         {

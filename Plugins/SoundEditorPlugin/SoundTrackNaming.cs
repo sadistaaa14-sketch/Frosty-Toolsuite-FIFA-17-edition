@@ -7,17 +7,15 @@ using System.Text;
 namespace SoundEditorPlugin
 {
     /// <summary>
-    /// What a bank's clip list shows for a clip: the selection key its row is filed under, said in the game's own
-    /// words.
+    /// What a bank's clip list shows for a clip: the values of the selection key its row is filed under, in the
+    /// game's own words, and nothing else.
     ///
-    /// Every word comes from one of three places, and the tooltip says which:
+    /// The words come from three places:
     ///  * the bank: the key values are the ones FIFA17.exe's lookup gives the row (see <see cref="SoundBankFile"/>);
-    ///  * the game's event systems: a parameter's name and its values' names (<see cref="SoundBankParameterTable"/>,
-    ///    from the EBX dump's `BoxOfficeParameterDescription` and `BoxOfficeParameterEnumValue` records);
-    ///  * the game's database, when one is loaded: the player, team or surname an id names. That a parameter
-    ///    carries such an id is read from its name (`pa_player_id`, `sfx_team_id`, `surname_ID`), not traced
-    ///    through FIFA17.exe, so the name shows the parameter and its value first and the DB's word after it,
-    ///    marked `(DB: ...)`, and the tooltip says what the link rests on.
+    ///  * the game's event systems: a value's name (`home`, `CONTACT_BOTTOM`), from the EBX dump's
+    ///    `BoxOfficeParameterEnumValue` records (<see cref="SoundBankParameterTable"/>);
+    ///  * the game's database, when one is loaded: the player, team or commentary name an id names
+    ///    (<see cref="DatabaseSpace"/>).
     /// Nothing is derived from listening to a clip.
     /// </summary>
     public static class SoundTrackNaming
@@ -25,25 +23,86 @@ namespace SoundEditorPlugin
         private const string Dot = " · ";
 
         /// <summary>
-        /// The game DB table a parameter's name says its values are ids of, or null. Only names that say it outright:
-        /// a player id ends in `player_id` or `db_id` (`pa_player_id`, `player_db_ID`, `ts_def_A_db_ID`), a team id in
-        /// `team_id` or is a home/away id (`sfx_team_id`, `asset_team_ID`, `pa_home_id`, `away_ID`), and `surname_ID`
-        /// is a surname. `team_venue_ID` or `team_position_ID` name something else and are left alone.
+        /// The game DB table a parameter's values are ids of, or null: <c>player</c> (players.playerid), <c>team</c>
+        /// (teams.teamid), <c>commentary</c> (the commentary ids commentarynames names), <c>stadium</c>
+        /// (stadiums.stadiumid) or <c>league</c> (leagues.leagueid).
+        ///
+        /// The answer is the trace's (<see cref="SoundParameterFacts"/>): a parameter has a space only when every
+        /// value FIFA17.exe's code sets it to was followed to that column (or is a 0, -1 or -2 sentinel), apart from the
+        /// message-fed sources its record lists as not traced. In short:
+        ///  * player: set from +8 of a match player (FUN_146faab90), which the team-sheet code fills from
+        ///    players.playerid (FUN_1478a03a0/FUN_14789fc50, FUN_146d6db40), or from the per-player table the commentary
+        ///    copies out of those match players (FUN_14785c6d0), or a story's player the exe looks up among them
+        ///    (FUN_14783fb30, FUN_14783f9b0: FUN_146fe49e0);
+        ///  * team: +4 of a match team, or the match setup's teamids (+0x7c/+0x80), which the match builders fill with
+        ///    the teamid they query leagueteamlinks by (FUN_147aea0b0); the table-analysis record's +0x20, which the
+        ///    exe compares with those teamids (FUN_1478400e0, FUN_147851060);
+        ///  * commentary: the player's commentary id, FUN_147843950 (commonnameid's or lastnameid's commentaryid);
+        ///  * stadium: the match setup's stadium id (+0xa4), which the exe looks audiostadium up by (FUN_147850760);
+        ///  * league: the first of the match setup's two leagueids (+0x84), which the match builder queries leagues by.
+        /// Any other id - story fields the exe ties to no match player or team, the radio messages, the parameters
+        /// FIFA17.exe never names (sfx_team_id, the ts_*_db_ID set) - is shown as its number.
         /// </summary>
         public static string DatabaseSpace(string parameter)
         {
             if (string.IsNullOrEmpty(parameter))
                 return null;
 
-            string p = parameter.ToLowerInvariant();
-            if (p == "surname_id")
-                return "surname";
-            if (p.EndsWith("player_id", StringComparison.Ordinal) || p.EndsWith("db_id", StringComparison.Ordinal))
-                return "player";
-            if (p.EndsWith("team_id", StringComparison.Ordinal) || p == "home_id" || p == "away_id"
-                || p.EndsWith("_home_id", StringComparison.Ordinal) || p.EndsWith("_away_id", StringComparison.Ordinal))
-                return "team";
-            return null;
+            return SoundParameterFacts.SpaceOf(parameter);
+        }
+
+        /// <summary>The DB column a space's ids are: <c>players.playerid</c> for "player".</summary>
+        public static string SpaceColumn(string space)
+        {
+            switch (space)
+            {
+                case "player": return "players.playerid";
+                case "team": return "teams.teamid";
+                case "commentary": return "commentarynames.commentaryid";
+                case "stadium": return "stadiums.stadiumid";
+                case "league": return "leagues.leagueid";
+                default: return null;
+            }
+        }
+
+        /// <summary>
+        /// What the Add Clip window says under an id field as it is typed: the game DB's name for the id, that the DB
+        /// holds no such id, or that the DB is not read. Empty for a parameter that is not a DB id.
+        /// </summary>
+        public static string DescribeTypedId(string parameter, string typed)
+        {
+            string space = DatabaseSpace(parameter);
+            string column = SpaceColumn(space);
+            if (column == null)
+                return "";
+
+            int value;
+            if (!int.TryParse((typed ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value) || value <= 0)
+                return "a " + column;
+            if (!FifaNameLookup.DatabaseAvailable)
+                return "a " + column + " (the game's DB is not read: " + FifaNameLookup.DatabaseNote + ")";
+
+            string source;
+            string name = DatabaseName(new SoundBankKeyValue { Parameter = parameter, Value = value }, out source);
+            return name ?? "no " + column + " " + value.ToString(CultureInfo.InvariantCulture) + " in the game's DB";
+        }
+
+        /// <summary>
+        /// The values a bank already files clips under for one parameter, for the Add Clip window: every value when there
+        /// are a few, else the range and the count.
+        /// </summary>
+        public static string DescribeBankValues(ICollection<int> values)
+        {
+            if (values == null || values.Count == 0)
+                return "no clip of this bank has a value for it yet";
+
+            List<int> sorted = values.OrderBy(v => v).ToList();
+            string count = sorted.Count.ToString(CultureInfo.InvariantCulture) + (sorted.Count == 1 ? " value" : " values");
+            if (sorted.Count <= 8)
+                return "this bank: " + string.Join(", ", sorted.Select(v => v.ToString(CultureInfo.InvariantCulture)).ToArray());
+
+            return "this bank: " + sorted[0].ToString(CultureInfo.InvariantCulture) + ".."
+                + sorted[sorted.Count - 1].ToString(CultureInfo.InvariantCulture) + " (" + count + ")";
         }
 
         /// <summary>The DB's name for a key value, or null; <paramref name="source"/> says what answered.</summary>
@@ -60,12 +119,15 @@ namespace SoundEditorPlugin
             string name;
             string from;
             bool found;
-            if (space == "player")
-                found = FifaNameLookup.TryPlayerName(value.Value, out name, out from);
-            else if (space == "team")
-                found = FifaNameLookup.TryTeamName(value.Value, out name, out from);
-            else
-                found = FifaNameLookup.TrySurname(value.Value, out name, out from);
+            switch (space)
+            {
+                case "player": found = FifaNameLookup.TryPlayerName(value.Value, out name, out from); break;
+                case "team": found = FifaNameLookup.TryTeamName(value.Value, out name, out from); break;
+                case "commentary": found = FifaNameLookup.TryCommentaryName(value.Value, out name, out from); break;
+                case "stadium": found = FifaNameLookup.TryStadiumName(value.Value, out name, out from); break;
+                case "league": found = FifaNameLookup.TryLeagueName(value.Value, out name, out from); break;
+                default: name = null; from = null; found = false; break;
+            }
 
             if (!found || string.IsNullOrWhiteSpace(name))
                 return null;
@@ -75,101 +137,118 @@ namespace SoundEditorPlugin
         }
 
         /// <summary>
-        /// Names one clip of a bank: <paramref name="name"/> for the list, <paramref name="variation"/> for the
-        /// Variation column (which of its block's rows it is), <paramref name="key"/> the raw key, and
-        /// <paramref name="detail"/> the tooltip.
+        /// The words for one key value: an id with the DB's name after it (`158023 Lionel Messi`), a value's own
+        /// name (`home`), or the parameter and its value. Language 0 says nothing: FUN_146213800 looks a clip up with
+        /// the game's language index first and with 0 when that finds nothing, so 0 is the row every language reads.
         /// </summary>
-        public static void Label(SoundBankFile bank, string bankPath, int ordinal, string codecName,
-            out string name, out string variation, out string key, out string detail)
+        public static string ValueWords(SoundBankKeyValue value)
         {
-            int clipCount = bank == null || bank.Clips == null ? 0 : bank.Clips.Count;
-            name = "Clip " + (ordinal + 1).ToString(CultureInfo.InvariantCulture);
-            variation = null;
+            if (value == null)
+                return null;
+
+            string number = value.Value.ToString(CultureInfo.InvariantCulture);
+            if (DatabaseSpace(value.Parameter) != null)
+            {
+                string source;
+                string dbName = DatabaseName(value, out source);
+                return dbName == null ? number : number + " " + dbName;
+            }
+
+            if (value.ParameterId == BankNames.Language)
+                return value.Value == 0 ? null : "language " + number;
+
+            string words = value.ValueName ?? FlagNames(value.ParameterId, value.Value);
+            return words ?? value.Parameter + " " + number;
+        }
+
+        /// <summary>
+        /// The names of a bit-flag value's bits (`CROSSBAR_IN + POST_IN`), when the parameter's named values are all
+        /// single bits and they cover the value exactly; otherwise null.
+        /// </summary>
+        private static string FlagNames(uint parameterId, int value)
+        {
+            SoundBankParameterTable.Entry entry = SoundBankParameterTable.Find(parameterId);
+            if (entry == null || value <= 0 || entry.Values.Length == 0)
+                return null;
+
+            List<string> names = new List<string>();
+            int covered = 0;
+            for (int i = 0; i < entry.Values.Length; i++)
+            {
+                int bit = entry.Values[i];
+                if (bit == 0)
+                    continue;
+                if ((bit & (bit - 1)) != 0)
+                    return null;
+                if ((value & bit) != 0)
+                {
+                    names.Add(entry.ValueNames[i]);
+                    covered |= bit;
+                }
+            }
+
+            return covered == value && names.Count > 1 ? string.Join(" + ", names.ToArray()) : null;
+        }
+
+        /// <summary>
+        /// Names one clip of a bank: <paramref name="name"/> for the list (its key's values in words, or the bank's
+        /// own name and the clip's number when the bank is looked up by nothing), <paramref name="key"/> the raw key
+        /// (`pa_player_id=158023 · pa_team_type=1`), and <paramref name="detail"/> the tooltip: the raw key and the
+        /// clip's subtitles.
+        /// </summary>
+        public static void Label(SoundBankFile bank, string bankPath, int ordinal,
+            out string name, out string key, out string detail)
+        {
+            name = Title(bankPath) + " " + (ordinal + 1).ToString(CultureInfo.InvariantCulture);
             key = null;
 
-            StringBuilder about = new StringBuilder();
-            about.Append("clip ").Append((ordinal + 1).ToString(CultureInfo.InvariantCulture)).Append(" of ")
-                .Append(clipCount.ToString(CultureInfo.InvariantCulture));
-            if (!string.IsNullOrEmpty(codecName))
-                about.Append(Dot).Append(codecName);
-
-            int row = bank == null ? -1 : bank.RowOfClip(ordinal);
-            if (row < 0)
+            List<string> about = new List<string>();
+            IList<SoundBankKeyValue> values = bank == null ? null : bank.KeyOfClip(ordinal);
+            if (values != null && values.Count > 0)
             {
-                about.Append(Dot).Append("no Selection row plays this clip");
-                detail = about.ToString();
+                key = string.Join(Dot, values.Select(v => v.Parameter + "=" + v.Value.ToString(CultureInfo.InvariantCulture)).ToArray());
+                List<string> words = values.Select(ValueWords).Where(w => !string.IsNullOrEmpty(w)).ToList();
+
+                // Language 0 says nothing beside other words; a clip filed under Language alone is named by it.
+                SoundBankKeyValue language = values.FirstOrDefault(v => v.ParameterId == BankNames.Language);
+                if (words.Count == 0 && language != null)
+                    words.Add("language " + language.Value.ToString(CultureInfo.InvariantCulture));
+
+                if (words.Count > 0)
+                    name = string.Join(Dot, words.ToArray());
+                about.Add(key);
+            }
+
+            if (bank != null)
+            {
+                foreach (SoundBankSubtitle subtitle in bank.SubtitlesOfClip(ordinal))
+                    about.Add(subtitle.ToString());
+            }
+
+            detail = about.Count == 0 ? null : string.Join(Dot, about.ToArray());
+        }
+
+        /// <summary>
+        /// Tells clips with one name apart: the second and later get ` (2)`, ` (3)`... in list order, the first keeps
+        /// the name. A bank files several takes under one key (FUN_147986f40 gives a key a block of rows), and those
+        /// takes have the same words.
+        /// </summary>
+        public static void NumberRepeats(IList<string> names)
+        {
+            if (names == null)
                 return;
-            }
 
-            about.Append(Dot).Append("Selection row ").Append(row.ToString(CultureInfo.InvariantCulture));
-
-            IList<SoundBankKeyValue> values = bank.KeyOfClip(ordinal);
-            if (values == null || values.Count == 0)
+            Dictionary<string, int> seen = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < names.Count; i++)
             {
-                // A bank with no selection parameter plays its rows for an event that passes none: the rows are the
-                // bank's variations, and that is what the clip is.
-                about.Append(Dot).Append("the bank has no selection parameter, so every clip is one of its variations");
-                name = Title(bankPath) + " " + (ordinal + 1).ToString(CultureInfo.InvariantCulture);
-                detail = about.ToString();
-                return;
+                string name = names[i] ?? "";
+                int count;
+                seen.TryGetValue(name, out count);
+                count++;
+                seen[name] = count;
+                if (count > 1)
+                    names[i] = name + " (" + count.ToString(CultureInfo.InvariantCulture) + ")";
             }
-
-            List<string> words = new List<string>();
-            List<string> raw = new List<string>();
-            List<string> sources = new List<string>();
-            foreach (SoundBankKeyValue value in values)
-            {
-                raw.Add(value.Parameter + "=" + value.Value.ToString(CultureInfo.InvariantCulture));
-
-                string dbSource;
-                string dbName = DatabaseName(value, out dbSource);
-                if (dbName != null)
-                {
-                    words.Add(value.Parameter + " " + value.Value.ToString(CultureInfo.InvariantCulture) + " (DB: " + dbName + ")");
-                    sources.Add(value.Parameter + " " + value.Value.ToString(CultureInfo.InvariantCulture) + " is " + dbName
-                        + " in the game's " + DatabaseSpace(value.Parameter) + " table (" + dbSource
-                        + "; read as a DB id from the parameter's name, not traced in FIFA17.exe)");
-                }
-                else if (value.ValueName != null)
-                {
-                    words.Add(value.ValueName);
-                }
-                else if (value.ParameterId == BankNames.Language)
-                {
-                    // FUN_146213800 looks a clip up with the game's language index first and with 0 when that finds
-                    // nothing, so a row stated for 0 is the one every language falls back to.
-                    if (value.Value != 0)
-                        words.Add("language " + value.Value.ToString(CultureInfo.InvariantCulture));
-                }
-                else
-                {
-                    words.Add(value.Parameter + " " + value.Value.ToString(CultureInfo.InvariantCulture));
-                }
-            }
-
-            key = string.Join(Dot, raw.ToArray());
-            name = words.Count > 0 ? string.Join(Dot, words.ToArray()) : key;
-
-            SoundBankRowPlace place = bank.PlaceOfClip(ordinal);
-            if (place != null && place.Count > 1)
-            {
-                variation = (place.Position + 1).ToString(CultureInfo.InvariantCulture) + " of "
-                    + place.Count.ToString(CultureInfo.InvariantCulture);
-            }
-
-            about.Append(Dot).Append("key ").Append(string.Join(", ", values.Select(v => v.ToString()).ToArray()));
-            if (place != null)
-            {
-                about.Append(Dot).Append("its block in group ").Append(place.Group.ToString(CultureInfo.InvariantCulture))
-                    .Append(" is rows ").Append(place.Start.ToString(CultureInfo.InvariantCulture)).Append("..")
-                    .Append((place.Start + place.Count - 1).ToString(CultureInfo.InvariantCulture))
-                    .Append(place.Count > 1 ? " (" + place.Count.ToString(CultureInfo.InvariantCulture) + " clips share this key)" : "");
-            }
-
-            foreach (string line in sources)
-                about.Append(Dot).Append(line);
-
-            detail = about.ToString();
         }
 
         /// <summary>The bank's own name, from its path: <c>bpa_goal_team_gen_eng</c> for <c>.../bpa_goal_team_gen_eng.res</c>.</summary>

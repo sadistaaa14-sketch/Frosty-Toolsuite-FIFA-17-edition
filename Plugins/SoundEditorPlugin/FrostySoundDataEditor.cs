@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -329,25 +330,37 @@ namespace SoundEditorPlugin
         public string Codec { get; set; }
 
         /// <summary>
-        /// Which row of its key's block this clip is, as `1 of 2`, when a bank files more than one clip under one
-        /// selection key. FUN_147986f40 turns a key into a block of Selection rows (a start and a count), so clips
-        /// that share a key are told apart by their place in that block, and that place is what this column says.
-        /// Empty when the clip is the only one its key finds, and for an asset that is not a bank.
+        /// How long the clip plays, in seconds. A loader states it from the clip's own header (its sample count over
+        /// its rate) before anything is decoded, so the list shows every clip's length at open; a decode or an edit
+        /// states it again from the samples.
         /// </summary>
-        public string Variation { get; set; }
-        public double Duration { get; set; }
+        public double Duration
+        {
+            get => duration;
+            set { duration = value; NotifyPropertyChanged(); }
+        }
+        private double duration;
+
         public int SegmentCount { get; set; }
         public string Language { get; set; }
         public ImageSource WaveForm { get; set; }
         public int SampleRate { get; set; }
         public int ChannelCount { get; set; }
-        public short[] Samples { get; set; }
+
+        /// <summary>The decoded audio, interleaved, or null before the clip is decoded.</summary>
+        public short[] Samples
+        {
+            get => samples;
+            set { samples = value; NotifyPropertyChanged(); NotifyPropertyChanged(nameof(HasSamples)); }
+        }
+        private short[] samples;
+
         public uint LoopStart { get; set; }
         public uint LoopEnd { get; set; }
 
         /// <summary>
-        /// The key/value detail of this clip: its place, its codec and the bank keys it answers to. It
-        /// belongs beside the name because a name alone cannot be checked - the keys can.
+        /// The tooltip of the clip's row: the key the bank files it under, and its subtitles. Nothing about where its
+        /// bytes are or how a block of rows is laid out - those are properties of the file, not of the clip.
         /// </summary>
         public string Detail
         {
@@ -360,18 +373,39 @@ namespace SoundEditorPlugin
         public string ClipText { get; set; }
 
         /// <summary>
-        /// The bank key this clip answers to, as the bank states it: <c>sfx_team_id=241</c>. It is the clip's
-        /// own key, not its bank's pool, and it is what makes a row checkable - a name can be wrong, the key
-        /// the file states cannot.
+        /// The bank key this clip answers to, as the bank states it: <c>pa_player_id=158023</c>. Searchable, and
+        /// copied by Copy Keys.
         /// </summary>
         public string KeyText { get; set; }
 
+        /// <summary>True when the track's audio is in <see cref="Samples"/>.</summary>
+        public bool HasSamples => samples != null && samples.Length > 0;
+
         /// <summary>
-        /// True once the track's audio is in <see cref="Samples"/>. A bank with thousands of clips
-        /// decodes the ones it is asked for rather than all of them at open, and this is what says
-        /// whether that has happened for this track.
+        /// Why the last attempt to decode this clip produced no audio, or null. Shown under the list instead of a
+        /// clip that silently does nothing when it is played.
         /// </summary>
-        public bool SamplesLoaded { get; set; }
+        public string DecodeFailure
+        {
+            get => decodeFailure;
+            set { decodeFailure = value; NotifyPropertyChanged(); }
+        }
+        private string decodeFailure;
+
+        /// <summary>
+        /// Decodes the clip into <see cref="Samples"/> the first time it is asked for, and returns null on success or
+        /// why it failed. Set by a loader that lists clips from their headers instead of decoding all of them to open
+        /// the tab; null for a track whose samples came with it. Runs on a background thread.
+        /// </summary>
+        public Func<SoundDataTrack, string> Decoder { get; set; }
+
+        /// <summary>Checked in the list's select mode (a 3-second hold), for the commands that act on many clips.</summary>
+        public bool IsChecked
+        {
+            get => isChecked;
+            set { if (isChecked == value) return; isChecked = value; NotifyPropertyChanged(); }
+        }
+        private bool isChecked;
 
         /// <summary>
         /// The name the user sees. Settable: renaming a track is a label for the session and for the
@@ -399,8 +433,11 @@ namespace SoundEditorPlugin
         public SoundDataTrack track;
         public event RoutedEventHandler OnFinishedPlaying;
         public double Progress => (voice.State.SamplesPlayed - (loopPtr / track.ChannelCount) < 0) ? voice.State.SamplesPlayed / (double)(SampleCount / track.ChannelCount) : (voice.State.SamplesPlayed - (loopPtr / track.ChannelCount)) / (double)(SampleCount / track.ChannelCount);
-        public long SampleCount => track.Samples.Length;
+        public long SampleCount => samples.Length;
 
+        // The array the voice was started with. Browsing and exports give a track's samples back (set them to null)
+        // while it may still be sounding, and the voice's buffers are filled on XAudio2's own thread.
+        private readonly short[] samples;
         private SourceVoice voice;
         private AudioBuffer buffer;
         private int bufferPtr;
@@ -410,6 +447,7 @@ namespace SoundEditorPlugin
         public SoundWave(SoundDataTrack inTrack, AudioPlayer player)
         {
             track = inTrack;
+            samples = inTrack.Samples ?? new short[0];
 
             WaveFormatExtensible format = new WaveFormatExtensible(track.SampleRate, 16, track.ChannelCount);
             switch (track.ChannelCount)
@@ -448,7 +486,7 @@ namespace SoundEditorPlugin
                 // interleave channels
                 while (DS.Position < DS.Length)
                 {
-                    DS.Write(track.Samples[bufferPtr]);
+                    DS.Write(samples[bufferPtr]);
                     bufferPtr++;
 
                     if (track.LoopEnd != 0 && bufferPtr == track.LoopEnd)
@@ -562,8 +600,20 @@ namespace SoundEditorPlugin
     [TemplatePart(Name = PART_SoundCopyNameMenuItem, Type = typeof(MenuItem))]
     [TemplatePart(Name = PART_SoundCopyKeysMenuItem, Type = typeof(MenuItem))]
     [TemplatePart(Name = PART_SoundRenameMenuItem, Type = typeof(MenuItem))]
+    [TemplatePart(Name = PART_WaveFormStatus, Type = typeof(TextBlock))]
+    [TemplatePart(Name = PART_SelectBar, Type = typeof(FrameworkElement))]
+    [TemplatePart(Name = PART_SelectCountText, Type = typeof(TextBlock))]
+    [TemplatePart(Name = PART_SelectAllButton, Type = typeof(Button))]
+    [TemplatePart(Name = PART_SelectNoneButton, Type = typeof(Button))]
+    [TemplatePart(Name = PART_SelectDoneButton, Type = typeof(Button))]
     public class FrostySoundDataEditor : FrostyAssetEditor
     {
+        private const string PART_WaveFormStatus = "PART_WaveFormStatus";
+        private const string PART_SelectBar = "PART_SelectBar";
+        private const string PART_SelectCountText = "PART_SelectCountText";
+        private const string PART_SelectAllButton = "PART_SelectAllButton";
+        private const string PART_SelectNoneButton = "PART_SelectNoneButton";
+        private const string PART_SelectDoneButton = "PART_SelectDoneButton";
         private const string PART_TracksListBox = "PART_TracksListBox";
         private const string PART_PlayButton = "PART_PlayButton";
         private const string PART_StopButton = "PART_StopButton";
@@ -639,9 +689,37 @@ namespace SoundEditorPlugin
         private Image waveFormImage;
         private System.Windows.Shapes.Line progressLine;
 
+        /// <summary>One line over the waveform while the selected clip decodes, or why it could not be.</summary>
+        private TextBlock waveFormStatus;
+
         protected AudioPlayer audioPlayer;
         private bool bFirstTime = true;
         private string filterText;
+
+        /// <summary>
+        /// One decode at a time. The EA Layer 3 decoder is a native library this plugin calls through one set of
+        /// statics, and vgmstream is a process per clip; the list's selection, Play, an export and an edit all decode,
+        /// and this is what keeps two of them from running at once. The UI thread never waits on it: selection and
+        /// Play hand the decode to a background task (<see cref="DecodeAsync"/>).
+        /// </summary>
+        private readonly object decodeGate = new object();
+
+        /// <summary>The decode a track is waiting on, so selecting it again or pressing Play joins it. UI thread only.</summary>
+        private readonly Dictionary<SoundDataTrack, Task<bool>> decodeTasks = new Dictionary<SoundDataTrack, Task<bool>>();
+
+        /// <summary>The clip the user is looking at; a queued decode for any other clip is dropped when its turn comes.</summary>
+        private volatile SoundDataTrack wantedTrack;
+
+        // Select mode: a 3-second hold on a clip shows a check box on every row, and the commands act on the checked clips.
+        private System.Windows.Threading.DispatcherTimer holdTimer;
+        private SoundDataTrack holdTrack;
+        private System.Windows.Point holdPoint;
+        private SoundDataTrack checkAnchor;
+        private FrameworkElement selectBar;
+        private TextBlock selectCountText;
+
+        /// <summary>True while the list shows its check boxes (after a 3-second hold), until Done or Escape.</summary>
+        protected bool SelectMode { get; private set; }
 
         /// <summary>What each track's samples were before the edits that were written to the asset.</summary>
         protected readonly TrackEditHistory EditHistory = new TrackEditHistory();
@@ -733,9 +811,12 @@ namespace SoundEditorPlugin
             waveFormCanvas = GetTemplateChild(PART_WaveFormCanvas) as Canvas;
             waveFormImage = GetTemplateChild(PART_WaveFormImage) as Image;
             progressLine = GetTemplateChild(PART_ProgressLine) as System.Windows.Shapes.Line;
+            waveFormStatus = GetTemplateChild(PART_WaveFormStatus) as TextBlock;
 
             if (waveFormCanvas != null)
                 waveFormCanvas.SizeChanged += (s, e) => SizeWaveForm();
+
+            WireSelectMode();
 
             // A subclass that contributes its own "export every track" command keeps that one command,
             // so the menu never offers two ways to write the same folder. The decision needs the loaded
@@ -867,8 +948,9 @@ namespace SoundEditorPlugin
             if (needle.Length == 0)
                 return true;
 
-            return ContainsText(track.Name, needle) || ContainsText(track.Detail, needle)
-                || ContainsText(track.ClipText, needle) || ContainsText(track.Codec, needle);
+            return ContainsText(track.Name, needle) || ContainsText(track.Detail, needle) || ContainsText(track.KeyText, needle)
+                || ContainsText(track.ClipText, needle) || ContainsText(track.Codec, needle)
+                || track.Index.ToString(CultureInfo.InvariantCulture) == needle;
         }
 
         private static bool ContainsText(string haystack, string needle)
@@ -919,6 +1001,12 @@ namespace SoundEditorPlugin
             get { return null; }
         }
 
+        /// <summary>The summary's tooltip; the summary itself when a subclass has nothing more to say.</summary>
+        protected virtual string BankSummaryToolTip
+        {
+            get { return null; }
+        }
+
         protected void RefreshBankSummary()
         {
             if (bankSummaryText == null)
@@ -936,41 +1024,32 @@ namespace SoundEditorPlugin
             }
 
             bankSummaryText.Text = summary;
-            bankSummaryText.ToolTip = summary;
+            string tip = BankSummaryToolTip;
+            bankSummaryText.ToolTip = string.IsNullOrEmpty(tip) ? summary
+                : (object)new TextBlock { Text = tip, TextWrapping = TextWrapping.Wrap, MaxWidth = 640 };
+            ToolTipService.SetShowDuration(bankSummaryText, 60000);
         }
 
         /// <summary>
-        /// The line a track that only knows what it is gets: where it sits, what it is encoded in, how
-        /// long it is and how many channels it has. A loader that knows more - a bank clip has a player
-        /// or a team behind it - fills its own line in instead.
+        /// The tooltip a track that only knows what it is gets: what it is encoded in, its rate and its channels. A
+        /// loader that knows more - a bank clip has a key behind it - fills its own in instead.
         /// </summary>
         protected static string DescribeTrack(SoundDataTrack track, int number, int total)
         {
-            StringBuilder text = new StringBuilder();
-            text.Append("clip ").Append(number).Append(" of ").Append(total);
-
+            List<string> parts = new List<string>();
             if (!string.IsNullOrEmpty(track.Codec))
-                text.Append(" · ").Append(track.Codec);
-
+                parts.Add(track.Codec);
             if (track.SampleRate > 0)
-                text.Append(" · ").Append(track.SampleRate.ToString("N0")).Append(" Hz");
-
+                parts.Add(track.SampleRate.ToString("N0", CultureInfo.InvariantCulture) + " Hz");
             if (track.ChannelCount > 0)
-                text.Append(" · ").Append(track.ChannelCount)
-                    .Append(track.ChannelCount == 1 ? " channel" : " channels");
+                parts.Add(track.ChannelCount + (track.ChannelCount == 1 ? " channel" : " channels"));
 
-            if (track.Duration > 0)
-                text.Append(" · ").Append(track.Duration.ToString("0.###")).Append(" s");
-
-            if (track.SegmentCount > 1)
-                text.Append(" · ").Append(track.SegmentCount).Append(" segments");
-
-            // The localized wave path used to hang the language off the list as a column of its own; it
-            // is part of what the clip is, so it belongs in the line that says what the clip is.
+            // The localized wave path used to hang the language off the list as a column of its own; it is part of what
+            // the clip is, so it belongs in the line that says what the clip is.
             if (!string.IsNullOrEmpty(track.Language))
-                text.Append(" · ").Append(track.Language);
+                parts.Add(track.Language);
 
-            return text.ToString();
+            return parts.Count == 0 ? null : string.Join(" \u00b7 ", parts.ToArray());
         }
 
         /// <summary>
@@ -983,7 +1062,10 @@ namespace SoundEditorPlugin
             ApplyFilter();
         }
 
-        /// <summary>One line about the selected clip: which clip it is and what it is called.</summary>
+        /// <summary>
+        /// One line about the selected clip: its number and its name, and - only when there is something to say - that
+        /// it is still decoding or why it could not be decoded.
+        /// </summary>
         private void UpdateDetailText()
         {
             if (detailText == null)
@@ -998,20 +1080,17 @@ namespace SoundEditorPlugin
             StringBuilder text = new StringBuilder();
 
             if (track.Index > 0)
-                text.Append("#").Append(track.Index).Append(" · ");
+                text.Append("#").Append(track.Index).Append(" \u00b7 ");
 
             text.Append(track.Name);
 
-            if (!string.IsNullOrEmpty(track.Detail))
-                text.Append(" · ").Append(track.Detail);
-
-            if (!string.IsNullOrEmpty(track.Variation))
-                text.Append(" \u00b7 variation ").Append(track.Variation);
-
-            // Only what the clip is: where a name came from, what its byte offset is and how a research table read
-            // its audio are properties of the tools, not of the clip this line is about.
-            if (!track.SamplesLoaded)
-                text.Append(" · audio not decoded yet");
+            if (!track.HasSamples)
+            {
+                if (track.DecodeFailure != null)
+                    text.Append(" \u00b7 could not be decoded: ").Append(track.DecodeFailure);
+                else if (decodeTasks.ContainsKey(track))
+                    text.Append(" \u00b7 decoding\u2026");
+            }
 
             detailText.Text = text.ToString();
         }
@@ -1060,7 +1139,8 @@ namespace SoundEditorPlugin
                 return;
             }
 
-            string text = string.IsNullOrEmpty(track.Detail) ? (track.Name ?? "") : track.Detail;
+            string text = !string.IsNullOrEmpty(track.KeyText) ? track.KeyText
+                : (string.IsNullOrEmpty(track.Detail) ? (track.Name ?? "") : track.Detail);
             Clipboard.SetText(text);
             App.Logger.Log("Copied the keys of track #{0}: {1}", track.Index, text);
         }
@@ -1090,51 +1170,202 @@ namespace SoundEditorPlugin
         }
 
         /// <summary>
-        /// Makes sure a track's audio is in memory, decoding it when the asset stores clips inside a
-        /// shared chunk rather than one chunk per track.
-        ///
-        /// Returns false when the audio cannot be decoded, with the reason already in the log, so a
-        /// caller can stop instead of playing or editing silence. The base implementation has nothing to
-        /// decode: a track built from its own chunk already carries its samples.
+        /// Makes sure a track's audio is in memory, decoding it if it is not, one decode at a time
+        /// (<see cref="decodeGate"/>). Returns false when the audio cannot be decoded, with the reason in the track's
+        /// <see cref="SoundDataTrack.DecodeFailure"/> and in the log, so a caller can stop instead of playing or
+        /// editing silence. Any thread. A caller that goes on to read the samples takes them with
+        /// <see cref="DecodedSamples"/> instead, which hands over the array itself.
         /// </summary>
-        protected bool EnsureSamples(int trackIndex)
+        protected bool EnsureSamplesLocked(SoundDataTrack track, int trackIndex)
         {
-            if (trackIndex < 0 || TracksList == null || trackIndex >= TracksList.Count)
+            if (track == null)
                 return false;
+            if (track.HasSamples)
+                return true;
 
-            return EnsureSamples(TracksList[trackIndex], trackIndex);
+            lock (decodeGate)
+                return EnsureSamples(track, trackIndex);
         }
 
         /// <summary>
-        /// The same, for a track the caller already holds; this is the one a subclass overrides. It is handed the
-        /// track so that it never reads <see cref="TracksList"/>: that is a dependency property, and WPF throws when
-        /// any thread but the UI thread reads one - which the export task, running on the task window's thread, did.
+        /// The track's samples, decoded first when they are not in memory; null when the clip cannot be decoded (the
+        /// reason is in <see cref="SoundDataTrack.DecodeFailure"/>). The array is the caller's to read: browsing may give
+        /// the track's own reference back later (<see cref="RememberDecoded"/>), and that never touches this one. Any
+        /// thread.
+        /// </summary>
+        protected short[] DecodedSamples(SoundDataTrack track, int trackIndex)
+        {
+            if (track == null)
+                return null;
+
+            lock (decodeGate)
+            {
+                if (!EnsureSamples(track, trackIndex))
+                    return null;
+                return track.Samples;
+            }
+        }
+
+        /// <summary>
+        /// Gives back samples that were decoded only for one job (an export), unless something replaced them
+        /// meanwhile. Any thread.
+        /// </summary>
+        protected void ReleaseSamples(SoundDataTrack track, short[] samples)
+        {
+            if (track == null || samples == null)
+                return;
+
+            lock (decodeGate)
+            {
+                if (ReferenceEquals(track.Samples, samples))
+                    track.Samples = null;
+            }
+        }
+
+        /// <summary>
+        /// Decodes one track; this is the one a subclass overrides. It is handed the track so that it never reads
+        /// <see cref="TracksList"/>: that is a dependency property, and WPF throws when any thread but the UI thread
+        /// reads one. The base runs the track's own <see cref="SoundDataTrack.Decoder"/>, which a loader that lists
+        /// clips from their headers sets; a track that came with its samples has nothing to decode.
         /// </summary>
         protected virtual bool EnsureSamples(SoundDataTrack track, int trackIndex)
         {
-            return track != null && track.Samples != null && track.Samples.Length > 0;
-        }
-
-        /// <summary>
-        /// Decodes the selected track if it needs it, with a wait cursor while the decoder runs, and
-        /// hands back the track and its index in the asset.
-        /// </summary>
-        private bool EnsureSelectedSamples(out int trackIndex, out SoundDataTrack track)
-        {
-            trackIndex = SelectedTrackIndex;
-            track = trackIndex >= 0 ? TracksList[trackIndex] : null;
-
             if (track == null)
+                return false;
+            if (track.HasSamples)
+                return true;
+            if (track.Decoder == null)
             {
-                App.Logger.LogWarning("Select a track first.");
+                if (track.DecodeFailure == null)
+                    track.DecodeFailure = "this clip carries no audio this editor can read";
                 return false;
             }
 
-            if (EnsureSamples(trackIndex))
-                return true;
+            string failure;
+            try
+            {
+                failure = track.Decoder(track);
+            }
+            catch (Exception ex)
+            {
+                failure = ex.Message;
+            }
 
-            App.Logger.LogWarning("The audio of track #{0} could not be decoded, so it cannot be played or edited; see the warnings above.", track.Index);
+            if (failure == null && track.HasSamples)
+            {
+                track.DecodeFailure = null;
+                return true;
+            }
+
+            track.DecodeFailure = failure ?? "no decoder produced audio";
+            App.Logger.LogWarning("Clip #{0} ({1}) could not be decoded: {2}", track.Index, track.Codec ?? "unknown codec", track.DecodeFailure);
             return false;
+        }
+
+        /// <summary>
+        /// The decode of <paramref name="track"/>, on a background thread, joined when one is already running. With
+        /// <paramref name="onlyIfWanted"/> the decode is dropped (answering false, no failure) when, by the time its turn
+        /// comes, the user has moved on to another clip: browsing a list with the arrow keys would otherwise queue a
+        /// decode for every clip it passed. UI thread only.
+        /// </summary>
+        protected Task<bool> DecodeAsync(SoundDataTrack track, int trackIndex, bool onlyIfWanted)
+        {
+            if (track == null)
+                return Task.FromResult(false);
+            if (track.HasSamples)
+                return Task.FromResult(true);
+
+            // A decode that was dropped because the user had moved on (it answered false and left no failure) is not
+            // joined: it is finished and decoded nothing, so this asks again.
+            Task<bool> running;
+            if (decodeTasks.TryGetValue(track, out running))
+            {
+                if (!running.IsCompleted || track.DecodeFailure != null)
+                    return running;
+                decodeTasks.Remove(track);
+            }
+
+            Task<bool> task = Task.Run(() =>
+            {
+                lock (decodeGate)
+                {
+                    if (track.HasSamples)
+                        return true;
+                    if (onlyIfWanted && !ReferenceEquals(wantedTrack, track))
+                        return false;
+                    return EnsureSamples(track, trackIndex);
+                }
+            });
+
+            decodeTasks[track] = task;
+            task.ContinueWith(t =>
+            {
+                Task<bool> registered;
+                if (decodeTasks.TryGetValue(track, out registered) && ReferenceEquals(registered, task))
+                    decodeTasks.Remove(track);
+                if (t.Status == TaskStatus.RanToCompletion && t.Result && track.HasSamples)
+                    RememberDecoded(track);
+            }, TaskScheduler.FromCurrentSynchronizationContext());
+            return task;
+        }
+
+        /// <summary>
+        /// How many decoded samples browsing may keep: past this, the clips decoded longest ago give theirs back (their
+        /// waveform and length stay, and selecting one decodes it again). An EA Trax song is 30 to 60 MB of samples, so
+        /// a bank's worth kept by browsing it was gigabytes.
+        /// </summary>
+        private const long DecodedSampleBudget = 256L * 1024 * 1024;   // samples (2 bytes each): 512 MB
+
+        private readonly LinkedList<SoundDataTrack> decodedOrder = new LinkedList<SoundDataTrack>();
+
+        /// <summary>
+        /// Notes a clip browsing decoded, and gives back the samples of the clips decoded longest ago while the total
+        /// is past <see cref="DecodedSampleBudget"/>. The selected clip and the one just decoded keep theirs. Nothing is
+        /// freed while a decode or an export holds the gate; the next decode tries again. UI thread only.
+        /// </summary>
+        private void RememberDecoded(SoundDataTrack track)
+        {
+            LinkedListNode<SoundDataTrack> node = decodedOrder.Find(track);
+            if (node != null)
+                decodedOrder.Remove(node);
+            decodedOrder.AddFirst(track);
+
+            // Summed from the tracks rather than kept as a running count: an edit replaces a track's samples and an
+            // export gives them back, and neither goes through here.
+            long total = 0;
+            foreach (SoundDataTrack t in decodedOrder)
+                total += t.Samples == null ? 0 : t.Samples.LongLength;
+            if (total <= DecodedSampleBudget)
+                return;
+
+            if (!System.Threading.Monitor.TryEnter(decodeGate))
+                return;
+            try
+            {
+                SoundDataTrack selected = tracksListBox?.SelectedItem as SoundDataTrack;
+                LinkedListNode<SoundDataTrack> last = decodedOrder.Last;
+                while (total > DecodedSampleBudget && last != null)
+                {
+                    LinkedListNode<SoundDataTrack> previous = last.Previous;
+                    SoundDataTrack old = last.Value;
+                    if (old.Samples == null)
+                    {
+                        decodedOrder.Remove(last);
+                    }
+                    else if (!ReferenceEquals(old, selected) && !ReferenceEquals(old, track))
+                    {
+                        total -= old.Samples.LongLength;
+                        old.Samples = null;
+                        decodedOrder.Remove(last);
+                    }
+
+                    last = previous;
+                }
+            }
+            finally
+            {
+                System.Threading.Monitor.Exit(decodeGate);
+            }
         }
 
         private void StopButton_Click(object sender, RoutedEventArgs e)
@@ -1151,11 +1382,25 @@ namespace SoundEditorPlugin
             if (!(tracksListBox.SelectedItem is SoundDataTrack currentTrack))
                 return;
 
-            // A bank clip has no samples until it is asked for, so playing decodes it first rather than
-            // handing the audio layer a track whose samples are still in the chunk.
-            if (!EnsureSamples(SelectedTrackIndex))
+            // A clip listed from its header has no samples until it is asked for: Play joins (or starts) its decode,
+            // which runs off the UI thread, and plays when it is done.
+            int index = SelectedTrackIndex;
+            wantedTrack = currentTrack;
+            playButton.IsEnabled = false;
+            bool decoded = await DecodeAsync(currentTrack, index, false);
+            if (!decoded || !currentTrack.HasSamples)
             {
-                App.Logger.LogWarning("Track #{0} has no decodable audio, so there is nothing to play.", currentTrack.Index);
+                playButton.IsEnabled = tracksListBox.SelectedItem != null;
+                UpdateDetailText();
+                ShowWaveFormStatus(currentTrack);
+                App.Logger.LogWarning("Track #{0} has no decodable audio ({1}), so there is nothing to play.",
+                    currentTrack.Index, currentTrack.DecodeFailure ?? "no decoder produced audio");
+                return;
+            }
+
+            if (!ReferenceEquals(tracksListBox.SelectedItem, currentTrack))
+            {
+                playButton.IsEnabled = tracksListBox.SelectedItem != null;
                 return;
             }
 
@@ -1192,7 +1437,7 @@ namespace SoundEditorPlugin
             }
         }
 
-        private void TracksListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private async void TracksListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (tracksListBox.SelectedItem == null)
                 return;
@@ -1202,33 +1447,65 @@ namespace SoundEditorPlugin
             if (!IsPlaying)
                 playButton.IsEnabled = true;
 
-            // Browsing a bank should show the clip you are looking at: its audio is decoded and its
-            // waveform drawn when it is selected, not when the asset is opened. A bank can hold
-            // thousands of clips behind one shared chunk, and decoding all of them to open a tab is
-            // minutes of work for audio nobody has asked to hear.
+            // Browsing a bank shows the clip you are looking at: its audio is decoded and its waveform drawn when it is
+            // selected, not when the asset is opened, and both happen off the UI thread - a vgmstream decode is a
+            // process start per clip, and a song is seconds of EA Layer 3. The list stays live while they run.
             int index = SelectedTrackIndex;
-            if (index >= 0 && tracksListBox.SelectedItem is SoundDataTrack track)
-            {
-                if (!track.SamplesLoaded)
-                {
-                    Mouse.OverrideCursor = Cursors.Wait;
-                    try
-                    {
-                        EnsureSamples(index);
-                    }
-                    finally
-                    {
-                        Mouse.OverrideCursor = null;
-                    }
-                }
-
-                if (track.WaveForm == null && track.Samples != null && track.Samples.Length > 0)
-                    track.WaveForm = RenderWaveform(track.Samples);
-            }
+            SoundDataTrack track = tracksListBox.SelectedItem as SoundDataTrack;
+            wantedTrack = track;
 
             ShowSelectedWaveForm();
             ResetProgressMarker();
             UpdateDetailText();
+
+            if (index < 0 || track == null)
+                return;
+
+            if (!track.HasSamples)
+            {
+                ShowWaveFormStatus(track);
+                await DecodeAsync(track, index, true);
+                if (!ReferenceEquals(tracksListBox.SelectedItem, track))
+                    return;
+
+                // Dropped while the user was elsewhere and back on it now: ask once more.
+                if (!track.HasSamples && track.DecodeFailure == null)
+                {
+                    await DecodeAsync(track, index, true);
+                    if (!ReferenceEquals(tracksListBox.SelectedItem, track))
+                        return;
+                }
+            }
+
+            short[] decodedSamples = track.Samples;
+            if (track.WaveForm == null && decodedSamples != null && decodedSamples.Length > 0)
+            {
+                short[] samples = decodedSamples;
+                double loopStart = track.LoopEnd > track.LoopStart && samples.Length > 0 ? track.LoopStart / (double)samples.Length : -1;
+                double loopEnd = track.LoopEnd > track.LoopStart && samples.Length > 0 ? track.LoopEnd / (double)samples.Length : -1;
+                WaveformPixels pixels = await Task.Run(() => RenderWaveformPixels(samples, loopStart, loopEnd));
+                if (track.WaveForm == null)
+                    track.WaveForm = ToImage(pixels);
+                if (!ReferenceEquals(tracksListBox.SelectedItem, track))
+                    return;
+            }
+
+            ShowSelectedWaveForm();
+            UpdateDetailText();
+        }
+
+        /// <summary>Says over the waveform that the selected clip is decoding, or why it could not be; hides otherwise.</summary>
+        private void ShowWaveFormStatus(SoundDataTrack track)
+        {
+            if (waveFormStatus == null)
+                return;
+
+            string text = null;
+            if (track != null && !track.HasSamples)
+                text = track.DecodeFailure != null ? "Could not be decoded: " + track.DecodeFailure : "Decoding\u2026";
+
+            waveFormStatus.Text = text ?? "";
+            waveFormStatus.Visibility = text == null ? Visibility.Collapsed : Visibility.Visible;
         }
 
         /// <summary>Lays the waveform and the playback marker out to the panel they are drawn in.</summary>
@@ -1268,6 +1545,7 @@ namespace SoundEditorPlugin
             SoundDataTrack track = tracksListBox?.SelectedItem as SoundDataTrack;
             waveFormImage.Source = track?.WaveForm;
             SizeWaveForm();
+            ShowWaveFormStatus(track);
         }
 
         /// <summary>Where playback has reached, as a line across the waveform above.</summary>
@@ -1293,7 +1571,8 @@ namespace SoundEditorPlugin
 
         public override void Closed()
         {
-            audioPlayer.Dispose();
+            CancelHold();
+            audioPlayer?.Dispose();
         }
 
         private void FrostySoundDataEditor_Loaded(object sender, RoutedEventArgs e)
@@ -1336,7 +1615,7 @@ namespace SoundEditorPlugin
                         track.Index = number;
 
                     if (string.IsNullOrEmpty(track.Name))
-                        track.Name = "Clip " + number + " of " + tracks.Count;
+                        track.Name = "Clip " + number;
 
                     if (string.IsNullOrEmpty(track.Detail))
                         track.Detail = DescribeTrack(track, track.Index, tracks.Count);
@@ -1447,28 +1726,36 @@ namespace SoundEditorPlugin
 
         private void SoundExportMenuItem_Click(object sender, RoutedEventArgs e)
         {
+            if (SelectMode && CheckedIndices().Count > 0)
+            {
+                ExportChecked();
+                return;
+            }
+
             if (!(tracksListBox.SelectedItem is SoundDataTrack track))
                 return;
 
-            // An export writes the decoded audio, so a clip that has not been decoded yet is decoded
-            // here rather than exported as an empty file.
-            if (!EnsureSelectedSamples(out int exportIndex, out SoundDataTrack exportTrack))
-                return;
-
-            track = exportTrack;
-
+            int index = SelectedTrackIndex;
             FrostySaveFileDialog sfd = new FrostySaveFileDialog("Save WAV File", "WAV file (*.wav)|*.wav", "Sound", SafeFileName(track.Name, track.Index) + ".wav");
-
             if (!sfd.ShowDialog())
                 return;
 
+            // The decode runs under the task window, not on the UI thread: a song can take seconds.
+            bool written = false;
             Exception failure = RunTask("Exporting Sound", task =>
             {
-                File.WriteAllBytes(sfd.FileName, SoundEdits.EncodeWav(track.Samples, track.ChannelCount, track.SampleRate));
+                task.Update(status: "Decoding the clip...");
+                short[] samples = DecodedSamples(track, index);
+                if (samples == null)
+                    return;
+                File.WriteAllBytes(sfd.FileName, SoundEdits.EncodeWav(samples, track.ChannelCount, track.SampleRate));
+                written = true;
             });
 
-            if (failure == null)
-                App.Logger.Log("Exported {0} to {1}", AssetEntry?.Name ?? "the track", sfd.FileName);
+            if (failure == null && written)
+                App.Logger.Log("Exported {0} to {1}", track.Name ?? AssetEntry?.Name ?? "the track", sfd.FileName);
+            else if (failure == null)
+                App.Logger.LogWarning("Clip #{0} could not be decoded ({1}), so nothing was exported.", track.Index, track.DecodeFailure ?? "no audio");
         }
 
         /// <summary>
@@ -1532,16 +1819,17 @@ namespace SoundEditorPlugin
                     task.Update(status: "Exporting " + (i + 1) + " / " + tracks.Count,
                         progress: ((i + 1) / (double)tracks.Count) * 100.0d);
 
-                    // Clips stored in a shared chunk are decoded here, one at a time, rather than every
-                    // clip being decoded to open the tab: a bank's whole audio can be half a gigabyte.
-                    if (tracks[i] != null && !tracks[i].SamplesLoaded)
-                        EnsureSamples(tracks[i], i);
-
+                    // Clips are decoded here, one at a time, rather than every clip being decoded to open the tab:
+                    // a bank's whole audio can be half a gigabyte. A clip decoded only for the export gives its
+                    // samples back once it is written, so exporting a bank does not hold all of it in memory.
                     SoundDataTrack track = tracks[i];
-                    if (track == null || track.ChannelCount <= 0 || track.SampleRate <= 0 || track.Samples == null || track.Samples.Length == 0)
+                    bool hadSamples = track != null && track.HasSamples;
+                    short[] samples = track == null ? null : DecodedSamples(track, i);
+                    if (track == null || track.ChannelCount <= 0 || track.SampleRate <= 0 || samples == null || samples.Length == 0)
                     {
                         skipped++;
-                        App.Logger.LogWarning("track #{0} carries no audio, so nothing was written for it", i + 1);
+                        App.Logger.LogWarning("track #{0} carries no audio ({1}), so nothing was written for it", i + 1,
+                            track == null ? "no track" : (track.DecodeFailure ?? "not decodable"));
                         continue;
                     }
 
@@ -1561,13 +1849,16 @@ namespace SoundEditorPlugin
 
                     try
                     {
-                        File.WriteAllBytes(filePath, SoundEdits.EncodeWav(track.Samples, track.ChannelCount, track.SampleRate));
+                        File.WriteAllBytes(filePath, SoundEdits.EncodeWav(samples, track.ChannelCount, track.SampleRate));
                         written++;
                     }
                     catch (Exception ex)
                     {
                         App.Logger.LogWarning("track #{0} could not be written: {1}", i + 1, ex.Message);
                     }
+
+                    if (!hadSamples)
+                        ReleaseSamples(track, samples);
                 }
             });
 
@@ -1577,6 +1868,12 @@ namespace SoundEditorPlugin
 
         private void SoundImportMenuItem_Click(object sender, RoutedEventArgs e)
         {
+            if (SelectMode && CheckedIndices().Count > 0)
+            {
+                ImportChecked();
+                return;
+            }
+
             if (tracksListBox.SelectedItem == null)
                 return;
 
@@ -1592,28 +1889,30 @@ namespace SoundEditorPlugin
 
         private void SoundAddTrackMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            FrostyOpenFileDialog ofd = new FrostyOpenFileDialog("Add Track", "Audio Files (*.mp3; *.wav; *.ealayer3)|*.mp3; *.wav; *.ealayer3", "Sound");
+            // What the new clip is filed under is asked first (a bank of player lines asks for the player id and
+            // nothing else), then the audio file. Both are asked here, on the UI thread, before the task window moves
+            // the edit onto its own thread: a WPF window cannot be constructed there.
+            if (!PrepareAddClip())
+                return;
 
-            // A format whose new clip is not a file the user picks - a bank's new take is a copy of an existing
-            // clip - answers through `AddClipNeedsAudioFile`, and the picker is skipped rather than opened on a
-            // file the edit has no use for.
-            if (!AddClipNeedsAudioFile || ofd.ShowDialog())
+            FrostyOpenFileDialog ofd = new FrostyOpenFileDialog("Add Clip", "Audio Files (*.mp3; *.wav; *.ealayer3)|*.mp3; *.wav; *.ealayer3", "Sound");
+            if (AddClipNeedsAudioFile && !ofd.ShowDialog())
+                return;
+
+            RunTask("Adding clip", task =>
             {
-                // Anything only the UI thread can ask is asked here, before the task window moves the edit onto
-                // its own thread: a WPF window cannot even be constructed there ("The calling thread must be
-                // STA, because many UI components require this"), which is what a dialog inside AddTrack does.
-                if (!PrepareAddClip())
-                    return;
-
-                RunTask("Adding track", task =>
-                {
-                    AddTrack(ofd, task);
-                });
-            }
+                AddTrack(ofd, task);
+            });
         }
 
         private void SoundDeleteTrackMenuItem_Click(object sender, RoutedEventArgs e)
         {
+            if (SelectMode && CheckedIndices().Count > 0)
+            {
+                DeleteChecked();
+                return;
+            }
+
             if (tracksListBox.SelectedItem == null)
                 return;
 
@@ -2002,6 +2301,394 @@ namespace SoundEditorPlugin
         }
 
         // ═══════════════════════════════════════════════════════════
+        //  Select mode: hold a clip for 3 seconds, check clips, act on all of them
+        // ═══════════════════════════════════════════════════════════
+
+        /// <summary>How long a clip has to be held down for the list to show its check boxes.</summary>
+        private static readonly TimeSpan HoldToSelect = TimeSpan.FromSeconds(3);
+
+        private void WireSelectMode()
+        {
+            selectBar = GetTemplateChild(PART_SelectBar) as FrameworkElement;
+            selectCountText = GetTemplateChild(PART_SelectCountText) as TextBlock;
+
+            Button all = GetTemplateChild(PART_SelectAllButton) as Button;
+            if (all != null)
+                all.Click += (s, e) => SetAllChecked(true);
+            Button none = GetTemplateChild(PART_SelectNoneButton) as Button;
+            if (none != null)
+                none.Click += (s, e) => SetAllChecked(false);
+            Button done = GetTemplateChild(PART_SelectDoneButton) as Button;
+            if (done != null)
+                done.Click += (s, e) => ExitSelectMode();
+
+            holdTimer = new System.Windows.Threading.DispatcherTimer { Interval = HoldToSelect };
+            holdTimer.Tick += (s, e) =>
+            {
+                holdTimer.Stop();
+                SoundDataTrack held = holdTrack;
+                holdTrack = null;
+                if (held != null && !SelectMode)
+                    EnterSelectMode(held);
+            };
+
+            if (tracksListBox == null)
+                return;
+
+            tracksListBox.PreviewMouseLeftButtonDown += TracksList_PreviewMouseLeftButtonDown;
+            tracksListBox.PreviewMouseMove += (s, e) =>
+            {
+                if (holdTrack == null)
+                    return;
+                Vector moved = e.GetPosition(tracksListBox) - holdPoint;
+                if (e.LeftButton != MouseButtonState.Pressed || Math.Abs(moved.X) > 6 || Math.Abs(moved.Y) > 6)
+                    CancelHold();
+            };
+            tracksListBox.PreviewMouseLeftButtonUp += (s, e) => CancelHold();
+            tracksListBox.MouseLeave += (s, e) => CancelHold();
+            tracksListBox.PreviewKeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Escape && SelectMode)
+                {
+                    ExitSelectMode();
+                    e.Handled = true;
+                }
+            };
+        }
+
+        private void CancelHold()
+        {
+            holdTrack = null;
+            if (holdTimer != null)
+                holdTimer.Stop();
+        }
+
+        /// <summary>The clip whose row is under <paramref name="e"/>, or null (the header, empty space).</summary>
+        private SoundDataTrack TrackUnder(MouseEventArgs e)
+        {
+            DependencyObject source = e.OriginalSource as DependencyObject;
+            if (source == null || tracksListBox == null)
+                return null;
+            ListViewItem item = ItemsControl.ContainerFromElement(tracksListBox, source) as ListViewItem;
+            return item == null ? null : item.DataContext as SoundDataTrack;
+        }
+
+        /// <summary>
+        /// Outside select mode a press starts the 3-second hold; inside it a click checks or unchecks the clip, and a
+        /// Shift-click checks every clip from the last one clicked to this one, in the list's current order.
+        /// </summary>
+        private void TracksList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            SoundDataTrack track = TrackUnder(e);
+            if (track == null)
+                return;
+
+            if (!SelectMode)
+            {
+                holdTrack = track;
+                holdPoint = e.GetPosition(tracksListBox);
+                holdTimer.Stop();
+                holdTimer.Start();
+                return;
+            }
+
+            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0 && checkAnchor != null)
+            {
+                List<SoundDataTrack> order = ViewOrder();
+                int from = order.IndexOf(checkAnchor), to = order.IndexOf(track);
+                if (from >= 0 && to >= 0)
+                {
+                    for (int i = Math.Min(from, to); i <= Math.Max(from, to); i++)
+                        order[i].IsChecked = true;
+                }
+                else
+                {
+                    track.IsChecked = true;
+                }
+            }
+            else
+            {
+                track.IsChecked = !track.IsChecked;
+                checkAnchor = track;
+            }
+
+            UpdateSelectBar();
+            UpdateCommandState();
+        }
+
+        /// <summary>The tracks in the order the list shows them (filtered).</summary>
+        private List<SoundDataTrack> ViewOrder()
+        {
+            List<SoundDataTrack> order = new List<SoundDataTrack>();
+            if (TracksList == null)
+                return order;
+            ICollectionView view = CollectionViewSource.GetDefaultView(TracksList);
+            if (view == null)
+                return new List<SoundDataTrack>(TracksList);
+            foreach (object item in view)
+            {
+                if (item is SoundDataTrack t)
+                    order.Add(t);
+            }
+            return order;
+        }
+
+        private void EnterSelectMode(SoundDataTrack first)
+        {
+            SelectMode = true;
+            if (TracksList != null)
+            {
+                foreach (SoundDataTrack t in TracksList)
+                    t.IsChecked = false;
+            }
+
+            if (first != null)
+            {
+                first.IsChecked = true;
+                checkAnchor = first;
+            }
+
+            SetCheckColumnWidth(26);
+            UpdateSelectBar();
+            UpdateCommandState();
+        }
+
+        protected void ExitSelectMode()
+        {
+            if (!SelectMode)
+                return;
+
+            SelectMode = false;
+            checkAnchor = null;
+            if (TracksList != null)
+            {
+                foreach (SoundDataTrack t in TracksList)
+                    t.IsChecked = false;
+            }
+
+            SetCheckColumnWidth(0);
+            UpdateSelectBar();
+            UpdateCommandState();
+        }
+
+        private void SetAllChecked(bool value)
+        {
+            foreach (SoundDataTrack t in ViewOrder())
+                t.IsChecked = value;
+            UpdateSelectBar();
+            UpdateCommandState();
+        }
+
+        private void SetCheckColumnWidth(double width)
+        {
+            GridView grid = tracksListBox == null ? null : tracksListBox.View as GridView;
+            if (grid != null && grid.Columns.Count > 0)
+                grid.Columns[0].Width = width;
+        }
+
+        private void UpdateSelectBar()
+        {
+            if (selectBar != null)
+                selectBar.Visibility = SelectMode ? Visibility.Visible : Visibility.Collapsed;
+            if (bankSummaryText != null)
+                bankSummaryText.Visibility = SelectMode ? Visibility.Collapsed : Visibility.Visible;
+            if (selectCountText != null)
+            {
+                int n = SelectMode ? CheckedIndices().Count : 0;
+                selectCountText.Text = n.ToString("N0", CultureInfo.InvariantCulture) + (n == 1 ? " clip checked" : " clips checked");
+            }
+        }
+
+        /// <summary>The checked clips' places in <see cref="TracksList"/>, ascending.</summary>
+        protected List<int> CheckedIndices()
+        {
+            List<int> list = new List<int>();
+            if (TracksList == null)
+                return list;
+            for (int i = 0; i < TracksList.Count; i++)
+            {
+                if (TracksList[i].IsChecked)
+                    list.Add(i);
+            }
+            return list;
+        }
+
+        /// <summary>Writes every checked clip to one folder as WAV, named after the clip.</summary>
+        private void ExportChecked()
+        {
+            List<int> indices = CheckedIndices();
+            if (indices.Count == 0)
+                return;
+
+            FrostySaveFileDialog sfd = new FrostySaveFileDialog("Pick export folder (save any name here)", "All Files (*.*)|*.*", "Sound", "clips");
+            if (!sfd.ShowDialog())
+                return;
+
+            string outputDir = System.IO.Path.GetDirectoryName(sfd.FileName);
+            List<SoundDataTrack> tracks = indices.Select(i => TracksList[i]).ToList();
+            int written = 0, skipped = 0;
+
+            RunTask("Exporting " + tracks.Count + " clips", task =>
+            {
+                for (int n = 0; n < tracks.Count; n++)
+                {
+                    SoundDataTrack track = tracks[n];
+                    task.Update(status: "Exporting " + (n + 1) + " / " + tracks.Count, progress: ((n + 1) / (double)tracks.Count) * 100.0d);
+
+                    bool hadSamples = track.HasSamples;
+                    short[] samples = DecodedSamples(track, indices[n]);
+                    if (samples == null)
+                    {
+                        skipped++;
+                        App.Logger.LogWarning("Clip #{0} could not be decoded ({1}), so nothing was written for it.", track.Index,
+                            track.DecodeFailure ?? "no audio");
+                        continue;
+                    }
+
+                    string fileName = SafeFileName(track.Name, track.Index);
+                    string filePath = System.IO.Path.Combine(outputDir, fileName + ".wav");
+                    int suffix = 2;
+                    while (File.Exists(filePath))
+                        filePath = System.IO.Path.Combine(outputDir, fileName + " (" + suffix++ + ").wav");
+
+                    try
+                    {
+                        File.WriteAllBytes(filePath, SoundEdits.EncodeWav(samples, track.ChannelCount, track.SampleRate));
+                        written++;
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Logger.LogWarning("Clip #{0} could not be written: {1}", track.Index, ex.Message);
+                    }
+
+                    if (!hadSamples)
+                        ReleaseSamples(track, samples);
+                }
+            });
+
+            App.Logger.Log("Exported {0} of {1} checked clips to {2}{3}", written, tracks.Count, outputDir,
+                skipped > 0 ? " (" + skipped + " could not be decoded)" : "");
+        }
+
+        /// <summary>
+        /// Imports audio files into the checked clips. One file goes into every checked clip; as many files as checked
+        /// clips go one each - by name when every file is named after a checked clip (what Export writes), else in the
+        /// list's order with the files sorted by name. Anything else is refused before anything is written.
+        /// </summary>
+        private void ImportChecked()
+        {
+            List<int> indices = CheckedIndices();
+            if (indices.Count == 0)
+                return;
+
+            FrostyOpenFileDialog ofd = new FrostyOpenFileDialog("Import Into " + indices.Count + " Clips",
+                "Audio Files (*.mp3; *.wav; *.ealayer3)|*.mp3; *.wav; *.ealayer3", "Sound") { Multiselect = true };
+            if (!ofd.ShowDialog())
+                return;
+
+            string[] files = ofd.FileNames ?? new string[0];
+            List<KeyValuePair<int, string>> plan = new List<KeyValuePair<int, string>>();
+            if (files.Length == 1)
+            {
+                foreach (int i in indices)
+                    plan.Add(new KeyValuePair<int, string>(i, files[0]));
+            }
+            else if (files.Length == indices.Count)
+            {
+                Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                foreach (int i in indices)
+                    byName[SafeFileName(TracksList[i].Name, TracksList[i].Index)] = i;
+
+                bool allNamed = byName.Count == indices.Count
+                    && files.All(f => byName.ContainsKey(System.IO.Path.GetFileNameWithoutExtension(f)))
+                    && files.Select(f => System.IO.Path.GetFileNameWithoutExtension(f)).Distinct(StringComparer.OrdinalIgnoreCase).Count() == files.Length;
+                if (allNamed)
+                {
+                    foreach (string f in files)
+                        plan.Add(new KeyValuePair<int, string>(byName[System.IO.Path.GetFileNameWithoutExtension(f)], f));
+                }
+                else
+                {
+                    string[] sorted = files.OrderBy(f => System.IO.Path.GetFileName(f), StringComparer.OrdinalIgnoreCase).ToArray();
+                    List<SoundDataTrack> order = ViewOrder();
+                    List<int> inOrder = indices.OrderBy(i => order.IndexOf(TracksList[i])).ToList();
+                    for (int n = 0; n < sorted.Length; n++)
+                        plan.Add(new KeyValuePair<int, string>(inOrder[n], sorted[n]));
+                }
+            }
+            else
+            {
+                App.Logger.LogWarning("Import: {0} files were chosen for {1} checked clips. Choose one file (it goes into every checked clip) "
+                    + "or one file per checked clip; nothing was imported.", files.Length, indices.Count);
+                return;
+            }
+
+            RunTask("Importing " + plan.Count + " clips", task =>
+            {
+                ImportFilesInto(plan, task);
+            });
+
+            ExitSelectMode();
+        }
+
+        /// <summary>Removes every checked clip, after one confirmation.</summary>
+        private void DeleteChecked()
+        {
+            List<int> indices = CheckedIndices();
+            if (indices.Count == 0)
+                return;
+
+            string refusal = RemoveClipRefusal;
+            if (refusal != null && !refusal.StartsWith("Select a clip", StringComparison.Ordinal))
+            {
+                App.Logger.LogWarning(refusal);
+                return;
+            }
+
+            if (Frosty.Controls.FrostyMessageBox.Show("Delete the " + indices.Count + " checked clips from this asset?", "Delete Clips",
+                    MessageBoxButton.YesNo) != MessageBoxResult.Yes)
+                return;
+
+            RunTask("Deleting " + indices.Count + " clips", task =>
+            {
+                DeleteTracks(indices, task);
+            });
+
+            ExitSelectMode();
+        }
+
+        /// <summary>
+        /// Writes audio files into clips, one pair at a time. A format that can write many clips in one edit overrides
+        /// this so the asset is written and read back once instead of once per clip.
+        /// </summary>
+        protected virtual void ImportFilesInto(IList<KeyValuePair<int, string>> plan, FrostyTaskWindow task)
+        {
+            for (int n = 0; n < plan.Count; n++)
+            {
+                task.Update(status: "Importing " + (n + 1) + " / " + plan.Count, progress: ((n + 1) / (double)plan.Count) * 100.0d);
+                if (!ImportFileInto(plan[n].Key, plan[n].Value, task))
+                {
+                    App.Logger.LogWarning("Import stopped at clip #{0}: the clips before it were written.", plan[n].Key + 1);
+                    return;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Removes clips, the last one first so each removal leaves the earlier indices where they were. A format that
+        /// can remove many clips in one edit overrides this.
+        /// </summary>
+        protected virtual void DeleteTracks(IList<int> indices, FrostyTaskWindow task)
+        {
+            List<int> order = indices.Distinct().OrderByDescending(i => i).ToList();
+            for (int n = 0; n < order.Count; n++)
+            {
+                task.Update(status: "Removing " + (n + 1) + " / " + order.Count, progress: ((n + 1) / (double)order.Count) * 100.0d);
+                DeleteTrack(order[n], task);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
         //  Sample editing (menu wiring, apply, write-back)
         // ═══════════════════════════════════════════════════════════
 
@@ -2077,21 +2764,23 @@ namespace SoundEditorPlugin
         protected void UpdateCommandState()
         {
             int selected = SelectedTrackIndex;
+            int checkedCount = SelectMode ? CheckedIndices().Count : 0;
 
             if (importButton != null)
             {
-                importButton.IsEnabled = selected >= 0;
-                importButton.ToolTip = selected >= 0
-                    ? "Replace the selected clip's audio with an audio file"
-                    : "Select a clip first: an import replaces the selected clip's audio";
+                importButton.IsEnabled = SelectMode ? checkedCount > 0 : selected >= 0;
+                importButton.ToolTip = SelectMode
+                    ? "Import audio into the " + checkedCount + " checked clip(s): one file for all, or one file per clip"
+                    : (selected >= 0 ? "Replace the selected clip's audio with an audio file"
+                        : "Select a clip first: an import replaces the selected clip's audio");
             }
 
             if (exportButton != null)
             {
-                exportButton.IsEnabled = selected >= 0;
-                exportButton.ToolTip = selected >= 0
-                    ? "Export the selected clip as a WAV file"
-                    : "Select a clip first";
+                exportButton.IsEnabled = SelectMode ? checkedCount > 0 : selected >= 0;
+                exportButton.ToolTip = SelectMode
+                    ? "Export the " + checkedCount + " checked clip(s) as WAV files"
+                    : (selected >= 0 ? "Export the selected clip as a WAV file" : "Select a clip first");
             }
 
             bool canAdd = CanAddClip;
@@ -2116,11 +2805,17 @@ namespace SoundEditorPlugin
             // rather than looking pressable. Unlike an add, the answer here is about the *selection* as well as the
             // asset - a delete names a row - which is why the question is asked on every update.
             string removeRefusal = RemoveClipRefusal;
-            bool canRemove = selected >= 0 && removeRefusal == null;
+            bool selectionRefusal = removeRefusal != null && removeRefusal.StartsWith("Select a clip", StringComparison.Ordinal);
+            bool canRemove = SelectMode ? checkedCount > 0 && (removeRefusal == null || selectionRefusal)
+                : selected >= 0 && removeRefusal == null;
+            string removeTip = SelectMode
+                ? (canRemove ? "Remove the " + checkedCount + " checked clip(s) and their audio"
+                    : (checkedCount == 0 ? "Check clips first" : removeRefusal))
+                : (canRemove ? "Remove the selected clip and its audio" : removeRefusal);
             if (deleteClipMenuItem != null)
             {
                 deleteClipMenuItem.IsEnabled = canRemove;
-                deleteClipMenuItem.ToolTip = canRemove ? "Remove the selected clip and its audio" : removeRefusal;
+                deleteClipMenuItem.ToolTip = removeTip;
             }
 
             // The same command as a button beside Add Clip, so it is visible without knowing that the list has a
@@ -2128,7 +2823,7 @@ namespace SoundEditorPlugin
             if (deleteClipButton != null)
             {
                 deleteClipButton.IsEnabled = canRemove;
-                deleteClipButton.ToolTip = canRemove ? "Remove the selected clip and its audio" : removeRefusal;
+                deleteClipButton.ToolTip = removeTip;
             }
         }
 
@@ -2248,7 +2943,7 @@ namespace SoundEditorPlugin
 
         private void SoundEditNormalizeMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            ApplyEdit("Normalize", "", (track, task) => SoundEdits.Normalize(track.Samples));
+            ApplyEdit("Normalize", "", (track, samples, task) => SoundEdits.Normalize(samples));
         }
 
         private void SoundEditGainMenuItem_Click(object sender, RoutedEventArgs e)
@@ -2258,7 +2953,7 @@ namespace SoundEditorPlugin
                 return;
 
             double db = gain.Value;
-            ApplyEdit("Gain", db.ToString("0.##") + " dB", (track, task) => SoundEdits.ApplyGain(track.Samples, db));
+            ApplyEdit("Gain", db.ToString("0.##") + " dB", (track, samples, task) => SoundEdits.ApplyGain(samples, db));
         }
 
         private void SoundEditFadeInMenuItem_Click(object sender, RoutedEventArgs e)
@@ -2269,7 +2964,7 @@ namespace SoundEditorPlugin
 
             int fadeMs = (int)ms.Value;
             ApplyEdit("Fade in", fadeMs + " ms",
-                (track, task) => SoundEdits.FadeIn(track.Samples, track.ChannelCount, track.SampleRate, fadeMs));
+                (track, samples, task) => SoundEdits.FadeIn(samples, track.ChannelCount, track.SampleRate, fadeMs));
         }
 
         private void SoundEditFadeOutMenuItem_Click(object sender, RoutedEventArgs e)
@@ -2280,7 +2975,7 @@ namespace SoundEditorPlugin
 
             int fadeMs = (int)ms.Value;
             ApplyEdit("Fade out", fadeMs + " ms",
-                (track, task) => SoundEdits.FadeOut(track.Samples, track.ChannelCount, track.SampleRate, fadeMs));
+                (track, samples, task) => SoundEdits.FadeOut(samples, track.ChannelCount, track.SampleRate, fadeMs));
         }
 
         private void SoundEditTrimSilenceMenuItem_Click(object sender, RoutedEventArgs e)
@@ -2293,7 +2988,7 @@ namespace SoundEditorPlugin
 
             double threshold = thresholdDb.Value;
             ApplyEdit("Trim silence", "below " + threshold.ToString("0.#") + " dBFS",
-                (track, task) => SoundEdits.TrimSilence(track.Samples, track.ChannelCount, track.SampleRate, threshold));
+                (track, samples, task) => SoundEdits.TrimSilence(samples, track.ChannelCount, track.SampleRate, threshold));
         }
 
         private void SoundEditTrimRangeMenuItem_Click(object sender, RoutedEventArgs e)
@@ -2307,12 +3002,12 @@ namespace SoundEditorPlugin
                             (endSeconds <= 0 ? "end" : endSeconds.ToString("0.###") + " s");
 
             ApplyEdit("Trim to range", detail,
-                (track, task) => SoundEdits.TrimSeconds(track.Samples, track.ChannelCount, track.SampleRate, startSeconds, endSeconds));
+                (track, samples, task) => SoundEdits.TrimSeconds(samples, track.ChannelCount, track.SampleRate, startSeconds, endSeconds));
         }
 
         private void SoundEditReverseMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            ApplyEdit("Reverse", "", (track, task) => SoundEdits.Reverse(track.Samples, track.ChannelCount));
+            ApplyEdit("Reverse", "", (track, samples, task) => SoundEdits.Reverse(samples, track.ChannelCount));
         }
 
         /// <summary>
@@ -2321,7 +3016,7 @@ namespace SoundEditorPlugin
         /// decode-and-scale pass is not a UI-thread job - while the track object itself is only
         /// touched on the UI thread, which is where <see cref="InitialLoad"/> already builds it.
         /// </summary>
-        private void ApplyEdit(string action, string detail, Func<SoundDataTrack, FrostyTaskWindow, short[]> edit)
+        private void ApplyEdit(string action, string detail, Func<SoundDataTrack, short[], FrostyTaskWindow, short[]> edit)
         {
             if (!(tracksListBox.SelectedItem is SoundDataTrack selectedTrack))
             {
@@ -2329,13 +3024,12 @@ namespace SoundEditorPlugin
                 return;
             }
 
-            // An edit works on samples, and a bank clip has none until it is decoded. Decoding here, on
-            // the UI thread and before the task window opens, keeps the track object itself on the
-            // thread that owns it.
-            if (!EnsureSelectedSamples(out int trackIndex, out SoundDataTrack readyTrack))
+            // An edit works on samples, and a clip listed from its header has none until it is decoded. The decode
+            // runs under the task window below, with everything else the edit does.
+            int trackIndex = SelectedTrackIndex;
+            if (trackIndex < 0)
                 return;
 
-            selectedTrack = readyTrack;
             string label = action + (string.IsNullOrEmpty(detail) ? "" : " (" + detail + ")");
 
             short[] samples = null;
@@ -2349,16 +3043,22 @@ namespace SoundEditorPlugin
 
             RunTask("Editing Track", task =>
             {
-                task.Update(status: action + "...");
+                task.Update(status: "Decoding the clip...");
+                short[] source = DecodedSamples(selectedTrack, trackIndex);
+                if (source == null)
+                {
+                    App.Logger.LogWarning("The audio of track #{0} could not be decoded ({1}), so it cannot be edited.",
+                        selectedTrack.Index, selectedTrack.DecodeFailure ?? "no decoder produced audio");
+                    return;
+                }
 
-                short[] source = null;
-                Dispatcher?.Invoke(() => { source = selectedTrack.Samples; });
+                task.Update(status: action + "...");
                 previousSamples = source;
 
                 framesBefore = SoundEdits.FrameCount(source, selectedTrack.ChannelCount);
                 peakBeforeDb = SoundEdits.PeakDb(source);
 
-                short[] edited = edit(selectedTrack, task);
+                short[] edited = edit(selectedTrack, source, task);
                 if (edited == null)
                     edited = new short[0];
 
@@ -2634,12 +3334,22 @@ namespace SoundEditorPlugin
             return SoundEdits.SpliceClip(chunkData, start, end, clip, out sizeDiff);
         }
 
+        /// <summary>A rendered waveform as plain pixels (BGRA, premultiplied), made off the UI thread.</summary>
+        protected sealed class WaveformPixels
+        {
+            public int Width;
+            public int Height;
+            public int Stride;
+            public byte[] Pixels;
+        }
+
         /// <summary>
-        /// A shared waveform image for an edited track, so an edit shows what it did. Deliberately
-        /// tolerant: a track too long or too odd to render keeps the waveform it had rather than
-        /// failing the edit that already succeeded.
+        /// Renders a waveform to pixels. Safe on any thread: it is GDI+ only, so the selection's waveform is drawn on a
+        /// background task and only turned into an image (<see cref="ToImage"/>) on the UI thread. A loop region, given
+        /// as fractions of the samples, is marked the way the SoundWave loader always marked it. Null when there is
+        /// nothing to draw or the renderer refused.
         /// </summary>
-        protected static ImageSource RenderWaveform(short[] samples)
+        protected static WaveformPixels RenderWaveformPixels(short[] samples, double loopStart, double loopEnd)
         {
             if (samples == null || samples.Length == 0)
                 return null;
@@ -2663,33 +3373,72 @@ namespace SoundEditorPlugin
 
                 WaveFormRenderer renderer = new WaveFormRenderer();
                 using (System.Drawing.Image image = renderer.Render(samples, new MaxPeakProvider(), settings))
-                using (MemoryStream ms = new MemoryStream())
+                using (System.Drawing.Bitmap bitmap = new System.Drawing.Bitmap(image.Width, image.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb))
                 {
-                    image.Save(ms, ImageFormat.Png);
-                    ms.Seek(0, SeekOrigin.Begin);
+                    using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(bitmap))
+                    {
+                        g.Clear(System.Drawing.Color.Transparent);
+                        g.DrawImage(image, 0, 0, image.Width, image.Height);
+                        if (loopStart >= 0 && loopEnd > loopStart)
+                        {
+                            using (System.Drawing.Pen pen = new System.Drawing.Pen(System.Drawing.Color.White, 1))
+                            {
+                                int x0 = (int)(loopStart * bitmap.Width), x1 = (int)(loopEnd * bitmap.Width);
+                                g.DrawLine(pen, x0, settings.TopHeight, x0, bitmap.Height - 1);
+                                g.DrawLine(pen, x1, settings.TopHeight, x1, bitmap.Height - 1);
+                                g.DrawLine(pen, x0, bitmap.Height - 1, x1, bitmap.Height - 1);
+                            }
+                        }
+                    }
 
-                    BitmapImage bitmapImage = new BitmapImage();
-                    bitmapImage.BeginInit();
-                    bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmapImage.StreamSource = ms;
-                    bitmapImage.EndInit();
-
-                    RenderTargetBitmap target = new RenderTargetBitmap(bitmapImage.PixelWidth, bitmapImage.PixelHeight,
-                        bitmapImage.DpiX, bitmapImage.DpiY, PixelFormats.Pbgra32);
-                    DrawingVisual visual = new DrawingVisual();
-
-                    using (DrawingContext r = visual.RenderOpen())
-                        r.DrawImage(bitmapImage, new Rect(0, 0, bitmapImage.Width, bitmapImage.Height));
-
-                    target.Render(visual);
-                    target.Freeze();
-                    return target;
+                    System.Drawing.Rectangle all = new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height);
+                    System.Drawing.Imaging.BitmapData data = bitmap.LockBits(all, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                        System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+                    try
+                    {
+                        WaveformPixels pixels = new WaveformPixels { Width = bitmap.Width, Height = bitmap.Height, Stride = data.Stride };
+                        pixels.Pixels = new byte[data.Stride * bitmap.Height];
+                        System.Runtime.InteropServices.Marshal.Copy(data.Scan0, pixels.Pixels, 0, pixels.Pixels.Length);
+                        return pixels;
+                    }
+                    finally
+                    {
+                        bitmap.UnlockBits(data);
+                    }
                 }
             }
             catch (Exception)
             {
                 return null;
             }
+        }
+
+        /// <summary>The image of rendered pixels, frozen. Call on the UI thread.</summary>
+        protected static ImageSource ToImage(WaveformPixels pixels)
+        {
+            if (pixels == null)
+                return null;
+
+            try
+            {
+                BitmapSource image = BitmapSource.Create(pixels.Width, pixels.Height, 96, 96, PixelFormats.Pbgra32, null,
+                    pixels.Pixels, pixels.Stride);
+                image.Freeze();
+                return image;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// A waveform image for a track, made on the calling thread. Deliberately tolerant: a track too long or too odd
+        /// to render keeps the waveform it had rather than failing the edit that already succeeded.
+        /// </summary>
+        protected static ImageSource RenderWaveform(short[] samples)
+        {
+            return ToImage(RenderWaveformPixels(samples, -1, -1));
         }
 
         /// <summary>
@@ -2781,27 +3530,48 @@ namespace SoundEditorPlugin
         /// </summary>
         protected static byte[] ConvertAudioFileToPcm16Big(FrostyOpenFileDialog ofd)
         {
-            if (ofd.FileName.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ||
-                ofd.FileName.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
+            return ConvertAudioFileToPcm16Big(ofd.FileName);
+        }
+
+        /// <summary>The same, for a file named directly (a bulk import has many).</summary>
+        protected static byte[] ConvertAudioFileToPcm16Big(string fileName)
+        {
+            if (fileName.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ||
+                fileName.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
             {
                 int channels, sampleRate;
-                byte[] encoded = SoundEdits.EncodePcm16BigFromAudioFile(ofd.FileName, out channels, out sampleRate);
-                App.Logger.Log("Importing {0} at {1} Hz, {2} channel(s)", System.IO.Path.GetFileName(ofd.FileName), sampleRate, channels);
+                byte[] encoded = SoundEdits.EncodePcm16BigFromAudioFile(fileName, out channels, out sampleRate);
+                App.Logger.Log("Importing {0} at {1} Hz, {2} channel(s)", System.IO.Path.GetFileName(fileName), sampleRate, channels);
                 return encoded;
             }
 
-            if (ofd.FileName.EndsWith(".ealayer3", StringComparison.OrdinalIgnoreCase))
-                return File.ReadAllBytes(ofd.FileName);
+            if (fileName.EndsWith(".ealayer3", StringComparison.OrdinalIgnoreCase))
+                return File.ReadAllBytes(fileName);
 
             throw new FileFormatException();
         }
 
+        /// <summary>Import Into Clip: the file goes into the selected clip.</summary>
         protected virtual void ImportSound(FrostyOpenFileDialog ofd, FrostyTaskWindow task)
         {
-            byte[] resultBuf = ConvertAudioFileToPcm16Big(ofd);
-
-            int index = 0;
+            int index = -1;
             Dispatcher?.Invoke(() => { index = SelectedTrackIndex; });
+            if (index < 0)
+            {
+                App.Logger.LogWarning("Select a clip to import into first.");
+                return;
+            }
+
+            ImportFileInto(index, ofd.FileName, task);
+        }
+
+        /// <summary>
+        /// Replaces clip <paramref name="index"/>'s audio with an audio file, and answers whether it was written. The base
+        /// is the SoundWaveAsset rule: the variation's chunk range is replaced and every segment after it moves.
+        /// </summary>
+        protected virtual bool ImportFileInto(int index, string fileName, FrostyTaskWindow task)
+        {
+            byte[] resultBuf = ConvertAudioFileToPcm16Big(fileName);
 
             dynamic soundWave = RootObject;
             dynamic variation = soundWave.RuntimeVariations[index];
@@ -2856,7 +3626,7 @@ namespace SoundEditorPlugin
             }
 
             if (!WriteChunk(chunkEntry, resultBuf, "clip's chunk"))
-                return;
+                return false;
 
             soundDataChunk.ChunkSize = (uint)resultBuf.Length;
 
@@ -2908,7 +3678,9 @@ namespace SoundEditorPlugin
                 assetEntry.LinkAsset(chunkEntry);
 
                 SetTrackList(tracks);
+                RefreshTrackListChrome();
             });
+            return true;
         }
 
     }
