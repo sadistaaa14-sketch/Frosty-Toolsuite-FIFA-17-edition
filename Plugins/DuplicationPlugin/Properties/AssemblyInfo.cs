@@ -47,6 +47,7 @@ using static DuplicationPlugin.DuplicationTool;
 [assembly: RegisterMenuExtension(typeof(DuplicateKitNumberMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateBaseMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(DuplicateStadiumMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(ExportStadiumBlenderMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(BulkImportStarheadsMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(BulkImportBallsMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(BulkImportKitsMenuExtension))]

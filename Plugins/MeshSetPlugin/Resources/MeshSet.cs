@@ -526,6 +526,21 @@ namespace MeshSetPlugin.Resources
             m_unknownBlock3 = block3;
         }
 
+        /// <summary>
+        /// Drops the per-vertex smoothing blocks. They describe the original vertices, so after an
+        /// import (new vertex count, new order) they would be written with the old sizes and read back
+        /// with the new vertex count.
+        /// </summary>
+        public void ClearSmoothingData()
+        {
+            m_hasUnknown = false;
+            m_hasUnknown2 = false;
+            m_hasUnknown3 = false;
+            m_unknownBlock1 = null;
+            m_unknownBlock2 = null;
+            m_unknownBlock3 = null;
+        }
+
         public MeshSetSection(NativeReader reader, AssetManager am, int index)
         {
             m_sectionIndex = index;
@@ -2417,6 +2432,17 @@ namespace MeshSetPlugin.Resources
             m_partBoundingBoxes = inPartBoundingBoxes;
             m_partTransforms = inPartTransforms;
             m_bonePartCount = (uint)Math.Max(m_partBoundingBoxes.Count, m_partTransforms.Count);
+        }
+
+        /// <summary>
+        /// Number of parts stored in the header (FIFA 17 and the other HasNewPartBoneLayout games keep
+        /// the part bounding boxes and transforms at the mesh level, not per lod).
+        /// </summary>
+        public int PartCount => (int)m_bonePartCount;
+
+        public void SetBoundingBox(AxisAlignedBox inBoundingBox)
+        {
+            m_boundingBox = inBoundingBox;
         }
     }
     #endregion

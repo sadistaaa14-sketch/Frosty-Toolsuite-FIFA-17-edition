@@ -291,6 +291,54 @@ namespace MeshSetPlugin
     }
 
     #region -- Exporters --
+    /// <summary>
+    /// Names shared by the FBX exporter and importer.
+    /// </summary>
+    public static class MeshSetFbx
+    {
+        /// <summary>
+        /// The UV set that carries the mesh's lightmap (RadiosityTexCoord) UVs in an exported FBX.
+        /// </summary>
+        public const string LightmapUvSetName = "Lightmap";
+
+        /// <summary>
+        /// UV set names the importer accepts for the lightmap UVs (Blender keeps the name of the UV map,
+        /// the tools/blender package calls it "Lightmap").
+        /// </summary>
+        public static readonly string[] LightmapUvSetNames = { "Lightmap", "RadiosityTexCoord", "LightmapUV", "UVLightmap" };
+
+        /// <summary>
+        /// A composite lod stores the parts of a section as a 0x18 byte bitmask: 192 parts at most.
+        /// </summary>
+        public const int MaxCompositeParts = 0x18 * 8;
+
+        /// <summary>
+        /// Name of the composite part bone i in an exported FBX (and the name the importer parses).
+        /// </summary>
+        public static string PartBoneName(int index) => "PART_" + index;
+
+        /// <summary>
+        /// Parses the part index out of a composite part bone name ("PART_12" -> 12, also "PART_12.001").
+        /// </summary>
+        public static bool TryParsePartBoneName(string name, out int index)
+        {
+            index = -1;
+            if (string.IsNullOrEmpty(name))
+                return false;
+            string s = name;
+            int sep = s.LastIndexOf(':');
+            if (sep != -1)
+                s = s.Substring(sep + 1); // FBX namespaces
+            int dot = s.IndexOf('.');
+            if (dot != -1)
+                s = s.Substring(0, dot); // Blender's ".001" suffixes
+            int us = s.LastIndexOf('_');
+            if (us == -1)
+                return false;
+            return int.TryParse(s.Substring(us + 1), out index) && index >= 0;
+        }
+    }
+
     public class FBXExporter
     {
         private int totalExportCount = 0;
@@ -1172,8 +1220,38 @@ namespace MeshSetPlugin
                             }
                             else if (elem.Usage == VertexElementUsage.RadiosityTexCoord)
                             {
-                                // ignore (unused)
-                                reader.Position += elem.Size;
+                                // the lightmap (Enlighten radiosity) UVs: exported as the UV set "Lightmap" so that
+                                // an edited mesh can bring them back (the importer reads that set into this element)
+                                if (!uvMapping.ContainsKey(elem.Usage))
+                                {
+                                    layerElemUV[uvChannelIndex] = new FbxLayerElementUV(fmesh, MeshSetFbx.LightmapUvSetName)
+                                    {
+                                        MappingMode = EMappingMode.eByControlPoint,
+                                        ReferenceMode = EReferenceMode.eDirect
+                                    };
+
+                                    uvMapping.Add(elem.Usage, uvChannelIndex);
+                                    uvChannelIndex++;
+                                }
+
+                                float x, y;
+                                if (elem.Format == VertexElementFormat.Float2)
+                                {
+                                    x = reader.ReadFloat();
+                                    y = 1.0f - reader.ReadFloat();
+                                }
+                                else if (elem.Format == VertexElementFormat.Half2)
+                                {
+                                    x = HalfUtils.Unpack(reader.ReadUShort());
+                                    y = 1.0f - HalfUtils.Unpack(reader.ReadUShort());
+                                }
+                                else
+                                {
+                                    x = (reader.ReadShort() / (float)short.MaxValue) * 0.5f + 0.5f;
+                                    y = 1.0f - ((reader.ReadShort() / (float)short.MaxValue) * 0.5f + 0.5f);
+                                }
+
+                                layerElemUV[uvMapping[elem.Usage]].DirectArray.Add(x, y);
                             }
                             else if (elem.Usage == VertexElementUsage.DisplacementMapTexCoord)
                             {
@@ -1550,6 +1628,13 @@ namespace MeshSetPlugin
         {
         }
     }
+    public class FBXImportTooManyPartsException : Exception
+    {
+        public FBXImportTooManyPartsException(int partCount, int maxParts)
+            : base(string.Format("The FBX uses {0} composite parts (PART_n bones); a composite mesh can have at most {1}", partCount, maxParts))
+        {
+        }
+    }
     #endregion
 
     public class FBXImporter
@@ -1579,6 +1664,13 @@ namespace MeshSetPlugin
             settings = inSettings;
             meshSet = inMeshSet;
 
+            lightmapUvsImported = false;
+            lightmapUvsNeeded = false;
+            lightmapUvsMissingSections = 0;
+            compositeNoSkinWarned = false;
+            meshBoundsValid = false;
+            partBoneTransforms.Clear();
+
             shaderBlockDepots = new List<ShaderBlockDepot>();
             if (ProfilesLibrary.DataVersion == (int)ProfileVersion.StarWarsBattlefrontII)
             {
@@ -1596,6 +1688,22 @@ namespace MeshSetPlugin
             // @hack
             entry.LinkedAssets.Clear();
             resEntry.LinkedAssets.Clear();
+
+            // the material ids a composite mesh had before the import (for the variation database sync)
+            List<Guid> materialsBefore = new List<Guid>();
+            if (meshSet.Type == MeshType.MeshType_Composite)
+            {
+                try
+                {
+                    foreach (dynamic mat in ((dynamic)asset.RootObject).Materials)
+                    {
+                        dynamic matObj = mat.Internal;
+                        if (matObj != null)
+                            materialsBefore.Add(((AssetClassGuid)matObj.GetInstanceGuid()).ExportedGuid);
+                    }
+                }
+                catch (Exception) { }
+            }
 
             using (FbxManager manager = new FbxManager())
             {
@@ -1650,6 +1758,27 @@ namespace MeshSetPlugin
                 if (lodCount < meshSet.Lods.Count)
                     throw new FBXImportInvalidLodCountException();
 
+                if (meshSet.Type == MeshType.MeshType_Composite)
+                {
+                    // the part count is limited by the section part bitmask (0x18 bytes) and by the byte
+                    // indices of the blueprint's part components; check before anything is modified
+                    int maxPart = -1;
+                    for (int i = 0; i < meshSet.Lods.Count; i++)
+                    {
+                        if (lodNodes[i] == null)
+                            throw new FBXImportNoMeshesFoundException(i);
+                        foreach (FbxNode node in lodNodes[i])
+                        {
+                            foreach (int part in PartsOfNode(node))
+                                maxPart = Math.Max(maxPart, part);
+                        }
+                    }
+                    if (maxPart + 1 > MeshSetFbx.MaxCompositeParts)
+                        throw new FBXImportTooManyPartsException(maxPart + 1, MeshSetFbx.MaxCompositeParts);
+                    if (maxPart == -1)
+                        logger.Log("[Composite Import] No PART_n bones found in the FBX: every vertex goes to part 0 (one part)");
+                }
+
                 meshSet.ClearPartData();
                 List<BoundingBox> partBbox = new List<BoundingBox>();
                 List<LinearTransform> transforms = new List<LinearTransform>();
@@ -1668,10 +1797,16 @@ namespace MeshSetPlugin
                         meshSet.SetParts(ToAxisAlignedBoundingBoxes(partBbox), new List<LinearTransform>());
                     else
                         meshSet.SetParts(ToAxisAlignedBoundingBoxes(partBbox), transforms);
+
+                    logger.Log("[Composite Import] {0} parts, {1} sections in lod 0", meshSet.PartCount, meshSet.Lods[0].Sections.Count);
                 }
             }
 
             meshSet.FullName = resEntry.Name;
+
+            // the bounding box of the whole mesh (culling); every imported vertex of every lod
+            if (meshBoundsValid)
+                meshSet.SetBoundingBox(ToAxisAlignedBox(meshBounds));
 
             // disable normal smoothing since smoothing data is stale after import
 			if (ProfilesLibrary.IsLoaded(ProfileVersion.Fifa17, ProfileVersion.Fifa18, ProfileVersion.Madden19))
@@ -1684,58 +1819,46 @@ namespace MeshSetPlugin
 				
 			}
 
-            // composite meshes need EnlightenType set to Dynamic for correct in-game rendering
+            // baked lighting: a mesh with RadiosityTexCoord elements is lit from a lightmap in the stadium's
+            // Enlighten databases (EnlightenType_Static). The lightmap UVs come back from the "Lightmap" UV set of
+            // the FBX; without them every vertex would sample one texel, so the mesh is switched to dynamic
+            // lighting instead (the old behaviour for every composite mesh).
+            if (lightmapUvsNeeded)
+            {
+                if (lightmapUvsImported && lightmapUvsMissingSections == 0)
+                {
+                    logger.Log("[Import] Lightmap UVs imported from the \"{0}\" UV set, EnlightenType kept", MeshSetFbx.LightmapUvSetName);
+                }
+                else
+                {
+                    try
+                    {
+                        dynamic root = asset.RootObject;
+                        int currentType = (int)root.EnlightenType;
+                        if (lightmapUvsImported)
+                            logger.Log("[Import] {0} section(s) have no \"{1}\" UV set; their lightmap UVs are zero", lightmapUvsMissingSections, MeshSetFbx.LightmapUvSetName);
+                        if (currentType == 2 /* EnlightenType_Static */)
+                        {
+                            root.EnlightenType = 0; // EnlightenType_Dynamic
+                            App.AssetManager.ModifyEbx(entry.Name, asset);
+                            logger.Log("[Import] No \"{0}\" UV set in the FBX: EnlightenType set to Dynamic (was Static). Export the mesh from Frosty and keep that UV set to retain the baked lighting", MeshSetFbx.LightmapUvSetName);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Log("[Import] WARNING: could not change EnlightenType: {0}", ex.Message);
+                    }
+                }
+            }
+
+            List<Guid> addedMaterials = new List<Guid>();
+            List<Guid> removedMaterials = new List<Guid>();
             if (meshSet.Type == MeshType.MeshType_Composite)
             {
-                ((dynamic)asset.RootObject).EnlightenType = 0; // EnlightenType_Dynamic
-
-                // Sync EBX Materials list to match the number of named (renderable) sections
+                // Sync the EBX Materials list to the named (renderable) sections of lod 0
                 try
                 {
-                    dynamic root = asset.RootObject;
-                    dynamic materials = root.Materials;
-
-                    // Count named sections in LOD 0 (sections with non-empty material names)
-                    int namedSectionCount = 0;
-                    foreach (MeshSetSection section in meshSet.Lods[0].Sections)
-                    {
-                        if (section.Name != "")
-                            namedSectionCount++;
-                    }
-
-                    int currentMaterialCount = materials.Count;
-                    if (namedSectionCount != currentMaterialCount)
-                    {
-                        logger.Log("[Composite Import] Syncing materials: {0} existing -> {1} needed", currentMaterialCount, namedSectionCount);
-
-                        // Add materials if we need more (duplicate the last existing material's PointerRef)
-                        while (materials.Count < namedSectionCount && materials.Count > 0)
-                        {
-                            // Clone by creating a new internal object of the same type
-                            dynamic templateMat = materials[materials.Count - 1].Internal;
-                            Type matType = templateMat.GetType();
-                            dynamic newMat = TypeLibrary.CreateObject(matType.Name);
-                            if (newMat != null)
-                            {
-                                AssetClassGuid guid = new AssetClassGuid(Guid.NewGuid(), -1);
-                                ((dynamic)newMat).SetInstanceGuid(guid);
-                                newMat.Shader = templateMat.Shader;
-                                asset.AddObject(newMat);
-                                materials.Add(new PointerRef(newMat));
-                            }
-                            else
-                            {
-                                logger.Log("[Composite Import] WARNING: Failed to create material object of type '{0}'", matType.Name);
-                                break;
-                            }
-                        }
-
-                        // Remove excess materials from the end
-                        while (materials.Count > namedSectionCount)
-                        {
-                            materials.RemoveAt(materials.Count - 1);
-                        }
-                    }
+                    SyncMaterials(asset, entry, materialsBefore, addedMaterials, removedMaterials);
                 }
                 catch (Exception ex)
                 {
@@ -1750,164 +1873,648 @@ namespace MeshSetPlugin
             App.AssetManager.ModifyRes(resRid, meshSet);
             entry.LinkAsset(resEntry);
 
-            // Sync blueprint part data for composite meshes
-            if (meshSet.Type == MeshType.MeshType_Composite && meshSet.Lods.Count > 0)
+            if (meshSet.Type == MeshType.MeshType_Composite)
             {
-                try
+                // the mesh variation databases list the materials of every mesh (with their textures); a new
+                // material needs an entry there, a removed one must not be referenced any more
+                if (addedMaterials.Count > 0 || removedMaterials.Count > 0)
                 {
-                    SyncBlueprintPartData(entry, meshSet);
+                    try
+                    {
+                        SyncVariationDatabases(asset, entry, addedMaterials, removedMaterials);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Log("[Composite Import] WARNING: Mesh variation database sync failed: {0}", ex.Message);
+                    }
                 }
-                catch (Exception ex)
+
+                // Sync blueprint part data for composite meshes
+                if (meshSet.Lods.Count > 0)
                 {
-                    logger.Log("[Composite Import] WARNING: Blueprint sync failed: {0}", ex.Message);
+                    try
+                    {
+                        SyncBlueprintPartData(entry, asset, meshSet);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Log("[Composite Import] WARNING: Blueprint sync failed: {0}", ex.Message);
+                    }
                 }
             }
         }
 
-        /// <summary>
-        /// Syncs the ObjectBlueprint's StaticModelEntityData to match the imported composite mesh's part count.
-        /// Updates Components, PartBoundingBoxes, runtime counts, and NetworkInfo.
-        /// </summary>
-        private void SyncBlueprintPartData(EbxAssetEntry meshEntry, MeshSet meshSet)
-        {
-            // Blueprint path = mesh path with "_mesh" stripped
-            string meshPath = meshEntry.Name;
-            if (!meshPath.EndsWith("_mesh"))
-                return;
-            string blueprintPath = meshPath.Substring(0, meshPath.Length - 5);
+        // ---- import state ----------------------------------------------------------------------------
 
-            EbxAssetEntry bpEntry = App.AssetManager.GetEbxEntry(blueprintPath);
+        private bool lightmapUvsImported;          // a Lightmap UV set was read into a RadiosityTexCoord element
+        private bool lightmapUvsNeeded;            // the mesh has RadiosityTexCoord elements
+        private int lightmapUvsMissingSections;    // sections with such an element but no Lightmap UV set
+        private bool compositeNoSkinWarned;
+        private BoundingBox meshBounds;
+        private bool meshBoundsValid;
+
+        // composite part data of the lod being processed: section index -> parts used, part -> positions
+        private Dictionary<int, List<int>> lodSectionParts = new Dictionary<int, List<int>>();
+        private Dictionary<int, List<Vector3>> lodPartPoints = new Dictionary<int, List<Vector3>>();
+        // the transform of every PART_n bone of the FBX (games that store part transforms)
+        private Dictionary<int, LinearTransform> partBoneTransforms = new Dictionary<int, LinearTransform>();
+
+        /// <summary>
+        /// The part indices a node's skin clusters refer to (PART_n bones). Empty for a node without a skin.
+        /// Remembers the bones' transforms.
+        /// </summary>
+        private List<int> PartsOfNode(FbxNode node)
+        {
+            List<int> parts = new List<int>();
+            FbxNodeAttribute attr = node.GetNodeAttribute(FbxNodeAttribute.EType.eMesh);
+            if (attr == null)
+                return parts;
+
+            FbxMesh fmesh = new FbxMesh(attr);
+            if (fmesh.GetDeformerCount(FbxDeformer.EDeformerType.eSkin) == 0)
+                return parts;
+
+            FbxSkin fskin = new FbxSkin(fmesh.GetDeformer(0, FbxDeformer.EDeformerType.eSkin));
+            foreach (FbxCluster cluster in fskin.Clusters)
+            {
+                if (cluster.ControlPointIndicesCount == 0)
+                    continue;
+                FbxNode bone = cluster.GetLink();
+                if (bone == null || !MeshSetFbx.TryParsePartBoneName(bone.Name, out int idx))
+                    continue;
+                if (!parts.Contains(idx))
+                    parts.Add(idx);
+                if (!partBoneTransforms.ContainsKey(idx))
+                {
+                    try
+                    {
+                        partBoneTransforms[idx] = FbxTransformToLinearTransform(bone);
+                    }
+                    catch (Exception)
+                    {
+                        partBoneTransforms[idx] = LinearTransform.Identity;
+                    }
+                }
+            }
+            return parts;
+        }
+
+        private void AccumulateBounds(Vector3 position)
+        {
+            if (!meshBoundsValid)
+            {
+                meshBounds = new BoundingBox(position, position);
+                meshBoundsValid = true;
+            }
+            else
+            {
+                meshBounds.Minimum = Vector3.Min(meshBounds.Minimum, position);
+                meshBounds.Maximum = Vector3.Max(meshBounds.Maximum, position);
+            }
+        }
+
+        private static AxisAlignedBox ToAxisAlignedBox(BoundingBox bbox)
+        {
+            return new AxisAlignedBox()
+            {
+                min = new Vec3() { x = bbox.Minimum.X, y = bbox.Minimum.Y, z = bbox.Minimum.Z },
+                max = new Vec3() { x = bbox.Maximum.X, y = bbox.Maximum.Y, z = bbox.Maximum.Z }
+            };
+        }
+
+        // ---- materials ---------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Makes the mesh asset's Materials list match the named sections of lod 0: section i uses material i.
+        /// Missing materials are deep copies of the last material (same shader and parameters), surplus ones
+        /// are removed. The materials' Id names follow the section names.
+        /// </summary>
+        private void SyncMaterials(EbxAsset asset, EbxAssetEntry entry, List<Guid> materialsBefore, List<Guid> addedMaterials, List<Guid> removedMaterials)
+        {
+            dynamic root = asset.RootObject;
+            dynamic materials = root.Materials;
+
+            // named sections of lod 0 in material id order
+            int namedSectionCount = 0;
+            foreach (MeshSetSection section in meshSet.Lods[0].Sections)
+            {
+                if (section.Name != "")
+                    namedSectionCount = Math.Max(namedSectionCount, section.MaterialId + 1);
+            }
+
+            int currentMaterialCount = materials.Count;
+            if (namedSectionCount != currentMaterialCount)
+                logger.Log("[Composite Import] Syncing materials: {0} existing -> {1} needed", currentMaterialCount, namedSectionCount);
+
+            // add materials (deep copies of the last one)
+            while (materials.Count < namedSectionCount && materials.Count > 0)
+            {
+                dynamic templateMat = materials[materials.Count - 1].Internal;
+                dynamic newMat = CloneEbxObject(templateMat);
+                if (newMat == null)
+                {
+                    logger.Log("[Composite Import] WARNING: Failed to copy the material object of type '{0}'", ((object)templateMat).GetType().Name);
+                    break;
+                }
+
+                AssetClassGuid guid = new AssetClassGuid(Guid.NewGuid(), -1);
+                newMat.SetInstanceGuid(guid);
+                asset.AddObject(newMat);
+                materials.Add(new PointerRef(newMat));
+                addedMaterials.Add(guid.ExportedGuid);
+            }
+
+            // remove surplus materials from the end
+            while (materials.Count > namedSectionCount)
+            {
+                dynamic oldMat = materials[materials.Count - 1].Internal;
+                if (oldMat != null)
+                {
+                    removedMaterials.Add(((AssetClassGuid)oldMat.GetInstanceGuid()).ExportedGuid);
+                    asset.RemoveObject(oldMat);
+                }
+                materials.RemoveAt(materials.Count - 1);
+            }
+
+            // name the materials after their sections (what the editor does in UpdateMeshSettings)
+            foreach (MeshSetSection section in meshSet.Lods[0].Sections)
+            {
+                if (section.Name == "" || section.MaterialId < 0 || section.MaterialId >= materials.Count)
+                    continue;
+                dynamic material = materials[section.MaterialId].Internal;
+                if (material != null)
+                    material.__Id = section.Name;
+            }
+        }
+
+        /// <summary>
+        /// Deep copy of an EBX object (class instance or struct): every public settable property, lists and
+        /// nested EBX objects recursively; pointers, strings and value types as they are. The copy has no
+        /// instance guid.
+        /// </summary>
+        private static object CloneEbxObject(object source)
+        {
+            if (source == null)
+                return null;
+
+            Type type = source.GetType();
+            object copy = null;
+            try
+            {
+                copy = TypeLibrary.CreateObject(type.Name);
+            }
+            catch (Exception) { }
+            if (copy == null || copy.GetType() != type)
+            {
+                if (TypeLibrary.GetType(type.Name) != type)
+                    return null; // not an EBX type
+                try
+                {
+                    copy = Activator.CreateInstance(type);
+                }
+                catch (Exception)
+                {
+                    return null;
+                }
+            }
+
+            foreach (PropertyInfo prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!prop.CanRead || prop.GetIndexParameters().Length != 0)
+                    continue;
+                if (prop.GetCustomAttribute<IsTransientAttribute>() != null)
+                    continue;
+
+                object value = prop.GetValue(source);
+                if (value == null)
+                    continue;
+
+                if (prop.CanWrite)
+                {
+                    prop.SetValue(copy, CloneEbxValue(value));
+                }
+                else if (value is System.Collections.IList srcList && prop.GetValue(copy) is System.Collections.IList dstList)
+                {
+                    dstList.Clear();
+                    foreach (object item in srcList)
+                        dstList.Add(CloneEbxValue(item));
+                }
+            }
+
+            return copy;
+        }
+
+        private static object CloneEbxValue(object value)
+        {
+            if (value == null)
+                return null;
+
+            Type type = value.GetType();
+            if (type.IsValueType || type.IsEnum || value is string)
+                return value; // numbers, bools, enums, Guid, PointerRef, CString, ResourceRef ...
+
+            if (value is System.Collections.IList srcList)
+            {
+                System.Collections.IList dstList = (System.Collections.IList)Activator.CreateInstance(type);
+                foreach (object item in srcList)
+                    dstList.Add(CloneEbxValue(item));
+                return dstList;
+            }
+
+            if (value is Array)
+                return ((Array)value).Clone();
+
+            // nested EBX class or struct instance; anything else is shared
+            if (TypeLibrary.GetType(type.Name) != type)
+                return value;
+            object copy = CloneEbxObject(value);
+            return copy ?? value;
+        }
+
+        // ---- mesh variation databases --------------------------------------------------------------------
+
+        /// <summary>
+        /// Every MeshVariationDatabase entry of this mesh gets a material entry for each added material (a
+        /// copy of the entry of the material it was cloned from, i.e. the last one: same variation and
+        /// textures) and loses the entries of removed materials.
+        /// </summary>
+        private void SyncVariationDatabases(EbxAsset asset, EbxAssetEntry entry, List<Guid> addedMaterials, List<Guid> removedMaterials)
+        {
+            // where the databases list this mesh
+            List<Tuple<Guid, int>> locations = new List<Tuple<Guid, int>>();
+            MeshVariationDbEntry mvEntry = MeshVariationDb.GetVariations(entry.Guid);
+            if (mvEntry != null)
+            {
+                foreach (MeshVariation variation in mvEntry.Variations.Values)
+                {
+                    foreach (Tuple<EbxImportReference, int> loc in variation.DbLocations)
+                    {
+                        Tuple<Guid, int> t = new Tuple<Guid, int>(loc.Item1.FileGuid, loc.Item2);
+                        if (!locations.Contains(t))
+                            locations.Add(t);
+                    }
+                }
+            }
+            else
+            {
+                // no cache: look at every database
+                foreach (EbxAssetEntry dbEntry in App.AssetManager.EnumerateEbx("MeshVariationDatabase").ToList())
+                {
+                    EbxAsset dbAsset = App.AssetManager.GetEbx(dbEntry);
+                    if (dbAsset == null)
+                        continue;
+                    dynamic db = dbAsset.RootObject;
+                    int index = 0;
+                    foreach (dynamic dbMeshEntry in db.Entries)
+                    {
+                        PointerRef meshRef = dbMeshEntry.Mesh;
+                        if (meshRef.Type == PointerRefType.External && meshRef.External.FileGuid == entry.Guid)
+                            locations.Add(new Tuple<Guid, int>(dbEntry.Guid, index));
+                        index++;
+                    }
+                }
+            }
+
+            if (locations.Count == 0)
+            {
+                logger.Log("[Composite Import] No mesh variation database lists this mesh; nothing to sync");
+                return;
+            }
+
+            // the material each added one was copied from is the last material before the additions
+            dynamic root = asset.RootObject;
+            dynamic materials = root.Materials;
+            int synced = 0;
+            foreach (IGrouping<Guid, Tuple<Guid, int>> dbGroup in locations.GroupBy(t => t.Item1))
+            {
+                EbxAssetEntry dbEntry = App.AssetManager.GetEbxEntry(dbGroup.Key);
+                if (dbEntry == null)
+                    continue;
+                EbxAsset dbAsset = App.AssetManager.GetEbx(dbEntry);
+                if (dbAsset == null)
+                    continue;
+
+                dynamic db = dbAsset.RootObject;
+                bool changed = false;
+                foreach (Tuple<Guid, int> loc in dbGroup)
+                {
+                    dynamic dbMeshEntry = null;
+                    if (loc.Item2 >= 0 && loc.Item2 < db.Entries.Count)
+                    {
+                        dynamic candidate = db.Entries[loc.Item2];
+                        PointerRef meshRef = candidate.Mesh;
+                        if (meshRef.Type == PointerRefType.External && meshRef.External.FileGuid == entry.Guid)
+                            dbMeshEntry = candidate;
+                    }
+                    if (dbMeshEntry == null)
+                    {
+                        // the cache index is stale: find the entry
+                        foreach (dynamic candidate in db.Entries)
+                        {
+                            PointerRef meshRef = candidate.Mesh;
+                            if (meshRef.Type == PointerRefType.External && meshRef.External.FileGuid == entry.Guid)
+                            {
+                                dbMeshEntry = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    if (dbMeshEntry == null)
+                        continue;
+
+                    dynamic dbMaterials = dbMeshEntry.Materials;
+
+                    // removed materials
+                    for (int i = dbMaterials.Count - 1; i >= 0; i--)
+                    {
+                        PointerRef matRef = dbMaterials[i].Material;
+                        if (matRef.Type == PointerRefType.External && removedMaterials.Contains(matRef.External.ClassGuid))
+                        {
+                            dbMaterials.RemoveAt(i);
+                            changed = true;
+                        }
+                    }
+
+                    // added materials: copy the entry of the material they were cloned from
+                    foreach (Guid added in addedMaterials)
+                    {
+                        bool present = false;
+                        for (int i = 0; i < dbMaterials.Count; i++)
+                        {
+                            PointerRef matRef = dbMaterials[i].Material;
+                            if (matRef.Type == PointerRefType.External && matRef.External.ClassGuid == added)
+                            {
+                                present = true;
+                                break;
+                            }
+                        }
+                        if (present || dbMaterials.Count == 0)
+                            continue;
+
+                        dynamic template = dbMaterials[dbMaterials.Count - 1];
+                        dynamic newDbMaterial = CloneEbxObject(template);
+                        if (newDbMaterial == null)
+                            continue;
+                        newDbMaterial.Material = new PointerRef(new EbxImportReference() { FileGuid = entry.Guid, ClassGuid = added });
+                        dbMaterials.Add(newDbMaterial);
+                        changed = true;
+                    }
+                }
+
+                if (changed)
+                {
+                    App.AssetManager.ModifyEbx(dbEntry.Name, dbAsset);
+                    synced++;
+                    logger.Log("[Composite Import] Mesh variation database updated: {0}", dbEntry.Name);
+                }
+            }
+
+            if (synced > 0)
+                MeshVariationDb.LoadModifiedVariations();
+        }
+
+        // ---- blueprint -----------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Finds the ObjectBlueprint whose StaticModelEntityData places this mesh: "<mesh>_mesh" -> "<mesh>"
+        /// first, then any ObjectBlueprint in the mesh's folder that references the mesh.
+        /// </summary>
+        private EbxAssetEntry FindBlueprint(EbxAssetEntry meshEntry, out EbxAsset bpAsset, out dynamic entityData)
+        {
+            bpAsset = null;
+            entityData = null;
+
+            List<EbxAssetEntry> candidates = new List<EbxAssetEntry>();
+            string meshPath = meshEntry.Name;
+            if (meshPath.EndsWith("_mesh"))
+            {
+                EbxAssetEntry byName = App.AssetManager.GetEbxEntry(meshPath.Substring(0, meshPath.Length - 5));
+                if (byName != null)
+                    candidates.Add(byName);
+            }
+
+            string folder = meshPath.Contains("/") ? meshPath.Substring(0, meshPath.LastIndexOf('/') + 1) : "";
+            foreach (EbxAssetEntry bp in App.AssetManager.EnumerateEbx("ObjectBlueprint").ToList())
+            {
+                if (bp.Name.StartsWith(folder, StringComparison.OrdinalIgnoreCase) && !candidates.Contains(bp))
+                    candidates.Add(bp);
+            }
+
+            foreach (EbxAssetEntry bp in candidates)
+            {
+                EbxAsset candidateAsset = App.AssetManager.GetEbx(bp);
+                if (candidateAsset == null)
+                    continue;
+
+                dynamic bpRoot = candidateAsset.RootObject;
+                dynamic candidateEntity = null;
+                try
+                {
+                    if (bpRoot.GetType().Name == "ObjectBlueprint")
+                    {
+                        PointerRef objRef = bpRoot.Object;
+                        if (objRef.Type == PointerRefType.Internal)
+                            candidateEntity = objRef.Internal;
+                    }
+                    else if (bpRoot.GetType().Name == "StaticModelEntityData")
+                    {
+                        candidateEntity = bpRoot;
+                    }
+                }
+                catch (Exception) { }
+
+                if (candidateEntity == null || candidateEntity.GetType().Name != "StaticModelEntityData")
+                    continue;
+
+                PointerRef meshRef = candidateEntity.Mesh;
+                if (meshRef.Type == PointerRefType.External && meshRef.External.FileGuid == meshEntry.Guid)
+                {
+                    bpAsset = candidateAsset;
+                    entityData = candidateEntity;
+                    return bp;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Syncs the ObjectBlueprint's StaticModelEntityData to the imported composite mesh: one
+        /// PartComponentData per part (the parts come first in Components, other components such as
+        /// RuntimeTextureOverrideComponentData follow and keep their place), the runtime counts, the part
+        /// bounding boxes and the NetworkInfo part ranges.
+        /// </summary>
+        private void SyncBlueprintPartData(EbxAssetEntry meshEntry, EbxAsset meshAsset, MeshSet meshSet)
+        {
+            EbxAssetEntry bpEntry = FindBlueprint(meshEntry, out EbxAsset bpAsset, out dynamic entityData);
             if (bpEntry == null)
             {
-                logger.Log("[Composite Import] No blueprint found at '{0}'", blueprintPath);
+                logger.Log("[Composite Import] No ObjectBlueprint with a StaticModelEntityData for '{0}' found; part data not synced", meshEntry.Name);
                 return;
             }
 
-            EbxAsset bpAsset = App.AssetManager.GetEbx(bpEntry);
-            dynamic bpRoot = bpAsset.RootObject;
-
-            // Navigate to StaticModelEntityData
-            dynamic entityData = null;
-            if (bpRoot.GetType().Name == "ObjectBlueprint")
+            int newPartCount = meshSet.PartCount;
+            if (newPartCount > 255)
             {
-                PointerRef objRef = bpRoot.Object;
-                if (objRef.Type == PointerRefType.Internal)
-                    entityData = objRef.Internal;
-            }
-            else if (bpRoot.GetType().Name == "StaticModelEntityData")
-            {
-                entityData = bpRoot;
+                logger.Log("[Composite Import] WARNING: {0} parts do not fit the blueprint's byte part indices", newPartCount);
+                return;
             }
 
-            if (entityData == null || entityData.GetType().Name != "StaticModelEntityData")
-                return;
-
-            int newPartCount = meshSet.Lods[0].PartCount;
-            int currentPartCount = entityData.Components.Count;
-
-            if (newPartCount == currentPartCount)
-                return;
-
-            logger.Log("[Composite Import] Syncing blueprint '{0}': {1} parts -> {2} parts", blueprintPath, currentPartCount, newPartCount);
-
-            // Step 1: Resize Components and create/remove PartComponentData + HealthStateData
             dynamic components = entityData.Components;
 
-            // Add new parts if needed
-            while (components.Count < newPartCount)
+            // the existing parts: the leading PartComponentData entries
+            List<int> partPositions = new List<int>();
+            for (int i = 0; i < components.Count; i++)
             {
-                int partIdx = components.Count;
+                dynamic comp = components[i].Internal;
+                if (comp != null && comp.GetType().Name == "PartComponentData")
+                    partPositions.Add(i);
+            }
+            int currentPartCount = partPositions.Count;
+            int delta = newPartCount - currentPartCount;
+            int insertAt = (partPositions.Count > 0) ? partPositions[partPositions.Count - 1] + 1 : 0;
 
-                // Create HealthStateData
-                dynamic healthState = TypeLibrary.CreateObject("HealthStateData");
+            // the template for new parts: the last existing part
+            dynamic templatePart = (partPositions.Count > 0) ? components[partPositions[partPositions.Count - 1]].Internal : null;
+            dynamic templateHealth = null;
+            if (templatePart != null && templatePart.HealthStates.Count > 0)
+                templateHealth = templatePart.HealthStates[0].Internal;
+
+            bool changed = false;
+            if (delta != 0)
+                logger.Log("[Composite Import] Syncing blueprint '{0}': {1} parts -> {2} parts", bpEntry.Name, currentPartCount, newPartCount);
+
+            // Step 1: add or remove PartComponentData (+ HealthStateData)
+            for (int partIdx = currentPartCount; partIdx < newPartCount; partIdx++)
+            {
+                dynamic healthState = null;
+                if (templateHealth != null)
+                    healthState = CloneEbxObject(templateHealth);
+                if (healthState == null)
+                    healthState = TypeLibrary.CreateObject("HealthStateData");
                 if (healthState != null)
                 {
-                    ((dynamic)healthState).SetInstanceGuid(new AssetClassGuid(Guid.NewGuid(), -1));
-                    healthState.Health = 100.0f;
+                    healthState.SetInstanceGuid(new AssetClassGuid(Guid.NewGuid(), -1));
                     healthState.PartIndex = (uint)partIdx;
-                    healthState.CopyDamageToBanger = true;
-                    healthState.PhysicsEnabled = true;
-                    healthState.Indestructable = false;
-                    healthState.CanSupportOtherParts = true;
+                    if (templateHealth == null)
+                    {
+                        healthState.Health = 100.0f;
+                        healthState.CopyDamageToBanger = true;
+                        healthState.PhysicsEnabled = true;
+                        healthState.Indestructable = false;
+                        healthState.CanSupportOtherParts = true;
+                    }
                     bpAsset.AddObject(healthState);
                 }
 
-                // Create PartComponentData
-                dynamic partComp = TypeLibrary.CreateObject("PartComponentData");
-                if (partComp != null)
+                dynamic partComp = null;
+                if (templatePart != null)
+                    partComp = CloneEbxObject(templatePart);
+                if (partComp == null)
+                    partComp = TypeLibrary.CreateObject("PartComponentData");
+                if (partComp == null)
                 {
-                    ((dynamic)partComp).SetInstanceGuid(new AssetClassGuid(Guid.NewGuid(), -1));
+                    logger.Log("[Composite Import] WARNING: could not create a PartComponentData");
+                    break;
+                }
 
-                    // Set transform to identity
-                    dynamic transform = partComp.Transform;
-                    transform.right.x = 1; transform.right.y = 0; transform.right.z = 0;
-                    transform.up.x = 0; transform.up.y = 1; transform.up.z = 0;
-                    transform.forward.x = 0; transform.forward.y = 0; transform.forward.z = 1;
-                    transform.trans.x = 0; transform.trans.y = 0; transform.trans.z = 0;
-                    partComp.Transform = transform;
+                partComp.SetInstanceGuid(new AssetClassGuid(Guid.NewGuid(), -1));
+                dynamic transform = partComp.Transform;
+                transform.right.x = 1; transform.right.y = 0; transform.right.z = 0;
+                transform.up.x = 0; transform.up.y = 1; transform.up.z = 0;
+                transform.forward.x = 0; transform.forward.y = 0; transform.forward.z = 1;
+                transform.trans.x = 0; transform.trans.y = 0; transform.trans.z = 0;
+                partComp.Transform = transform;
+                partComp.ClientIndex = (byte)partIdx;
+                partComp.ServerIndex = (byte)partIdx;
+                partComp.Excluded = false;
+                partComp.Components.Clear();
+                partComp.PartLinks.Clear();
+                partComp.HealthStates.Clear();
+                if (healthState != null)
+                    partComp.HealthStates.Add(new PointerRef(healthState));
 
-                    partComp.ClientIndex = (byte)partIdx;
-                    partComp.ServerIndex = (byte)partIdx;
-                    partComp.Excluded = false;
-                    partComp.IsSupported = false;
-                    partComp.IsFragile = false;
-                    partComp.IsNetworkable = false;
-                    partComp.IsWindow = false;
-                    partComp.AnimatePhysics = false;
-
-                    if (healthState != null)
+                bpAsset.AddObject(partComp);
+                components.Insert(insertAt, new PointerRef(partComp));
+                insertAt++;
+                changed = true;
+            }
+            for (int partIdx = currentPartCount - 1; partIdx >= newPartCount; partIdx--)
+            {
+                int pos = partPositions[partIdx];
+                dynamic comp = components[pos].Internal;
+                components.RemoveAt(pos);
+                if (comp != null)
+                {
+                    foreach (dynamic hs in comp.HealthStates)
                     {
-                        partComp.HealthStates.Add(new PointerRef(healthState));
+                        if (hs.Internal != null)
+                            bpAsset.RemoveObject(hs.Internal);
                     }
+                    bpAsset.RemoveObject(comp);
+                }
+                changed = true;
+            }
 
-                    bpAsset.AddObject(partComp);
-                    components.Add(new PointerRef(partComp));
+            // the components after the parts are indexed after them: shift their client indices
+            if (delta != 0)
+            {
+                for (int i = 0; i < components.Count; i++)
+                {
+                    dynamic comp = components[i].Internal;
+                    if (comp == null || comp.GetType().Name == "PartComponentData")
+                        continue;
+                    try
+                    {
+                        int clientIndex = (int)comp.ClientIndex;
+                        if (clientIndex != 0xFF && clientIndex >= currentPartCount)
+                            comp.ClientIndex = (byte)(clientIndex + delta);
+                        int serverIndex = (int)comp.ServerIndex;
+                        if (serverIndex != 0xFF && serverIndex >= currentPartCount)
+                            comp.ServerIndex = (byte)(serverIndex + delta);
+                    }
+                    catch (Exception) { }
                 }
             }
 
-            // Remove excess parts from the end
-            while (components.Count > newPartCount)
-            {
-                components.RemoveAt(components.Count - 1);
-            }
-
-            // Step 2: Update PartBoundingBoxes from mesh LOD data
+            // Step 2: part bounding boxes from the mesh
             MeshSetLod lod = meshSet.Lods[0];
             dynamic partBBoxes = entityData.PartBoundingBoxes;
             partBBoxes.Clear();
-            for (int i = 0; i < lod.PartBoundingBoxes.Count && i < newPartCount; i++)
-            {
-                AxisAlignedBox srcBox = lod.PartBoundingBoxes[i];
-                dynamic aabb = TypeLibrary.CreateObject("AxisAlignedBox");
-                aabb.min.x = srcBox.min.x;
-                aabb.min.y = srcBox.min.y;
-                aabb.min.z = srcBox.min.z;
-                aabb.max.x = srcBox.max.x;
-                aabb.max.y = srcBox.max.y;
-                aabb.max.z = srcBox.max.z;
-                partBBoxes.Add(aabb);
-            }
-            // Pad with empty boxes if AABBs < part count
-            while (partBBoxes.Count < newPartCount)
+            for (int i = 0; i < newPartCount; i++)
             {
                 dynamic aabb = TypeLibrary.CreateObject("AxisAlignedBox");
+                if (i < lod.PartBoundingBoxes.Count)
+                {
+                    AxisAlignedBox srcBox = lod.PartBoundingBoxes[i];
+                    aabb.min.x = srcBox.min.x;
+                    aabb.min.y = srcBox.min.y;
+                    aabb.min.z = srcBox.min.z;
+                    aabb.max.x = srcBox.max.x;
+                    aabb.max.y = srcBox.max.y;
+                    aabb.max.z = srcBox.max.z;
+                }
                 partBBoxes.Add(aabb);
             }
+            changed = true;
 
-            // Step 3: Update runtime counts
-            entityData.ClientRuntimeComponentCount = (byte)newPartCount;
-            entityData.ServerRuntimeComponentCount = (byte)newPartCount;
-            entityData.ClientRuntimeTransformationCount = (byte)newPartCount;
-            entityData.ServerRuntimeTransformationCount = (byte)newPartCount;
+            // Step 3: runtime counts (components with an index: parts + the client/server components after
+            // them; transformations: parts)
+            if (delta != 0)
+            {
+                entityData.ClientRuntimeComponentCount = (byte)Math.Max(0, (int)entityData.ClientRuntimeComponentCount + delta);
+                entityData.ServerRuntimeComponentCount = (byte)Math.Max(0, (int)entityData.ServerRuntimeComponentCount + delta);
+                entityData.ClientRuntimeTransformationCount = (byte)Math.Max(0, (int)entityData.ClientRuntimeTransformationCount + delta);
+                entityData.ServerRuntimeTransformationCount = (byte)Math.Max(0, (int)entityData.ServerRuntimeTransformationCount + delta);
+            }
 
-            // Step 4: Update NetworkInfo PartNetworkIdRanges
+            // Step 4: NetworkInfo part ranges, one per part
             try
             {
-                dynamic networkInfo = entityData.NetworkInfo.Internal;
+                dynamic networkInfo = entityData.NetworkInfo;
                 if (networkInfo != null)
                 {
                     dynamic partNetRanges = networkInfo.PartNetworkIdRanges;
-                    // Add new ranges
                     while (partNetRanges.Count < newPartCount)
                     {
                         dynamic range = TypeLibrary.CreateObject("IndexRange");
@@ -1915,17 +2522,17 @@ namespace MeshSetPlugin
                         range.Last = 0xFFFFFFFF;
                         partNetRanges.Add(range);
                     }
-                    // Remove excess
                     while (partNetRanges.Count > newPartCount)
-                    {
                         partNetRanges.RemoveAt(partNetRanges.Count - 1);
-                    }
                 }
             }
-            catch { /* NetworkInfo may not exist on all blueprints */ }
+            catch (Exception) { /* NetworkInfo may not exist on all blueprints */ }
 
-            App.AssetManager.ModifyEbx(bpEntry.Name, bpAsset);
-            logger.Log("[Composite Import] Blueprint synced: {0} parts, {1} bounding boxes", newPartCount, partBBoxes.Count);
+            if (changed)
+            {
+                App.AssetManager.ModifyEbx(bpEntry.Name, bpAsset);
+                logger.Log("[Composite Import] Blueprint '{0}' synced: {1} parts, {2} bounding boxes, {3} components", bpEntry.Name, newPartCount, partBBoxes.Count, components.Count);
+            }
         }
 
         private List<AxisAlignedBox> ToAxisAlignedBoundingBoxes(List<BoundingBox> inBoundingBoxes)
@@ -2006,6 +2613,9 @@ namespace MeshSetPlugin
         {
             MeshSetLod meshLod = meshSet.Lods[lodIndex];
             List<FbxNode> sectionNodes = new List<FbxNode>();
+
+            if (nodes == null)
+                throw new FBXImportNoMeshesFoundException(lodIndex);
 
             foreach (FbxNode child in nodes)
             {
@@ -2091,6 +2701,12 @@ namespace MeshSetPlugin
                             var section = MeshSetSection.CreateFromTemplate(template, fbxSectionNames[i], i, i);
                             meshSections.Add(section);
                         }
+                    }
+                    // fewer materials in the FBX: the surplus sections go (their materials are removed from
+                    // the asset afterwards)
+                    while (meshSections.Count > fbxSectionNames.Count)
+                    {
+                        meshSections.RemoveAt(meshSections.Count - 1);
                     }
 
                     // Step 3: Preserve original depth/shadow sections if they exist.
@@ -2179,6 +2795,10 @@ namespace MeshSetPlugin
             // clear out old bones
             meshLod.ClearBones();
 
+            // composite part data collected by ProcessSection for this lod
+            lodSectionParts.Clear();
+            lodPartPoints.Clear();
+
             // process each mesh renderable section first
             for (int i = 0; i < sectionNodeMapping.Count; i++)
             {
@@ -2191,6 +2811,7 @@ namespace MeshSetPlugin
                     {
                         node = unclaimedNodes.First();
                         unclaimedNodes.RemoveAt(0);
+                        sectionNodeMapping[i] = node;
                     }
                     else
                     {
@@ -2275,7 +2896,7 @@ namespace MeshSetPlugin
 
             if (meshSet.Type == MeshType.MeshType_Composite)
             {
-                CalculateCompositePartDataForLod(sectionNodeMapping, meshLod, ref partBbox, ref transforms);
+                BuildCompositePartData(meshLod, ref partBbox, ref transforms);
             }
 
             if (ProfilesLibrary.DataVersion == (int)ProfileVersion.StarWarsBattlefrontII)
@@ -2377,111 +2998,74 @@ namespace MeshSetPlugin
             return trns;
         }
 
-        private List<Vector3> GetVerticesFromCluster(FbxMesh fmesh, FbxCluster cluster, Matrix sectionMatrix)
+        /// <summary>
+        /// Composite part data of a lod from what ProcessSection collected: the parts of every section (a
+        /// section without its own vertices, i.e. the depth/shadow sections built from all nodes, gets every
+        /// part), the bounding box of every part from its vertices, identity part transforms. The mesh level
+        /// bounding boxes are merged over the lods.
+        /// </summary>
+        private void BuildCompositePartData(MeshSetLod meshLod, ref List<BoundingBox> bbox, ref List<LinearTransform> transforms)
         {
-            IntPtr verticesBuffer = fmesh.GetControlPoints();
-            int[] controlPointIndices = cluster.GetControlPointIndices();
-            List<Vector3> vertexPositions = new List<Vector3>();
-
-            // Iterate the control points that belong to this cluster directly
-            foreach (int cpIdx in controlPointIndices)
+            int partCount = 0;
+            foreach (int part in lodPartPoints.Keys)
+                partCount = Math.Max(partCount, part + 1);
+            foreach (List<int> parts in lodSectionParts.Values)
             {
-                Vector3 position;
-                unsafe
+                foreach (int part in parts)
+                    partCount = Math.Max(partCount, part + 1);
+            }
+            if (partCount == 0)
+                partCount = 1;
+
+            List<int> allParts = new List<int>();
+            for (int i = 0; i < partCount; i++)
+                allParts.Add(i);
+
+            List<List<int>> partIndices = new List<List<int>>();
+            for (int s = 0; s < meshLod.Sections.Count; s++)
+            {
+                List<int> parts;
+                if (!lodSectionParts.TryGetValue(s, out parts) || parts.Count == 0)
+                    parts = allParts;
+                else
                 {
-                    double* pointsPtr = (double*)(verticesBuffer + (cpIdx * 32));
-                    position = new Vector3((float)pointsPtr[XAxis] * Scale, (float)pointsPtr[YAxis] * Scale, (float)(pointsPtr[ZAxis] * FlipZ) * Scale);
+                    parts = new List<int>(parts);
+                    parts.Sort();
                 }
-
-                Vector4 tmp = Vector3.Transform(position, sectionMatrix);
-                position.X = tmp.X;
-                position.Y = tmp.Y;
-                position.Z = tmp.Z;
-
-                vertexPositions.Add(position);
+                partIndices.Add(parts);
             }
 
-            return vertexPositions;
-        }
-
-        private void CalculateCompositePartDataForLod(List<FbxNode> nodes, MeshSetLod meshLod, ref List<BoundingBox> bbox, ref List<LinearTransform> transforms)
-        {
             List<LinearTransform> partTransforms = new List<LinearTransform>();
             List<AxisAlignedBox> partAABBs = new List<AxisAlignedBox>();
-            List<List<int>> partIndices = new List<List<int>>();
-            Dictionary<ushort, List<Vector3>> boneToVerticesMapping = new Dictionary<ushort, List<Vector3>>();
-
-            foreach (FbxNode node in nodes)
+            for (int i = 0; i < partCount; i++)
             {
-                if (node == null)
-                    continue;
+                LinearTransform partTransform;
+                if (!partBoneTransforms.TryGetValue(i, out partTransform))
+                    partTransform = LinearTransform.Identity;
+                partTransforms.Add(partTransform);
+                while (transforms.Count <= i)
+                    transforms.Add(LinearTransform.Identity);
+                transforms[i] = partTransform;
 
-                FbxNodeAttribute attr = node.GetNodeAttribute(FbxNodeAttribute.EType.eMesh);
-                FbxMesh fmesh = new FbxMesh(attr);
-                FbxSkin fskin = (fmesh.GetDeformerCount(FbxDeformer.EDeformerType.eSkin) != 0)
-                    ? new FbxSkin(fmesh.GetDeformer(0, FbxDeformer.EDeformerType.eSkin))
-                    : null;
-
-                if (fskin == null)
-                    return;
-                List<int> boneList = new List<int>();
-
-                foreach (FbxCluster cluster in fskin.Clusters)
+                List<Vector3> points;
+                if (lodPartPoints.TryGetValue(i, out points) && points.Count > 0)
                 {
-                    if (cluster.ControlPointIndicesCount == 0)
-                        continue;
-
-                    FbxNode bone = cluster.GetLink();
-                    if (bone == null || bone.Name == null)
-                        continue;
-                    ushort idx = ushort.Parse(bone.Name.Substring(bone.Name.LastIndexOf('_') + 1));
-                    boneList.Add(idx);
-
-                    Matrix sectionMatrix = new FbxMatrix(node.EvaluateGlobalTransform()).ToSharpDX();
-
-                    if (!boneToVerticesMapping.ContainsKey(idx))
-                    {
-                        while (partTransforms.Count <= idx)
-                        {
-                            partTransforms.Add(LinearTransform.Identity);
-                        }
-                        partTransforms[idx] = FbxTransformToLinearTransform(bone);
-                        while (transforms.Count <= idx)
-                        {
-                            transforms.Add(LinearTransform.Identity);
-                        }
-                        transforms[idx] = partTransforms[idx];
-
-                        boneToVerticesMapping.Add(idx, GetVerticesFromCluster(fmesh, cluster, sectionMatrix));
-                    }
+                    (AxisAlignedBox, BoundingBox) aabbs = AABBFromPoints(points);
+                    partAABBs.Add(aabbs.Item1);
+                    if (bbox.Count > i)
+                        bbox[i] = (bbox[i].Minimum == Vector3.Zero && bbox[i].Maximum == Vector3.Zero) ? aabbs.Item2 : BoundingBox.Merge(bbox[i], aabbs.Item2);
                     else
                     {
-                        boneToVerticesMapping[idx].AddRange(GetVerticesFromCluster(fmesh, cluster, sectionMatrix));
+                        while (bbox.Count < i)
+                            bbox.Add(new BoundingBox());
+                        bbox.Add(aabbs.Item2);
                     }
-                }
-
-                partIndices.Add(boneList);
-            }
-
-            foreach(KeyValuePair<ushort, List<Vector3>> boneAndVertices in boneToVerticesMapping)
-            {
-                (AxisAlignedBox, BoundingBox) aabbs = AABBFromPoints(boneAndVertices.Value);
-                while (partAABBs.Count <= boneAndVertices.Key)
-                {
-                    partAABBs.Add(default);
-                }
-                partAABBs[boneAndVertices.Key] = aabbs.Item1;
-                if (bbox.Count > boneAndVertices.Key)
-                {
-                    bbox[boneAndVertices.Key] = BoundingBox.Merge(bbox[boneAndVertices.Key], aabbs.Item2);
                 }
                 else
                 {
-                    for (int i = bbox.Count; i < boneAndVertices.Key; i++)
-                    {
+                    partAABBs.Add(default);
+                    while (bbox.Count <= i)
                         bbox.Add(new BoundingBox());
-                    }
-                    bbox.Add(aabbs.Item2);
                 }
             }
 
@@ -2499,6 +3083,23 @@ namespace MeshSetPlugin
 
             meshSection.VertexCount = 0;
             meshSection.PrimitiveCount = 0;
+
+            // the per-vertex smoothing blocks describe the old vertices
+            meshSection.ClearSmoothingData();
+
+            bool isComposite = meshSet.Type == MeshType.MeshType_Composite;
+            bool isNamedSection = meshSection.Name != "";
+            HashSet<int> usedParts = new HashSet<int>();
+
+            // does this section carry lightmap UVs (RadiosityTexCoord element)?
+            bool sectionHasLightmap = false;
+            foreach (GeometryDeclarationDesc.Element elem in meshSection.GeometryDeclDesc[0].Elements)
+            {
+                if (elem.Usage == VertexElementUsage.RadiosityTexCoord)
+                    sectionHasLightmap = true;
+            }
+            if (sectionHasLightmap)
+                lightmapUvsNeeded = true;
 
             List<ushort> boneList = new List<ushort>();
             List<string> boneNames = new List<string>();
@@ -2593,7 +3194,9 @@ namespace MeshSetPlugin
                             if(meshSet.Type == MeshType.MeshType_Composite)
                             {
                                 // get id from bone name, composite bone names should always be in the format PART_X
-                                idx = ushort.Parse(bone.Name.Substring(bone.Name.LastIndexOf('_') + 1));
+                                if (!MeshSetFbx.TryParsePartBoneName(bone.Name, out int partIdx))
+                                    throw new Exception(string.Format("Composite mesh: the bone '{0}' of '{1}' is not a part bone (PART_n)", bone.Name, sectionNode.Name));
+                                idx = (ushort)partIdx;
                             }
                             else
                             {
@@ -2614,6 +3217,18 @@ namespace MeshSetPlugin
                             }
                         }
                     }
+                }
+            }
+
+            if (isComposite && boneList.Count == 0)
+            {
+                // no skin (or no part bones): everything is part 0
+                boneList.Add(0);
+                boneNames.Add(MeshSetFbx.PartBoneName(0));
+                if (!compositeNoSkinWarned)
+                {
+                    logger.Log("[Composite Import] '{0}' has no skin with PART_n bones: its vertices go to part 0", sectionNodes.FirstOrDefault(n => n != null)?.Name ?? meshSection.Name);
+                    compositeNoSkinWarned = true;
                 }
             }
 
@@ -2694,6 +3309,22 @@ namespace MeshSetPlugin
                 if (fmesh.GetElementTangent(0) == null || fmesh.GetElementBinormal(0) == null)
                     throw new FBXImportMissingTangentsException();
 
+                // the lightmap UV set, if the section stores lightmap UVs
+                FbxLayerElementUV lightmapLayer = null;
+                if (sectionHasLightmap)
+                {
+                    foreach (string uvSetName in MeshSetFbx.LightmapUvSetNames)
+                    {
+                        lightmapLayer = fmesh.GetElementUV(uvSetName);
+                        if (lightmapLayer != null)
+                            break;
+                    }
+                    if (lightmapLayer != null)
+                        lightmapUvsImported = true;
+                    else if (isNamedSection)
+                        lightmapUvsMissingSections++;
+                }
+
                 Matrix sectionMatrix = new FbxMatrix(sectionNode.EvaluateGlobalTransform()).ToSharpDX();
 
                 List<List<ushort>> boneIndices = new List<List<ushort>>();
@@ -2724,7 +3355,9 @@ namespace MeshSetPlugin
                         {
                             if(meshSet.Type == MeshType.MeshType_Composite)
                             {
-                                boneIdx = ushort.Parse(bone.Name.Substring(bone.Name.LastIndexOf('_') + 1));
+                                if (!MeshSetFbx.TryParsePartBoneName(bone.Name, out int partIdx))
+                                    continue;
+                                boneIdx = (ushort)partIdx;
                             }
                             else
                             {
@@ -2751,6 +3384,29 @@ namespace MeshSetPlugin
                     }
 
                     totalBoneInfluences = meshSection.BonesPerVertex;
+                    if (isComposite && totalBoneInfluences < 1)
+                        totalBoneInfluences = 1;
+                }
+
+                if (isComposite)
+                {
+                    // a composite vertex is in exactly one part; vertices no cluster claims go to part 0
+                    // (the skinless case too)
+                    while (boneIndices.Count < fmesh.ControlPointsCount)
+                    {
+                        boneIndices.Add(new List<ushort>());
+                        boneWeights.Add(new List<byte>());
+                    }
+                    for (int i = 0; i < boneIndices.Count; i++)
+                    {
+                        if (boneIndices[i].Count == 0)
+                        {
+                            boneIndices[i].Add(0);
+                            boneWeights[i].Add(255);
+                        }
+                    }
+                    if (fskin == null)
+                        totalBoneInfluences = 1;
                 }
 
                 // Write vertices into a temp import buffer, checking to see if there is a matching vertex already
@@ -2824,17 +3480,26 @@ namespace MeshSetPlugin
                         }
 
                         // indices/weights
-                        if (fskin != null)
+                        if (fskin != null || isComposite)
                         {
                             List<ushort> localBoneIndices = new List<ushort>();
                             List<byte> localBoneWeights = new List<byte>();
 
-                            // sort indices/weights by biggest influence
-                            var boneIndicesAndWeights = boneIndices[vertexIndex].Select((boneIndex, z) => new { boneIndex, boneWeight = boneWeights[vertexIndex][z] });
-                            boneIndicesAndWeights = boneIndicesAndWeights.OrderByDescending(a => a.boneWeight);
+                            if (boneIndices.Count <= vertexIndex || boneIndices[vertexIndex].Count == 0)
+                            {
+                                // no cluster claims this control point: bone/part 0
+                                localBoneIndices.Add(0);
+                                localBoneWeights.Add(255);
+                            }
+                            else
+                            {
+                                // sort indices/weights by biggest influence
+                                var boneIndicesAndWeights = boneIndices[vertexIndex].Select((boneIndex, z) => new { boneIndex, boneWeight = boneWeights[vertexIndex][z] });
+                                boneIndicesAndWeights = boneIndicesAndWeights.OrderByDescending(a => a.boneWeight);
 
-                            localBoneIndices.AddRange(boneIndicesAndWeights.Select(a => a.boneIndex));
-                            localBoneWeights.AddRange(boneIndicesAndWeights.Select(a => a.boneWeight));
+                                localBoneIndices.AddRange(boneIndicesAndWeights.Select(a => a.boneIndex));
+                                localBoneWeights.AddRange(boneIndicesAndWeights.Select(a => a.boneWeight));
+                            }
 
                             foundBoneInfluences = (localBoneIndices.Count > foundBoneInfluences) ? localBoneIndices.Count : foundBoneInfluences;
                             while (localBoneIndices.Count > totalBoneInfluences)
@@ -2917,6 +3582,18 @@ namespace MeshSetPlugin
                                 layerUV.DirectArray.GetAt(actualIndex, out Vector2 uv);
                                 vertex.SetValue("TexCoord" + 0, uv);
                             }
+                        }
+
+                        // lightmap UVs (RadiosityTexCoord) from the "Lightmap" UV set
+                        if (lightmapLayer != null)
+                        {
+                            int mappingIndex = (lightmapLayer.MappingMode == EMappingMode.eByControlPoint) ? vertexIndex : (i * 3) + j;
+                            int actualIndex = mappingIndex;
+                            if (lightmapLayer.ReferenceMode != EReferenceMode.eDirect)
+                                lightmapLayer.IndexArray.GetAt(mappingIndex, out actualIndex);
+
+                            lightmapLayer.DirectArray.GetAt(actualIndex, out Vector2 uv);
+                            vertex.SetValue("Lightmap", uv);
                         }
 
                         foreach (GeometryDeclarationDesc.Element elem in meshSection.GeometryDeclDesc[0].Elements)
@@ -3089,6 +3766,22 @@ namespace MeshSetPlugin
                                     }
                                 }
 
+                                if (foundIdx == -1 && vertex.HasValue("Lightmap"))
+                                {
+                                    if (vertices[idx].GetValue<Vector2>("Lightmap") != vertex.GetValue<Vector2>("Lightmap"))
+                                        foundIdx = -2;
+                                }
+
+                                if (foundIdx == -1 && finalBoneIndices != null)
+                                {
+                                    // a vertex on the border of two parts (or two bone sets) is two vertices
+                                    ushort[] otherIndices = vertices[idx].GetValue<ushort[]>("BoneIndices");
+                                    byte[] otherWeights = vertices[idx].GetValue<byte[]>("BoneWeights");
+                                    if (otherIndices == null || !otherIndices.SequenceEqual(finalBoneIndices)
+                                        || (finalBoneWeights != null && (otherWeights == null || !otherWeights.SequenceEqual(finalBoneWeights))))
+                                        foundIdx = -2;
+                                }
+
                                 if (foundIdx == -1)
                                 {
                                     foundIdx = idx;
@@ -3141,6 +3834,36 @@ namespace MeshSetPlugin
                     else
                     {
                         indexToIndexMap[actualVertexId] = vertexId;
+                    }
+                }
+
+                // the mesh bounds and, for a composite mesh, the parts of this section and their points
+                foreach (DbObject vertex in vertices)
+                {
+                    Vector4 tmp = vertex.GetValue<Vector4>("Pos");
+                    Vector4 worldPos = Vector3.Transform(new Vector3(tmp.X, tmp.Y, tmp.Z), sectionMatrix);
+                    Vector3 point = new Vector3(worldPos.X, worldPos.Y, worldPos.Z);
+                    AccumulateBounds(point);
+
+                    if (isComposite)
+                    {
+                        ushort[] vertexBones = vertex.GetValue<ushort[]>("BoneIndices");
+                        int part = (vertexBones != null && vertexBones.Length > 0) ? vertexBones[vertexBones.Length - 1] : 0;
+                        usedParts.Add(part);
+
+                        if (isNamedSection)
+                        {
+                            List<int> sectionParts;
+                            if (!lodSectionParts.TryGetValue(sectionIndex, out sectionParts))
+                                lodSectionParts[sectionIndex] = sectionParts = new List<int>();
+                            if (!sectionParts.Contains(part))
+                                sectionParts.Add(part);
+
+                            List<Vector3> points;
+                            if (!lodPartPoints.TryGetValue(part, out points))
+                                lodPartPoints[part] = points = new List<Vector3>();
+                            points.Add(point);
+                        }
                     }
                 }
 
@@ -3372,8 +4095,22 @@ namespace MeshSetPlugin
 
                                         case VertexElementUsage.RadiosityTexCoord:
                                             {
-                                                chunkWriter.Write(HalfUtils.Pack(0.0f));
-                                                chunkWriter.Write(HalfUtils.Pack(0.0f));
+                                                Vector2 uv = vertex.HasValue("Lightmap") ? vertex.GetValue<Vector2>("Lightmap") : Vector2.Zero;
+                                                if (elem.Format == VertexElementFormat.Float2)
+                                                {
+                                                    chunkWriter.Write(uv.X);
+                                                    chunkWriter.Write(1.0f - uv.Y);
+                                                }
+                                                else if (elem.Format == VertexElementFormat.Half2)
+                                                {
+                                                    chunkWriter.Write(HalfUtils.Pack(uv.X));
+                                                    chunkWriter.Write(HalfUtils.Pack(1.0f - uv.Y));
+                                                }
+                                                else
+                                                {
+                                                    for (int b = 0; b < elem.Size; b++)
+                                                        chunkWriter.Write((byte)0);
+                                                }
                                             }
                                             break;
 
@@ -3556,6 +4293,15 @@ namespace MeshSetPlugin
                 indexOffset += (uint)vertices.Count;
             }
 
+            if (isComposite)
+            {
+                // the section's bone list is the sorted list of the parts its vertices use
+                List<ushort> parts = usedParts.Select(part => (ushort)part).ToList();
+                if (parts.Count == 0)
+                    parts.Add(0);
+                parts.Sort();
+                meshSection.SetBones(parts);
+            }
         }
 
         private (AxisAlignedBox, BoundingBox) AABBFromPoints(List<Vector3> points)
@@ -4833,11 +5579,29 @@ namespace MeshSetPlugin
 
                     FrostyTaskWindow.Show("Importing", "", (task) =>
                     {
+                        // the import works on its own copy of the mesh set; the editor's copy is only replaced
+                        // when the import went through, so a failed import leaves the mesh as it was
+                        MeshSet importMeshSet = null;
+                        try
+                        {
+                            ulong resRid = ((dynamic)localAsset.RootObject).MeshSetResource;
+                            importMeshSet = App.AssetManager.GetResAs<MeshSet>(App.AssetManager.GetResEntry(resRid));
+                            if (importMeshSet != null)
+                                importMeshSet.TangentSpaceCompressionType = meshSet.TangentSpaceCompressionType;
+                        }
+                        catch (Exception)
+                        {
+                            importMeshSet = null;
+                        }
+                        if (importMeshSet == null)
+                            importMeshSet = meshSet;
+
                         try
                         {
                             // import
                             FBXImporter importer = new FBXImporter(logger);
-                            importer.ImportFBX(ofd.FileName, meshSet, localAsset, localEntry, settings);
+                            importer.ImportFBX(ofd.FileName, importMeshSet, localAsset, localEntry, settings);
+                            meshSet = importMeshSet;
                         }
                         catch (Exception exp)
                         {
@@ -4846,6 +5610,8 @@ namespace MeshSetPlugin
                                 App.AssetManager.RevertAsset(localEntry);
                             }
                             logger.LogError(exp.ToString());
+                            if (importMeshSet != meshSet)
+                                logger.Log("Import failed, the mesh was not changed (close and reopen the asset if its properties look modified)");
                         }
                     });
 

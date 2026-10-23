@@ -101,6 +101,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AssetBankPlugin", "..\Plugi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ShaderDataPlugin", "..\Plugins\FrostyShaderDataPlugin\ShaderDataPlugin.csproj", "{153A9661-41EF-93BE-AF5D-916505004822}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "FrostyAnimationEditor", "..\FrostyAnimationEditor\FrostyAnimationEditor.csproj", "{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Developer - Debug|x64 = Developer - Debug|x64
@@ -560,6 +562,16 @@ Global
 		{153A9661-41EF-93BE-AF5D-916505004822}.Release - Final|x64.Build.0 = Release - Final|x64
 		{153A9661-41EF-93BE-AF5D-916505004822}.Release|x64.ActiveCfg = Release - Alpha|x64
 		{153A9661-41EF-93BE-AF5D-916505004822}.Release|x64.Build.0 = Release - Alpha|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Developer - Debug|x64.ActiveCfg = Developer - Debug|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Developer - Debug|x64.Build.0 = Developer - Debug|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Release - Alpha|x64.ActiveCfg = Release - Alpha|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Release - Alpha|x64.Build.0 = Release - Alpha|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Release - Beta|x64.ActiveCfg = Release - Beta|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Release - Beta|x64.Build.0 = Release - Beta|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Release - Final|x64.ActiveCfg = Release - Final|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Release - Final|x64.Build.0 = Release - Final|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Release|x64.ActiveCfg = Release - Alpha|x64
+		{6F1C2B7E-3A54-4E8B-9C21-5D7A0E4F9B13}.Release|x64.Build.0 = Release - Alpha|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
