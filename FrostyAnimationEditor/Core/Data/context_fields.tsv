@@ -1,0 +1,465 @@
+# the game values a ContextDatabaseAsset column can test (462 of them). A RegistryFieldAsset column names one by
+# class_guid + field_id. Columns: class_guid, field_id, name, type, int default, int max, float min, float max, unit, enum names
+# type: 0 bool, 1 enum, 2 int, 3 bitmap, 4 float, 5 angle, 6 float (second form), 7 angle (second form), 8 three floats
+02d9bafc	00000001	Style	1	0	4				Normal|GK|GKEdge|QTApproach
+02d9bafc	00000000	InSpeed	4			0.0	0.5	feet per tick	
+02d9bafc	00000002	Angle	5			-3.1415927410125732	3.1415927410125732	radians	
+075e6fd6	00000002	AllowCarTurns	0	1					
+075e6fd6	00000000	Posture	3		32				normal|normal slow|slow jockey|dribbling|pace control dribbling|GK penalty|GK jumping jack|GK mid intense|GK high intense low ball|GK high intense high ball|GK with ball|fake run|secondary face 90|to be use 1|to be used 2|to be used 3|fast jockey|no turns|GK jumping jack low|create passing lane|trapping|slow jockey arms behind back|dribbling no touch|let it run|set play|contextual jockey|come to ball|run to net|set play run up|ball over head|GK with ball right hand|GK with ball left hand
+075e6fd6	00000001	Urgency	4			0.0	1.0	normalized	
+10301982	00000002	IsUrgent	0	0					
+10301982	00000005	Determination	1	0	2				low|high
+10301982	00000000	Type	1	0	2				stand|slide
+10301982	00000001	BallIn	3		3				front|right|left
+10301982	00000003	RunStyle	3		6				fwd|sideL|sideR|back|stop|crouch
+10301982	00000004	Speed	3		3				stand|jog|run
+10301982	00000006	StandTackleAttribute	4			0.0	1.0	attribute 0-1	
+1287d5c7	00000005	EndRunStyle	1	0	6				fwd|sideL|sideR|back|stop|crouch
+1287d5c7	00000004	StartRunStyle	1	0	6				fwd|sideL|sideR|back|stop|crouch
+1287d5c7	00000006	ShoulderTurnDir	3		3				LOCO_TURN_POSITIVE|LOCO_TURN_NEGATIVE|LOCO_STRAIGHT
+1287d5c7	0000000b	CruiseSpeedPercent	4			0.0	1.0	percent	
+1287d5c7	00000010	CruiseSpeedUnranked	4			0.0	1.7999999523162842	feet per tick	
+1287d5c7	0000000d	EmotionHappiness	4			-1.0	1.0	unitless	
+1287d5c7	0000000e	EmotionIntensity	4			-1.0	1.0	unitless	
+1287d5c7	0000000a	StartSpeedPercent	4			0.0	1.0	percent	
+1287d5c7	0000000f	StartSpeedUnranked	4			0.0	1.7999999523162842	feet per tick	
+1287d5c7	00000001	MoveAngleDeltaRange	5			-3.1415927410125732	3.1415927410125732	radians	
+1287d5c7	0000000c	StartPhase	5			0.0	1.0	phase	
+1287d5c7	00000009	CruiseSpeed	6			0.0	1.7999999523162842	feet per tick	
+1287d5c7	00000008	StartSpeed	6			0.0	1.7999999523162842	feet per tick	
+1287d5c7	00000002	IdealEndShoulderAngle	7			-3.1415927410125732	3.1415927410125732	radians	
+1287d5c7	00000000	IdealMoveAngleDelta	7			-3.1415927410125732	3.1415927410125732	radians	
+14fb85c2	00000013	IsJostle	0	0					
+14fb85c2	0000000e	PlayerOutAngle	1	0	8				0|45|90|135|180|225|270|315
+14fb85c2	00000004	ContactHeight	3		10				foot|knee|hip|chest|low head|head|above head|above head stretch|above hip kick|gather above head
+14fb85c2	00000003	ContactPosition	3		4				normal|extended|close|far
+14fb85c2	00000010	EffortType	3		2				Contact|Effort
+14fb85c2	00000008	Flags	3		6				shared|dribble|front|left|right|back
+14fb85c2	00000007	Footedness	3		3				strong|weak|very weak
+14fb85c2	00000011	OnGroundStartPose	3		6				normal|left side|right side|knee|chest|back
+14fb85c2	00000005	OpponentPosition	3		6				Left|Right|Back|Front|Unspecified|FrontLower
+14fb85c2	00000000	PassShotType	3		31				LaceShot|FinesseShot|Lob|GroundPass|DivingHeader|Bicycle|Trick|SlidingStretch|CrossNormal|PassAndGo|FancyLob|OverheadClearance|PowerGroundThrough|SwervePass|InaccurateClearance|OutSideFootShot|BackPassToCatch|SlidingShot|Scoop|ChipShot|AcrobaticClearance|LongLaceShot|LongFinesseShot|FlickPass|ShortPass|LongChipShot|ReflexClearance|Clearance|CrossGround|DeflectShot|SlidingClearance
+14fb85c2	00000001	Power	3		4				low|med|high|verylow
+14fb85c2	00000006	Swerve	3		2				left|right
+14fb85c2	00000002	Urgency	3		4				normal|urgent|relaxed|relaxed cross
+14fb85c2	00000012	WeatherCondition	3		4				Dry|Wet|Mud|Snow
+14fb85c2	0000000a	AgilityScore	4			0.0	100.0	Agility Score	
+14fb85c2	0000000f	BalanceScore	4			0.0	100.0	Balance Score	
+14fb85c2	00000009	FancyScore	4			0.0	100.0	Fancy Score	
+14fb85c2	0000000d	JumpingScore	4			0.0	100.0	Jumping Score	
+14fb85c2	0000000b	PoachingScore	4			0.0	100.0	Poaching Score	
+14fb85c2	0000000c	VisionScore	4			0.0	100.0	Vision Score	
+17916aef	00000000	Speed Level	3		12				Still|Walk|Jog|Sneak|Run|Sprint|Stairs_Walk_Up|Stairs_Walk_Down|Stairs_Run_Up|Stairs_Run_Down|Stairs_Sprint_Up|Stairs_Sprint_Down
+19ed9db8	00000001	ContactHeight	3		8				foot|knee|hip|chest|jumpchest|head|thigh|highfoot
+19ed9db8	00000000	ContactPosition	3		6				normal|wide|stretch|close|far|wide_far
+19ed9db8	00000004	PlayerOutSpeed	3		3				stand|jog|sprint
+19ed9db8	00000003	TrapBallInTrajectory	3		3				Neutral|From Above|From Below
+19ed9db8	00000002	TrapStyle	3		14				cushion|deflect|flick|kick|reflex|self dummy|shield|contextualflick|sliding|setupintoair|setupkick|soletrap|shieldsole|extended
+19ed9db8	00000005	BallControlScore	4			0.0	100.0	Ball Control Score	
+19ed9db8	00000008	RelBallInSpeed	4			0.0	3.0	feet per tick	
+19ed9db8	00000007	TrapDifficultyScore	4			0.0	100.0	Trap Difficulty Score	
+19ed9db8	00000006	RelOpponentAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+1c1de577	00000002	Step Type	3		20				idle|cycle|swivel|decelerate|accelerate|car-turn|drastic-turn|crouch|start|stop|decel-start|accel-start|car-decel|car-accel|car-exit|decel-stop|lane-change|uber-idle|curve-drastic-turn|none
+1c1de577	00000001	Cur Speed	4			0.0	1.0	dist per tick	
+1c1de577	0000000c	Tar Dist From Stop Position	4			0.0	15.0	distance	
+1c1de577	00000006	Tar Speed	4			0.0	1.0	dist per tick	
+1c1de577	00000000	Cur Move - Cur Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+1c1de577	0000000a	Cur Move - Tar Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+1c1de577	00000005	DEPRECATED Lean Side (unused)	5			-3.1415927410125732	3.1415927410125732	radians	
+1c1de577	00000007	Tar Move - Cur Move	5			-3.1415927410125732	3.1415927410125732	radians	
+1c1de577	00000008	Tar Move - Cur Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+1c1de577	00000009	Tar Move - Tar Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+1c1de577	0000000b	Tar Shoulder - Cur Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+1c1de577	00000004	DEPRECATED Lean Forward (unused)	7			-3.1415927410125732	3.1415927410125732	radians	
+1c1de577	00000003	DEPRECATED Phase (unused)	7			0.0	1.0	phase	
+26976d6d	00000006	Context	1	0	9				Generic|FromFlagCelebration|FromCameraCelebration|Shootout|Camera|Adboard|BehindNet|WithManager|Specific
+26976d6d	00000000	MultiCelebStartPose	1	0	4				stand|knee|chest|back
+26976d6d	00000002	NumPlayers	1	0	6				10 Man|7 Man|5 Man|4 Man|3 Man|2 Man
+26976d6d	00000007	StadiumSize	1	0	2				Normal|CloseAdboard
+26976d6d	00000003	NumSubs	2	0	3				
+26976d6d	00000005	SubsLineRelDistance	4			0.0	100.0	Feets	
+26976d6d	00000008	AngleToSideline	5			-3.1415927410125732	3.1415927410125732	radians	
+26976d6d	00000001	MultiCelebScorerTeamRelFacing	5			-3.1415927410125732	3.1415927410125732	radians	
+26976d6d	00000004	SubsRelFacing	5			-3.1415927410125732	3.1415927410125732	radians	
+2b435355	00000001	PlayerSpeed	3		2				stand|jog
+2b435355	00000000	Angle	5			-3.1415927410125732	3.1415927410125732	radians	
+324356a5	00000003	Intensity	3		2				low|high
+324356a5	00000000	PlayerSpeed	3		5				stand|jog|sidestepL|sidestepR|backpedal
+324356a5	00000001	Angle	5			-3.1415927410125732	3.1415927410125732	radians	
+337bb311	00000006	IsMirrored	0	0					
+337bb311	00000003	StartRunStyle	1	0	6				fwd|sideL|sideR|back|stop|crouch
+337bb311	00000005	Speed	4			0.0	0.5	feet per tick	
+337bb311	00000001	AbsoluteBallOutAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+337bb311	00000000	BallInAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+337bb311	00000002	RelMoveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+337bb311	00000004	RankedBallOutAngle	7			-3.1415927410125732	3.1415927410125732	radians	
+356551be	00000000	SetplayGestureType	1	0	4				none|arm up|call team|push team
+35b7304f	0000000c	JustGotUp	0	0					
+35b7304f	00000009	ReactionTypeEnum	1	0	88				Happy|Sad|OOP|Complain|Congratulate|LinesmanRaiseFlag|LinesmanPointFlagForOffside|LinesmanPointFlagLeft|LinesmanPointFlagRight|LinesmanPointFlagForCorner|RefWhistleJog|RefWhistleWalk|RefWhistleStand|RefPointLeft|RefPointRight|RefPointForward|RefPointForwardWalk|RefWavePlayerBackOn|RefYellowCard|RefRedCard|RefYellowToRedCard|RefStandsComeHere|PlayerYellowCard|PlayerRedCard|PlayerYellowToRedCard|PlayerSurprisedCard|ThirdManApplaudsCard|PlayerGuiltyWalk|PlayerApplaudsRef|RefWhistleDelayedCard|RefWarning|PlayerWarning|PlayerGuiltyIdle|PlayerReactToWhistle|RefWhistleSecondDelayedCard|PlayerComplainForFoul|GKSave|GKYell|GKComplement|ThirdManReactPositive|ThirdManReactNegative|SlideTackleStayDown|PlayerMissedShot|PlayerDefenderComplainOffside|PlayerAttackerComplainOffside|GKWithBall|PlayerOOPContest|PlayerFarMissedShot|PlayerMissedOpenShot|PlayerPoorPassComplain|PlayerOverreactYellow|PlayerOverreactRed|ThirdManHoldBackYellow|ThirdManHoldBackRed|ThirdManHelpUp|ScoredAgainst|PlayerComplainForFoulToSit|PlayerGetHelpUp|RefAfterCard|RefDropBall|UCCCongratulate|WallTeammateCardedNormal|PlayerInWallCardedNormal|RefPushWall|RefPushAndCardWall|PlayerWallRetreatLHand|PlayerWallRetreatRHand|PlayerWallRetreatNormal|WallTeammateCardedLHand|WallTeammateCardedRHand|PlayerInWallCardedLHand|PlayerInWallCardedRHand|GKWithBallGesture|RefYellowCardPersistenFoulSamePlayer|PlayerInGameMissedShotShort|TeammateInGameMissedShotShort|TeammateInGameMissedShotLong|InGamePlayerGetHelpUp|PlayerPrepareForHelpUp|PlayerInGameMissedShotLong|OwnGoalScored|ComplainForGoalDecision|RefCheckWatchPointLeft|RefCheckWatchPointRight|RefYellowCardPersistenFoulAnyPlayer|NoFoulInBox|PostOffsideGoal|GKWithBallGestureStand
+35b7304f	0000000f	EmotionState	3		5				NEUTRAL|SAD|VERY_SAD|HAPPY|VERY_HAPPY
+35b7304f	00000006	ReactionGetUpOutAngle	3		8				0|45|90|135|180|225|270|315
+35b7304f	00000004	ReactionIntensity	3		3				Low|Mid|High
+35b7304f	00000005	ReactionStartPose	3		8				None|LeftKnee|LeftSide|RightSide|RightKnee|Chest|Back|Knee
+35b7304f	00000010	RunStyle	3		6				fwd|sideL|sideR|back|stop|crouch
+35b7304f	0000000a	ReactionInSpeedRange	4			0.0	0.5	feet per tick	
+35f73045	00000001	GetUpSpeed	1	1	2				to stand|to jog
+35f73045	00000000	GetUpStartPose	1	2	5				slide_left|chest|back|knee|slide_right
+35f73045	00000004	GetUpPainType	3		6				None|Leg|Arm|Torso|Leg_Mirrored|Arm_Mirrored
+35f73045	00000003	GetUpPain	4			0.0	1.0	pain 0-1	
+35f73045	00000006	PlayerInSpeed	4			0.0	0.5	feet per tick	
+35f73045	00000005	Urgency	4			0.0	1.100000023841858	urgency 0-1	
+35f73045	00000002	GetUpDir	5			-3.1415927410125732	3.1415927410125732	radians	
+3a435355	00000001	KickPower	3		3				low|medium|high
+3a435355	00000000	KickType	3		2				ground|lob
+3a435355	00000002	Angle	5			-3.1415927410125732	3.1415927410125732	radians	
+4424d4cb	00000000	Posture	3		32				normal|normal slow|slow jockey|dribbling|pace control dribbling|GK penalty|GK jumping jack|GK mid intense|GK high intense low ball|GK high intense high ball|GK with ball|fake run|secondary face 90|to be use 1|to be used 2|to be used 3|fast jockey|no turns|GK jumping jack low|create passing lane|trapping|slow jockey arms behind back|dribbling no touch|let it run|set play|contextual jockey|come to ball|run to net|set play run up|ball over head|GK with ball right hand|GK with ball left hand
+48162643	00000000	UCCIntensity	3		5				NoUCC|Low|Normal|High|VeryHigh
+52f80e87	00000000	IdleType	1	0	50				inplay|pregame|injured|fatigued|lowintensity|highintensity|head_still|assistant_ref|point_feet|point_forward_left|point_forward_right|arm_up_left|arm_up_right|begging|need_substitution|assistant_ref_wave_flag|waiting_for_ref|ref_wait_for_player|waiting_for_ref_guilty|placeholder_0|air_ball_low_urgency|air_ball_high_urgency|ground_ball_low_urgency|ground_ball_high_urgency|pk_prepare|pk_loop_normal|pk_prepare_special|pk_loop_dudek|shielding|shielded|dribble_high_urgency|out_of_play|request_substitution|select_sides_home|select_sides_away|hesitation|protect_ball|backing_in|resisting_backing_in|precision_dribble (removed)|gk_waiting_ball|postwatcher left|postwatcher right|pk runner idle|gk corner left|gk corner right|pkshootout at center|gk with ball no bounce|gk preparation hop|create_player_idle
+57b9ac99	00000000	RelInterestAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+57b9ac99	00000001	RelLookAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+57b9ac99	00000002	RelLookToShoulderAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+57b9ac99	00000003	TargetAngleMoveAngleDiff	5			-3.1415927410125732	3.1415927410125732	radians	
+596d3532	00000005	IdleSubType	1	0	9				none|PK Custom 1|PK Custom 2|PK Custom 3|PK Custom 4|PK Custom 5|PK Custom 6|PK Custom 7|PK Custom 8
+596d3532	00000001	IdleType	1	0	7				kick off|long free kick|goal kick|corner kick|short FK layoff|short free kick|penalty kick
+596d3532	00000004	StarType	1	0	9				none|Henry|Messi|Lampard|Suarez|C Ronaldo|Juninho|Ronaldinho|Gareth Bale
+596d3532	00000002	Foot	3		2				left|right
+5a955340	00000012	IsMirrored	0	0					
+5a955340	0000001c	IsRunningOverBall	0	0					
+5a955340	0000000e	Footedness	1	0	2				left|right
+5a955340	00000021	LaunchType	1	0	2				MoveAngleLineup|BodyAngleLineup
+5a955340	00000026	NoTouchFeintStateIn	1	0	4				none|left|right|centre
+5a955340	00000027	NoTouchFeintStateOut	1	0	4				none|left|right|centre
+5a955340	0000001a	OnGroundPose	1	0	6				none|leftSide|rightSide|knee|chest|back
+5a955340	0000001d	BallKeepPosition	3		4				left|left_wide|right|right_wide
+5a955340	00000020	BattleState	3		6				none|shielding|jostling|prepare_far|prepare_engage|interacting
+5a955340	0000001f	BodyMomentum	3		2				straight|in turn step
+5a955340	0000000f	BranchOutType	3		9				default|combo|early_dribble_exit|specific_combo_exit1|specific_combo_exit2|specific_combo_exit3|same_foot_combo|late_dribble_exit|feint_exit
+5a955340	00000006	CadenceStyle	3		6				low|mid|high|mid_Messi|high_CRonald|mid_Robben
+5a955340	00000003	ContactPosition	3		11				SuperClose|VeryClose|Close|Normal|Far|SlidingFar|Stretch|SlidingStretch|VeryFar|Wide|WideFar
+5a955340	00000010	IntensityLevel	3		2				low|high
+5a955340	00000023	KickPower	3		3				Low|Med|High
+5a955340	00000017	OpponentSituation	3		4				1_v_1|1_v_GK|1_v_2_toBeImplemented|1_v_3_toBeImplemented
+5a955340	00000022	OpponentTackleLeg	3		4				NoTackle|RightOnOpp|LeftOnOpp|FrontOfOpp
+5a955340	00000002	PlayerInMoveState	3		12				Stand|SlowJog|Jog|SlowSprint|Sprint|SidestepL|SidestepR|Backpedal|45_L|45_R|135_L|135_R
+5a955340	00000001	PlayerOutType	3		25				HardStop|Jog|Sprint|KnockOn|KnockOnNutmeg|JostleBlock|HighRes|ShieldStop|Evasive|ContextualTurn|Possession|EvasiveFace|StrafeTransition|Strafe|EvasiveFaceLoop|ProtectBallShield|ProtectBallStop|ProtectBallJog|ProtectBallFromOOP|UnbalanceJog|SlowJog|GetUp|NoTouch|NoTouchExit|NoTouchQuick
+5a955340	00000013	RunStyle	3		6				fwd|sideL|sideR|back|stop|crouch
+5a955340	00000007	SkillLevel	3		3				Good|Normal|Bad
+5a955340	0000001b	StrafeSituation	3		6				none|Manual_FacingGoal|Manual_Shield|Contextual_FacingGoal|Contextual_Shield|Contextual_FacingGoalCrowded
+5a955340	00000005	StraightDribbleContactPos	3		3				Normal|Wide|Behind
+5a955340	00000004	StraightDribbleType	3		13				Walk|Jog|SlowSprint|Sprint|Jog45|BeingBounced|Strafe|Contextual|Stumbling|Evasive|SprintToJog|ShieldStrafe|ProtectJog
+5a955340	00000000	TouchStyle	3		4				Generic|Messi|CRonald|Robben
+5a955340	0000001e	BallInSpeed	4			0.0	0.5	feet per tick	
+5a955340	00000014	DribbleAttribute	4			0.0	1.0	attribute 0-1	
+5a955340	00000011	OpponentDistance	4			0.0	30.0	feet	
+5a955340	00000018	PlayerInSpeed	4			0.0	0.5	feet per tick	
+5a955340	0000000d	PlayerOutSpeed	4			0.0	0.5	feet per tick	
+5a955340	00000029	PushbackForce	4			0.0	1.0	force 0-1	
+5a955340	00000025	AbsRelOpponentAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	0000000a	BallOutAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	00000024	BallTrajAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	00000028	BallTrajRelFaceAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	00000009	PlayerOutAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	0000000c	PlayerOutRelMoveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	00000016	RelGoalAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	0000000b	RelMoveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	0000002a	RelOppAngleFromBallOut	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	00000008	RelOpponentAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	00000015	RelOpponentFaceAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+5a955340	00000019	RankedBallOutAngle	7			-3.1415927410125732	3.1415927410125732	radians	
+5b505325	00000000	GatherType	1	0	4				left foot|right foot|both feet|none
+5c170272	00000000	RollBack	1	0	4				Chest|Knee|SideL|SideR
+5c170372	00000005	IsLoop	0	0					
+5c170372	00000004	IsReinjury	0	0					
+5c170372	00000000	BodyPart	1	0	13				Foot|Leg|UpperLeg|ForeArm|Arm|Head|Torso|Hips|Ankle|Knee|Wrist|Elbow|Shoulder
+5c170372	00000001	ForceDirection	1	0	7				AnyDir|Front|Back|Inside|Outside|Top|Bottom
+5c170372	00000002	StartCondition	1	0	3				Collision|AOG|Force
+5c170372	00000003	Severity	3		3				Low|Medium|High
+5c170372	00000006	PlayerSpeed	4			0.0	0.5	feet per tick	
+6639cd93	0000000c	AssetList	3		15				0|1|2|3|4|5|6|7|8|9|10|11|12|13|14
+6639cd93	00000010	BallInAngle	3		4				0|90|180|270
+6639cd93	00000009	BallPKZone	3		13				invalid|centerLow|centerHigh|leftLow|leftMid|leftHigh|rightLow|rightMid|rightHigh|farLeftMid|farLeftLow|farRightMid|farRightLow
+6639cd93	00000002	ContactHeight	3		3				low|mid|high
+6639cd93	00000001	ContactPosition	3		10				near|midL|farL|midR|farR|nearWide|midLWide|farLWide|midRWide|farRWide
+6639cd93	00000006	DiveAtFeetStartPose	3		2				left|right
+6639cd93	00000007	GetupStartPose	3		6				leftKnee|leftSide|rightSide|rightKnee|chest|back
+6639cd93	0000000b	GoalDirection	3		4				forward|sideR|sideL|back
+6639cd93	00000003	Intensity	3		3				relaxed|urgent|desperation
+6639cd93	0000000a	PKMissAssetList	3		2				0|1
+6639cd93	00000008	PKZone	3		13				normal|centerLow|centerHigh|leftLow|leftMid|leftHigh|rightLow|rightMid|rightHigh|farLeftMid|farLeftLow|farRightMid|farRightLow
+6639cd93	00000011	Personality	3		3				Traditional|Acrobatic|Outfield
+6639cd93	00000000	PlayerInSpeed	3		7				stand|jog|sprint|sidestepL|sidestepR|backpedal|down
+6639cd93	00000005	Style	3		12				normal|effort|anticipate|reflex|missShot|giveUp|pk|diveAtFeet|outsideBox|effortPastPost|pkAdjust|pkEffort
+6639cd93	0000000f	SwatDirection	3		2				swatLeft|swatRight
+6639cd93	0000000e	TipDirection	3		3				tipBack|tipLeft|tipRight
+6639cd93	00000004	Type	3		7				catch|deflect|punch|swat|fumble|diveAtFeet|tipOverBar
+7abcacc3	0000000d	IsThrowinCancel	0	0					
+7abcacc3	00000007	PKSlip	0	0					
+7abcacc3	0000003c	StutterRequested	0	0					
+7abcacc3	0000000c	CornerType	1	0	2				in swing|out swing
+7abcacc3	00000005	FKStance	1	0	3				normal|long run|open
+7abcacc3	00000004	Foot	1	0	2				left|right
+7abcacc3	00000006	PKType	1	0	2				normal|stutter
+7abcacc3	0000000a	StarType	1	0	9				none|Henry|Messi|Lampard|Suarez|C Ronaldo|Juninho|Ronaldinho|Gareth Bale
+7abcacc3	0000000b	ThrowinStyle	1	0	3				Normal|Quick|StepBack
+7abcacc3	00000001	ActionType	3		11				run over|normal shot|finesse shot|chip shot|driven shot|ground pass|lob pass|driven lob pass|low lob pass|long pass|extra long pass
+7abcacc3	0000003a	PlaceKickType	3		6				KickOff|LongFreeKick|FreeKick|CornerKick|PenaltyKick|GoalKick
+7abcacc3	0000003b	SetPlayRunUpType	3		3				Normal|Walk|Sprint
+7abcacc3	00000003	Power	4			0.0	1.0	power(0-1)	
+7abcacc3	00000002	OutAngle	7			-3.1415927410125732	3.1415927410125732	radians	
+8a12074d	00000000	Type	1	0	5				getup tag2|getup tag3|getup tag5|getup tag6|getup tag7
+8c1ea546	00000002	Distance to Master	4			0.0	16.0	units	
+8c1ea546	00000001	Speed	4			0.0	1.0	feet per tick	
+8c1ea546	00000003	Angle from Master	5			-3.1415927410125732	3.1415927410125732	radians	
+8c1ea546	00000000	Facing Angle Diff from Master	5			-3.1415927410125732	3.1415927410125732	radians	
+91a15e1c	00000006	PlayerGender	1	0	2				male|female
+91a15e1c	00000000	WallActionType	1	0	10				idle|charge idle|move left|move right|move forward|charge|charge faked|jump|jump faked|cringe
+91a15e1c	00000005	WallChargeSide	3		2				left|right
+91a15e1c	00000003	WallSetplayType	3		2				normal|layoff
+91a15e1c	00000001	WallStanceType	3		3				normal|left hand|right hand
+91a15e1c	00000002	WallJumpHeight	4			0.0	1.0	height 0-1	
+a163fdd3	00000000	StepGroup	3		9				default|shield|defend|5050_push|5050_pushed|jostle|hold_held|off_balance|protect_ball
+a23a7cf6	00000005	PPAvoidanceType	3		2				resist|displace
+a23a7cf6	00000000	ReactionType	3		27				none|pulled_leftshoulder|pulled_rightshoulder|pushed_leftside|pushed_rightside|bounced_leftside|bounced_rightside|held_leftside_complaint|held_rightside_complaint|guilty|pushed_chest_leftside|pushed_chest_rightside|pulled_lefthip|pulled_righthip|pulled_leftarm|pulled_rightarm|pushed_swathip_leftside|pushed_swathip_rightside|pushed_swatshoulder_leftside|pushed_swatshoulder_rightside|pulled_cloth_leftupperback|pulled_cloth_rightupperback|pulled_cloth_leftlowerback|pulled_cloth_rightlowerback|pulled_cloth_lefttorso|pulled_cloth_righttorso|push_off
+a23a7cf6	00000001	Intensity	4			0.0	1.0	normalized	
+a23a7cf6	00000002	Speed	4			0.0	0.5	feet per tick	
+a23a7cf6	00000009	StrengthDiff	4			-0.4000000059604645	0.4000000059604645		
+a23a7cf6	00000003	Angle	5			-3.1415927410125732	3.1415927410125732	radians	
+a23a7cf6	00000006	AngleToOpponent	5			-3.1415927410125732	3.1415927410125732	radians	
+a23a7cf6	0000000a	PushOffAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+a7a1d744	00000002	GetUpStartPose	1	6	7				LeftKnee|LeftSide|RightSide|RightKnee|Chest|Knee|Back
+a7a1d744	00000001	GetUpStyle	1	0	4				Normal|GK|GKRun|GKWithBall
+a7a1d744	00000000	GetUpOutAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+afafafaf	00000007	PreferClothPull	0	0					
+afafafaf	00000000	PushPullType	3		14				none|normal|sealout|stiffarm|swat|frontpull|pull|push|shield_push|left_arm_grab|right_arm_grab|limb_swat|swat_hip|ik_target
+afafafaf	00000002	Speed	4			0.0	0.5	feet per tick	
+afafafaf	00000006	StrengthDiff	4			-0.4000000059604645	0.4000000059604645		
+afafafaf	00000004	TargetDistance	4			0.0	10.0	feet	
+afafafaf	00000005	RelFaceAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+afafafaf	00000001	RelMoveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+afafafaf	00000003	TargetAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+bdf98b1c	00000006	IsChase	0	0					
+bdf98b1c	00000005	IsJostle	0	0					
+bdf98b1c	00000009	IsLimited	0	0					
+bdf98b1c	00000000	Type	1	0	2				stand|slide
+bdf98b1c	00000008	ClearDir	3		3				invalid|left|right
+bdf98b1c	00000007	JostleType	3		3				invalid|possession|clearance
+bdf98b1c	00000001	Situation	3		11				normal|aggressive|knockAway|shielded|autoLimited|farEffort|isPressing|possession|dragback|possession180|jockeying
+bdf98b1c	0000000d	BallPeakHeight	4			0.0	10.0	feet	
+bdf98b1c	0000000f	BallSpeed	4			0.0	1.0	feet per tick	
+bdf98b1c	0000000e	RelOpponentSpeed	4			-0.5	0.5	feet per tick	
+bdf98b1c	0000000c	SlideTackleAttribute	4			0.0	1.0	attribute 0-1	
+bdf98b1c	00000002	Speed	4			0.0	0.5	feet per tick	
+bdf98b1c	0000000b	StandTackleAttribute	4			0.0	1.0	attribute 0-1	
+bdf98b1c	00000003	RelMoveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+bdf98b1c	00000004	RelOpponentAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+bdf98b1c	0000000a	RelOpponentPosition	5			-3.1415927410125732	3.1415927410125732	radians	
+c5ddece5	0000001e	Can2HandJostle	0	0					
+c5ddece5	0000002c	GradualDecel	0	1					
+c5ddece5	0000002b	InPhaseMatch	0	0					
+c5ddece5	00000018	IsApprShieldingOpp	0	0					
+c5ddece5	0000000c	IsAvoiding	0	0					
+c5ddece5	00000013	IsGoalSide	0	0					
+c5ddece5	00000025	IsInBackingIn	0	0					
+c5ddece5	00000000	IsInBattle	0	0					
+c5ddece5	00000012	IsOffTheBall	0	0					
+c5ddece5	00000003	IsOpponentClose	0	0					
+c5ddece5	0000002e	IsRunningInto	0	0					
+c5ddece5	00000001	IsShielding	0	0					
+c5ddece5	0000000a	IsTest	0	0					
+c5ddece5	00000031	IsWoman	0	0					
+c5ddece5	00000034	SlowDownIntoOpp	0	0					
+c5ddece5	00000026	Use Emotional Loco	0	0					
+c5ddece5	0000001b	hesitation	0	0					
+c5ddece5	0000000f	CadenceStyle	1	1	6				low|mid|high|mid_Messi|high_CRonald|mid_Robben
+c5ddece5	0000001f	DribbleType	1	0	3				normal|evasive|protectJog
+c5ddece5	0000001a	Footedness	1	0	2				left|right
+c5ddece5	00000010	GameSpeed	1	1	3				slow|normal|fast
+c5ddece5	00000006	GestureType	1	0	11				none|arm up|point forward|point feet|ref signal adv|complain|follow me|guilty|get up|point feet one arm|point to feet two arm
+c5ddece5	00000023	HoldIdleType	1	0	13				none|hold_lefthand|hold_righthand|held_leftside|held_rightside|holdhip_lefthand|holdhip_righthand|heldhip_leftside|heldhip_rightside|holdarm_lefthand|holdarm_righthand|heldarm_lefthand|heldarm_righthand
+c5ddece5	0000000e	Injury	1	0	6				None|Leg|Arm|Torso|Leg_Mirrored|Arm_Mirrored
+c5ddece5	00000035	PPShieldType	1	0	3				none|shielding|shielded
+c5ddece5	0000000b	RushType	1	0	6				none|intense|closing down|scramble|SideStep Back L|SideStep Back R
+c5ddece5	00000019	StepIntoShotType	1	0	7				none|ground|air|stutter|hold|stutter_lean|trap_nowarphack
+c5ddece5	0000001c	shieldBallOop	1	0	4				none|shielding|shielded|protectball
+c5ddece5	00000008	ActorType	3		11				player|deprecated|referee|physio|linesman|manager|subsplayer|hirescrowd|stub|slc|4threferee
+c5ddece5	00000039	BattleState	3		4				none|close|far|super far
+c5ddece5	00000007	GestureArm	3		2				left|right
+c5ddece5	0000002d	LocoStyle	3		8				Low_Cadence|Mid_Cadence|High_Cadence|Messi|CRonald|Robben|Bale|Toure
+c5ddece5	00000011	MTTState	3		16				
+c5ddece5	00000009	PreferredTurnDir	3		2				neither|positive
+c5ddece5	00000014	PullType	3		14				none|normal|sealout|stiffarm|swat|frontpull|pull|push|shield_push|left_arm_grab|right_arm_grab|limb_swat|swat_hip|ik_target
+c5ddece5	00000020	RunStyleContext	3		6				fwd|sideL|sideR|back|stop|crouch
+c5ddece5	00000038	ShieldType	3		4				none|shield dribble|shield trap|shield defending
+c5ddece5	00000005	WinningStatus	3		15				neutral|win|lose|pushed|push|unbalanced_low|unbalanced_high|pp_pull|pp_push|pp_hold|pp_front_grab|protect_push|shield_push|held_swat|ik_target
+c5ddece5	00000036	ApproachSpeed	4			0.0	1.0	feet Per tick	
+c5ddece5	0000001d	CruiseSpeed	4			0.0	0.5	feet Per tick	
+c5ddece5	00000030	DistToNearestOpponent	4			0.0	500.0	feet	
+c5ddece5	0000002f	DistanceToBall	4			0.0	500.0	feet	
+c5ddece5	0000000d	Fatigue	4			0.0	1.0	normalized	
+c5ddece5	00000015	OpponentProximity	4			0.0	1.0	normalized	
+c5ddece5	00000029	Speed	4			0.0	0.5	feet per tick	
+c5ddece5	0000003d	TargetSpeed	4			0.0	0.5	feet per tick	
+c5ddece5	00000021	TimeToBallTouch	4			0.0	200.0	ticks	
+c5ddece5	00000004	Urgency	4			0.0	1.100000023841858	normalized	
+c5ddece5	00000024	AbsRelAngleToBall	5			-3.1415927410125732	3.1415927410125732	radians	
+c5ddece5	00000027	AbsRelInterestAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+c5ddece5	00000037	EffectiveRelMoveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+c5ddece5	00000022	Phase 	5			0.0	1.0	phase	
+c5ddece5	00000032	RelAngleToBall	5			-3.1415927410125732	3.1415927410125732	radians	
+c5ddece5	00000028	RelMoveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+c5ddece5	00000033	RelTarSAToBall	5			-3.1415927410125732	3.1415927410125732	radians	
+dd855644	00000001	Clip Type	3		20				idle|cycle|swivel|decelerate|accelerate|car-turn|drastic-turn|crouch|start|stop|decel-start|accel-start|car-decel|car-accel|car-exit|decel-stop|lane-change|uber-idle|curve-drastic-turn|none
+dd855644	0000000d	Run Speed	3		6				Stop|Walk|Slow Jog|Jog|Fast Jog|Sprint
+dd855644	00000003	Run Style	3		3				Fwd|Side|Back
+dd855644	00000010	Side Lean Dir	3		3				Straight|Left|Right
+dd855644	00000002	Step Location In Clip	3		3				First|Middle|Last
+dd855644	00000000	Step Type	3		20				idle|cycle|swivel|decelerate|accelerate|car-turn|drastic-turn|crouch|start|stop|decel-start|accel-start|car-decel|car-accel|car-exit|decel-stop|lane-change|uber-idle|curve-drastic-turn|none
+dd855644	0000000f	Target Distance From Stop Position	3		3				Close|Medium|Far
+dd855644	0000000e	Target Speed	3		6				Stop|Walk|Slow Jog|Jog|Fast Jog|Sprint
+dd855644	00000005	Clip End Speed	4			0.0	1.0	dist per tick	
+dd855644	00000004	Start Speed	4			0.0	1.0	dist per tick	
+dd855644	0000000b	Cur Move - Cur Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+dd855644	0000000a	Cur Move - Tar Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+dd855644	00000006	Start Side Lean Side	5			-3.1415927410125732	3.1415927410125732	radians	
+dd855644	00000007	Tar Move - Cur Move	5			-3.1415927410125732	3.1415927410125732	radians	
+dd855644	00000008	Tar Move - Cur Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+dd855644	00000009	Tar Move - Tar Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+dd855644	0000000c	Tar Shoulder - Cur Shoulder	5			-3.1415927410125732	3.1415927410125732	radians	
+e8d2ac3b	00000005	Duration	4			0.0	100.0	ticks	
+e8d2ac3b	00000004	EndSpeed	4			0.0	0.5	feet per tick	
+e8d2ac3b	00000010	EndRelShoulderAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+e8d2ac3b	00000011	MoveAngleDelta	5			-3.1415927410125732	3.1415927410125732	radians	
+e8d2ac3b	0000000a	ShoulderAngleDelta	5			-3.1415927410125732	3.1415927410125732	radians	
+e8d2ac3b	0000000f	StartRelShoulderAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+e8d2ac3b	0000000d	DurationRank	6			0.0	100.0	ticks	
+e8d2ac3b	00000003	ShoulderAngleDeltaRank	7			-3.1415927410125732	3.1415927410125732	radians	
+e8d5ad1b	00000000	RunStyle	3		6				fwd|sideL|sideR|back|stop|crouch
+e8d5ad1b	00000007	TrendType	3		5				invalid|constant speed|accel|decel|rotate on spot
+e8d5ad1b	00000004	Accel	4			0.0	100.0	feet per second per second	
+e8d5ad1b	00000005	LocoBalance	4			0.0	1.0	normalized	
+e8d5ad1b	00000002	Speed	4			0.0	0.5	feet per tick	
+e8d5ad1b	0000000c	StartSpeed	4			0.0	0.5	feet per tick	
+e8d5ad1b	00000006	LocoBalanceDir	5			-3.1415927410125732	3.1415927410125732	radians	
+e8d5ad1b	0000000b	OneOffRelMoveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+e8d5ad1b	00000003	RelMoveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+e8d5ad1b	00000008	StartSpeedRank	6			0.0	0.5	feet per tick	
+e8d5ad1b	00000009	OneOffRelMoveAngleRank	7			-3.1415927410125732	3.1415927410125732	radians	
+fef6d970	00000000	PushDistanceType	3		2				close|far
+ffff1234	00000000	Current Speed	4			0.0	0.5	feet per tick	
+ffff1234	00000002	TicksToImpact	4			0.0	20.0		
+ffff1234	00000001	AngleIn	5			-3.1415927410125732	3.1415927410125732	radians	
+ffff1235	00000000	AngleIn	5			-3.1415927410125732	3.1415927410125732	radians	
+ffff1235	00000001	AngleOut	5			-3.1415927410125732	3.1415927410125732	radians	
+09161982	00000001	AllowMissOnProximity	0	0					
+09161982	00000003	CheckBallPassingThroughMe	0	0					
+09161982	00000002	PreventMissOverBall	0	0					
+09161982	00000000	ShouldMirror	3		2				nonmirrored|mirrored
+1287d5c7	00000007	IsMirrored	1		2				LOCO_NO_MIRROR|LOCO_MIRROR
+1977aae3	00000000	Mirror	0	0					
+2d2988a0	00000000	ConvertToSnap	0	0					
+2d2988a0	00000002	GenerateCadenceMap	0	0					
+2d2988a0	00000001	SnapPlaybackSpeed	1		3				by_speed|by_cycle_length|disable
+2d2988a0	00000003	RotateAdjustPerTick	4			0.0	360.0	Degrees/Tick	
+2d8646e4	00000000	Cur Speed Bucket	4			0.0	1.0	dist per tick	
+2d8646e4	00000009	Tar Distance From Stop Position Bucket	4			0.0	15.0	distance	
+2d8646e4	00000001	Tar Speed Bucket	4			0.0	1.0	dist per tick	
+2d8646e4	00000007	Cur Move - Cur Shoulder Bucket	5			-3.1415927410125732	3.1415927410125732	radians	
+2d8646e4	00000006	Cur Move - Tar Shoulder Bucket	5			-3.1415927410125732	3.1415927410125732	radians	
+2d8646e4	00000002	Lean Side Bucket	5			-3.1415927410125732	3.1415927410125732	radians	
+2d8646e4	00000003	Tar Move - Cur Move Bucket	5			-3.1415927410125732	3.1415927410125732	radians	
+2d8646e4	00000004	Tar Move - Cur Shoulder Bucket	5			-3.1415927410125732	3.1415927410125732	radians	
+2d8646e4	00000005	Tar Move - Tar Shoulder Bucket	5			-3.1415927410125732	3.1415927410125732	radians	
+2d8646e4	00000008	Tar Shoulder - Cur Shoulder Bucket	5			-3.1415927410125732	3.1415927410125732	radians	
+324356a5	00000002	Sundry	3		2				nonmirrored|mirrored
+35b7304f	00000008	Sundry	3		2				nonmirrored|mirrored
+35b7304f	0000000b	ReactionBlendTime	4			1.0	30.0	ticks	
+3ed183d9	00000000	IsMirrored	0	0					
+3ed183d9	00000004	LeanStyle	1		2				RunOnly|RunAndStop
+3ed183d9	00000001	BlendInTime	4			1.0	30.0	ticks	
+3ed183d9	00000003	BlendOutTime	4			-1.0	30.0	ticks	
+3ed183d9	00000002	LeanRate	4			0.0	1.0	percent	
+3ed183d9	00000005	UppBodyPreserveAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+4d89d801	0000000e	ShouldTimeScale	0	0					
+4d89d801	00000000	IsMirrored	1		2				LOCO_NO_MIRROR|LOCO_MIRROR
+4d89d801	00000002	AngVelocity	4			-0.5235987901687622	0.5235987901687622	radians per tick	
+4d89d801	00000001	BlendTime	4			0.0	30.0	ticks	
+5516515a	00000000	IsStretch	0	0					
+5e7e6980	0000000e	DisableAdjustMoveAngleToTarget	0	0					
+5e7e6980	00000010	DisableAdjustSpeedUpToTarget	0	0					
+5e7e6980	00000007	DisableChopFrame	0	0					
+5e7e6980	00000001	EnableOutAngleTolCheck	0	0					
+5e7e6980	0000000b	HasMultipleAssetsWithSameBallOut	0	0					
+5e7e6980	00000003	IsBackUpCoverage	0	0					
+5e7e6980	00000004	IsManualEvasiveFace	0	0					
+5e7e6980	00000002	IsOneOff	0	0					
+5e7e6980	00000005	IsStrafeAsBackup	0	0					
+5e7e6980	0000000a	IsUseAchievePoseAsBlendTime	0	0					
+5e7e6980	00000008	AssetPriority	1		4				default|preferContactPos|preferLastShieldFoot|preferVariety
+5e7e6980	00000011	BallTargetType	1		3				UseTargeSpeed|PrepareNextTouch|AnimEndTouchFoot
+5e7e6980	00000012	BallTrajType	1		3				Default|DefaultAutoDinked|Dinked
+5e7e6980	00000009	IKCageOverride	1		9				none|jog|strafe|evasiveFace|evasive|protectBallShield|protectBallJog|slowJog|customSpecify
+5e7e6980	0000000c	Situation	1		3				any|notProtectBall|protectBall
+5e7e6980	00000013	Flags	3		3				DisableBattleLayer|DisableProBranchAfterContact|IsBattleAsset
+5e7e6980	00000000	Mirror	3		2				nonmirrored|mirrored
+5e7e6980	0000000d	BallOutDistanceModifier	4			-10.0	10.0	feet	
+5e7e6980	0000000f	IKCageOverrideCustomValue	4			0.0	5.0	feet	
+5e7e6980	00000006	PlaybackScale	4			0.0	5.0	scale	
+5eee2987	00000064	AllowAltBallOut	0	0					
+5eee2987	00000066	IsHeader	0	0					
+5eee2987	00000065	BallMoveTechnique	1		4				default|any|off-traj|on-traj
+5eee2987	00000068	GatherType	1		4				none|both_foot|left_foot|right_foot
+5eee2987	00000067	AnimStyle	3		3				stumble|fall|sliding
+6639cd93	0000000d	Sundry	3		13				nonmirrored|mirrored|alt-ball-out|move-default|move-any|move-off-traj|move-on-traj|isOnEdge|isStripBall|isBounceBall|isOneHandPunch|isJogAssetInStand|isBallMovingAway
+7123b570	00000003	CanSpeedUp	0	0					
+7123b570	00000000	ShouldMirror	0	0					
+7123b570	00000001	AssetStartSpeed	4			0.0	0.5	feet per tick	
+7123b570	00000002	SlideBonusTime	4			0.0	100.0	ticks	
+72170302	00000000	Mirror	3		2				nonmirrored|mirrored
+77120752	00000000	AnimStartTime	4			1.0	300.0	ticks	
+7823f582	00000001	TimeScaleRange	4			-1.0	2.0	unitless	
+7823f582	00000000	CruiseAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+7abcacc3	00000008	SetupAngle	5			-3.1415927410125732	3.1415927410125732	radians	
+91a15e1c	00000004	WallMirror	0	0					
+9b503327	00000004	Mirror	3		2				nonmirrored|mirrored
+a2bf0849	00000004	ShouldMirror	3		2				nonmirrored|mirrored
+a2bf0849	00000008	MinSpeedForHipsUpper	4			0.0	1.0	feet per tick	
+a2bf0849	00000007	ReactionThreshold	4			-1.0	0.30000001192092896		
+a70ba60d	00000000	ScriptFlags	3		5				PlaceWaypointByRestartPos|KillScriptOnTeleport|AmbientBehavior|AssignWaypointsToSecondarySOM|CanInterruptReactionToStartScript
+ab97ff18	0000000b	ClampBallOutToPlayerSpeed	0	0					
+ab97ff18	00000005	IsCloseStand	0	0					
+ab97ff18	00000003	IsInAirSlide	0	0					
+ab97ff18	0000000c	IsInAirStandTackle	0	0					
+ab97ff18	00000009	IsJostleClearance	0	0					
+ab97ff18	00000008	IsJostlePossession	0	0					
+ab97ff18	00000006	IsPrefer	0	0					
+ab97ff18	0000000e	IsSealOutTypeTackle	0	0					
+ab97ff18	00000002	MustContact	0	0					
+ab97ff18	00000001	NoCollision	0	0					
+ab97ff18	0000000a	NotForConfused	0	0					
+ab97ff18	00000004	NotForGK	0	0					
+ab97ff18	00000000	ShouldMirror	3		2				nonmirrored|mirrored
+ab97ff18	00000007	BallOutSpeedMultiplier	4			0.0	10.0	multiplier	
+ab97ff18	0000000d	BonusCoverageAngle	4			0.0	45.0	degrees	
+badfad69	00000001	CorrectOvershoot	0	0					
+badfad69	00000005	DisableStiffArms	0	0					
+badfad69	00000003	IgnoreOpponentForEarlyExit	0	0					
+badfad69	00000007	LaunchWithMoveAngle	0	0					
+badfad69	00000004	OppTouchTarget	1		2				Hips|Torso
+badfad69	00000006	SealOutAnimation	1		6				None|Anim_JostlePushOff|Anim_Shield|Anim_StepIn|Anim_SealOut|Anim_Shoulder
+badfad69	00000002	MaxUndershootCorrect	4			0.0	5.0	undershoot distance correction	
+badfad69	00000000	WarpEndMoveOffset	4			-180.0	180.0	angle offset	
+bfe7cbbd	00000001	LocoType	1		5				Invalid|Idle|Run|Warp|Step
+bfe7cbbd	00000000	StepGroupMeta	3		9				default|shield|defend|5050_push|5050_pushed|jostle|hold_held|off_balance|protect_ball
+bfe7cbbd	00000002	UpperBodyBlendTimeMeta	4			0.0	30.0	ticks	
+ce5a2c72	00000001	FallPainArea	1		2				left leg|right leg
+ce5a2c73	00000002	IsLanding	0	0					
+dc802018	00000001	Mirror	3		2				nonmirrored|mirrored
+f020adfc	00000000	Mirror	0	0					
+fafafafa	00000001	IsLeftHand	0	0					
+fafafafa	00000000	BodyTarget	1		17				left shoulder|right shoulder|left hip|right hip|body root|body close left|body close right|body chest left|body chest right|left hand|right hand|cloth left shoulder|cloth right shoulder|cloth left lower back|cloth right lower back|cloth left torso|cloth right torso
+fafafafa	00000003	BlendOptions	3		4				trajectory|upper body only|upper body conditional|upper body rotation
+fafafafa	00000005	BlendOutTicks	4			0.0	20.0	ticks	
+fafafafa	00000004	ReachDist	4			1.0	10.0	feet	
+fafafafa	00000002	TicksToContact	4			0.0	50.0	ticks	
+ffff1232	00000000	ShouldMirror	0	0					
+ffff1233	00000000	ShouldMirror	0	0					

@@ -21,7 +21,7 @@ namespace FrostyAnimationEditor.Core
     ///   conditions, as indices into AllTransitionConditions (numbered in entry pre-order, Bool/Signal group first,
     ///   then EnumerationEnumeratorPair); AllBranchTypes = [0, 0, 0] + distinct BranchWindowTypeAssets.
     ///   A conduit that is no controller's StartNode has empty tables.
-    /// Runtime: FUN_145fe1c50 loads FlattenedTransitions into 0x30-byte entries; FUN_145fdf690 loads conditions.
+    /// Runtime: the game loads FlattenedTransitions into 0x30-byte entries; the game loads conditions.
     /// </summary>
     public static class StateMachine
     {
@@ -216,7 +216,7 @@ namespace FrostyAnimationEditor.Core
             }
             int nAll = entries.Count;
             if (nAll > 254)
-                throw new GdException("node '" + node.Name + "': " + nAll + " flattened transitions (the runtime stores indices as bytes, max 254)");
+                throw new GdException("node '" + node.Name + "': " + nAll + " flattened transitions (the game allows at most 254)");
             Action<List<int>> link = lst =>
             {
                 for (int k = 0; k < lst.Count; k++) entries[lst[k]].SiblingIndex = k + 1 < lst.Count ? lst[k + 1] : nAll;

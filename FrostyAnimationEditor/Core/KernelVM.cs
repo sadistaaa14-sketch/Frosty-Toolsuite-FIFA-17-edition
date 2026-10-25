@@ -43,7 +43,7 @@ namespace FrostyAnimationEditor.Core
         public static F4 Of(IList<float> v) { return new F4(v.Count > 0 ? v[0] : 0f, v.Count > 1 ? v[1] : 0f, v.Count > 2 ? v[2] : 0f, v.Count > 3 ? v[3] : 0f); }
     }
 
-    /// <summary>The C library's float functions as antstate models them (FIFA17.exe imports them from MSVCR120.dll):
+    /// <summary>The C library's float functions as antstate models them (the game imports them from MSVCR120.dll):
     /// Python's math results (C99 special cases), NaN arguments returned as they are, the x86 default NaN for invalid
     /// arguments and a signed infinity on overflow. Callers round the double result to float32.</summary>
     public static class CrtMath
@@ -334,7 +334,7 @@ namespace FrostyAnimationEditor.Core
     }
 
     /// <summary>
-    /// Runs an ExpressionKernel: FIFA17.exe's expression VM (FUN_146b82370) and its natives (KernelNatives).
+    /// Runs an ExpressionKernel: the game's expression VM and its natives (KernelNatives).
     /// State registers persist between runs, like the game's ExpressionState.
     /// </summary>
     public sealed class Machine
@@ -403,8 +403,8 @@ namespace FrostyAnimationEditor.Core
             return d;
         }
 
-        /// <summary>what the game does before the first run: GameStateValueAssets into their registers (FUN_146b72490),
-        /// DOF handles and defaults (FUN_146b75e30)</summary>
+        /// <summary>what the game does before the first run: GameStateValueAssets into their registers,
+        /// DOF handles and defaults</summary>
         private void BindState()
         {
             VmMem m = Mem;
@@ -448,7 +448,7 @@ namespace FrostyAnimationEditor.Core
             ph = new Dictionary<string, ulong> { { "pose", Handle(Pose) }, { "master_pose", Handle(MasterPose) }, { "table", Handle(Tuple.Create("table", Table)) } };
         }
 
-        /// <summary>FUN_146b74250: the host writes these before every run</summary>
+        /// <summary>the host writes these before every run</summary>
         private void HostRegisters()
         {
             foreach (string name in new[] { "pose", "master_pose", "table" })
@@ -498,8 +498,8 @@ namespace FrostyAnimationEditor.Core
                 {
                     Native e;
                     if (!nat.TryGetValue(i.Hash, out e)) throw new VMError("native " + i.Hash.ToString("x8") + " is not registered");
-                    KernelNatives.Fn fn = KernelNatives.Get(Convert.ToInt64(e.Fn, 16));
-                    if (fn == null) throw new NotSimulated(e.Name + " (" + i.Hash.ToString("x8") + ", " + e.Fn + ") is not simulated");
+                    KernelNatives.Fn fn = KernelNatives.Get(e.Fn);
+                    if (fn == null) throw new NotSimulated(e.Name + " (" + i.Hash.ToString("x8") + ") is not simulated");
                     fn(this, i.InOps, i.Outs, i.StateOps);
                 }
                 else if (Kernel.Moves.ContainsKey(op)) m.Write(i.Dst, m.Read(i.Src, Kernel.Moves[op]));
@@ -536,12 +536,12 @@ namespace FrostyAnimationEditor.Core
                 else if (op == Kernel.OP_UNSUB) EvUnlink(i.Node);
                 else if (op == Kernel.OP_EMIT)
                 {
-                    // FUN_146b82090 / FUN_146b82250 queue one event per node subscribed to the channel in an event context,
-                    // but the only run entry (FUN_146b81fa0) passes none (context[2] = 0): with a subscriber the game crashes
+                    // the game would queue one event per subscribed node, but it runs kernels without events,
+                    // so with a subscriber the game crashes
                     int? k = EvChannel(i.Chan);
                     if (k.HasValue && evLists[k.Value].Count > 0)
-                        throw new VMError("emit on channel 0x" + i.Chan.ToString("x") + " with " + evLists[k.Value].Count + " subscribed node(s): FIFA 17 runs kernels " +
-                                          "without an event context and crashes here (FUN_146b812c0 reads address 0x20)");
+                        throw new VMError("emit on channel 0x" + i.Chan.ToString("x") + " with " + evLists[k.Value].Count + " subscribed node(s): the game runs kernels " +
+                                          "without events, so this crashes the game");
                 }
                 pc = nx;
             }

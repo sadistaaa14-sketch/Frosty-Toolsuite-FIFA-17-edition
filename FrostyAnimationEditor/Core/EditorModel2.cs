@@ -37,6 +37,7 @@ namespace FrostyAnimationEditor.Core
             GdObj rig = Rig().BestRig(c.LayoutKey, c.DofIds);
             JObject r = new JObject();
             r["clip"] = H(k); r["name"] = NameOf(Db.Get(k)); r["codec"] = c.Codec; r["frames"] = (long)c.FrameCount();
+            PutAlias(r, k);
             r["channels"] = c.Channels.Select(ch => { JObject j = new JObject(); j["name"] = ch.Name; j["kind"] = ch.Kind; return (object)j; }).ToList();
             r["controllers"] = ctrls.Select(x =>
             {
@@ -45,6 +46,13 @@ namespace FrostyAnimationEditor.Core
                 return (object)j;
             }).ToList();
             r["rig"] = rig != null ? (object)NameOf(rig) : null;
+            GdObj bs = Db.Get(k)["__base"] as GdObj;
+            if (bs != null)
+            {
+                r["trim_offset"] = JsonIO.F(bs.GetFloat("TrimOffset"));
+                r["trimmed_duration"] = JsonIO.F(bs.GetFloat("TrimmedDuration"));
+                r["end_frame"] = bs.GetInt("EndFrame");
+            }
             return r;
         }
 
@@ -63,10 +71,168 @@ namespace FrostyAnimationEditor.Core
             ulong ctrl;
             ulong k = ClipKey(key, out ctrl);
             GdObj o = Db.Get(k);
-            string name = Unsafe.Replace(string.IsNullOrEmpty(o.Name) ? H(k) : o.Name, "_");
+            string alias = Alias(k);
+            string name = Unsafe.Replace(alias ?? (string.IsNullOrEmpty(o.Name) ? H(k) : o.Name), "_");
             if (fmt == "bvh") return Tuple.Create(name + ".bvh", new UTF8Encoding(false).GetBytes(Bvh.Export(Db, k, Rig(), scale)));
             JObject doc = AntAnim.ExportClip(Db, k, Rig(), resample);
             return Tuple.Create(name + ".antanim.json", new UTF8Encoding(false).GetBytes(MiniJson.Serialize(doc, 0)));
+        }
+
+        // ------------------------------------------------------------------ player skeleton, FBX
+        /// <summary>the render skeleton (the host sets this: Frosty's EBX skeleton_player); called once, on first use</summary>
+        public Func<PlayerSkeleton> SkeletonSource;
+        private PlayerSkeleton ebxSkeleton;
+        private bool ebxTried;
+        private readonly Dictionary<ulong, PlayerSkeleton> rigSkeletons = new Dictionary<ulong, PlayerSkeleton>();
+
+        /// <summary>the host's render skeleton, or null</summary>
+        public PlayerSkeleton RenderSkeleton()
+        {
+            if (!ebxTried)
+            {
+                ebxTried = true;
+                if (SkeletonSource != null)
+                {
+                    try { ebxSkeleton = SkeletonSource(); }
+                    catch (Exception e) when (!(e is OutOfMemoryException)) { Say("player skeleton not loaded: " + e.Message); }
+                }
+            }
+            return ebxSkeleton;
+        }
+
+        /// <summary>
+        /// the skeleton a clip is shown on and exported with: the render skeleton when it has at least half of the joints
+        /// the clip animates, else a skeleton made from the rig that has the clip rig's joints and the most bones
+        /// (for player clips player_rig_17_rendering, whose rest pose is the rig default pose)
+        /// </summary>
+        public PlayerSkeleton SkeletonFor(object key, out string why)
+        {
+            ulong ctrl;
+            ulong k = ClipKey(key, out ctrl);
+            AnimClip c = AnimClip.Load(Db, k, Rig());
+            HashSet<string> joints = new HashSet<string>(c.Channels.Where(ch => ch.Kind != "float").Select(ch => { int d = ch.Name.LastIndexOf('.'); return d > 0 ? ch.Name.Substring(0, d) : ch.Name; }));
+            PlayerSkeleton rs = RenderSkeleton();
+            if (rs != null && joints.Count > 0 && joints.Count(j => rs.Find(j) >= 0) * 2 >= joints.Count)
+            {
+                why = rs.Source;
+                return rs;
+            }
+            GdObj rig = Rig().BestRig(c.LayoutKey, c.DofIds);
+            if (rig == null) throw new ApiError("no rig drives this clip");
+            RigIndex.Skeleton own = Rig().GetSkeleton(rig);
+            HashSet<string> ownNames = own != null ? new HashSet<string>(own.Joints.Select(j => j.Name)) : new HashSet<string>(joints);
+            GdObj best = null;
+            int bestN = -1;
+            foreach (ulong rk in Rig().RigOrder)
+            {
+                GdObj r = Rig().Rigs[rk];
+                RigIndex.Skeleton sk = Rig().GetSkeleton(r);
+                if (sk == null) continue;
+                HashSet<string> names = new HashSet<string>(sk.Joints.Select(j => j.Name));
+                if (ownNames.Count(n => names.Contains(n)) * 10 < ownNames.Count * 9) continue;
+                if (sk.Joints.Count > bestN) { bestN = sk.Joints.Count; best = r; }
+            }
+            if (best == null) best = rig;
+            PlayerSkeleton ps;
+            if (!rigSkeletons.TryGetValue(best.Key, out ps)) { ps = PlayerSkeleton.FromRig(Rig(), best); rigSkeletons[best.Key] = ps; }
+            why = ps.Source + (rs != null ? " (the clip's joints are not in " + rs.Name + ")" : "");
+            return ps;
+        }
+
+        /// <summary>frames per second of a clip (its first controller's FPS, else 30)</summary>
+        public double ClipFps(ulong clipKey)
+        {
+            List<GdObj> cs = AnimOps.FindControllers(Db, clipKey);
+            double f = cs.Count > 0 ? cs[0].GetFloat("FPS") : 0;
+            return f > 0 ? f : 30.0;
+        }
+
+        /// <summary>the clip evaluated on its skeleton (every bone, every frame)</summary>
+        public PlayerAnimation ClipOnSkeleton(object key, PlayerSkeleton sk = null)
+        {
+            ulong ctrl;
+            ulong k = ClipKey(key, out ctrl);
+            string why;
+            if (sk == null) sk = SkeletonFor(H(k), out why);
+            PlayerAnimation a = PlayerAnimation.FromClip(Db, k, Rig(), sk, ClipFps(k));
+            a.ClipName = Alias(k) ?? a.ClipName;
+            return a;
+        }
+
+        /// <summary>(file name, bytes) of the clip as FBX on its skeleton, with the given meshes (may be null)</summary>
+        public Tuple<string, byte[]> ClipFbx(object key, IList<MeshPart> meshes = null, PlayerSkeleton sk = null)
+        {
+            ulong ctrl;
+            ulong k = ClipKey(key, out ctrl);
+            PlayerAnimation a = ClipOnSkeleton(H(k), sk);
+            string alias = Alias(k);
+            GdObj o = Db.Get(k);
+            string name = Unsafe.Replace(alias ?? (string.IsNullOrEmpty(o.Name) ? H(k) : o.Name), "_");
+            byte[] fbx = Fbx.FbxExport.Write(a, meshes, alias ?? name);
+            return Tuple.Create(name + ".fbx", fbx);
+        }
+
+        /// <summary>animation stacks (takes) in an FBX file</summary>
+        public List<string> FbxTakes(byte[] data) { return Fbx.FbxScene.Load(data).StackNames(); }
+
+        /// <summary>the take of an FBX file to read (null: the first)</summary>
+        public string FbxTake;
+
+        private ClipData ClipDataFromFbx(byte[] data, ulong clipKey, AnimClip clip, List<string> notes)
+        {
+            try
+            {
+                PlayerAnimation a = ClipOnSkeleton(H(clipKey));
+                Fbx.FbxAnimationData fa = Fbx.FbxImport.ReadAnimation(data, a.Fps, a.Skeleton.Bones, FbxTake);
+                List<string> rep;
+                ClipData cd = Fbx.FbxImport.ToClipData(fa, a.Skeleton, clip, out rep);
+                notes.Add("skeleton: " + a.Skeleton.Source);
+                notes.AddRange(rep);
+                RebuildFootChannels(cd, clip, a, notes);
+                return cd;
+            }
+            catch (ApiError) { throw; }
+            catch (Exception e) when (e is FormatException || e is System.IO.InvalidDataException || e is ArgumentException || e is IndexOutOfRangeException)
+            {
+                throw new ApiError("the FBX file does not read: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// The foot IK targets (Left/RightAnkleEffectorAux.t) and the foot contact signals (.height, .vel) are derived from
+        /// the motion (FootChannels); the motion formats do not carry the float channels, and an aux joint from another
+        /// clip pulls the legs, so they are recomputed from the imported joints.
+        /// </summary>
+        private static readonly Regex KeptNote = new Regex(@"^(\d+) channels from the file, (\d+) kept from the clip$");
+
+        private void RebuildFootChannels(ClipData cd, AnimClip clip, PlayerAnimation a, List<string> notes)
+        {
+            List<string> done = FootChannels.Rebuild(cd, clip.Channels, a.Skeleton, a.Defaults);
+            if (done.Count == 0) return;
+            // the FBX reader counted them as kept from the clip
+            for (int i = 0; i < notes.Count; i++)
+            {
+                Match m = KeptNote.Match(notes[i]);
+                if (m.Success) notes[i] = m.Groups[1].Value + " channels from the file, " + Math.Max(0, int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture) - done.Count) + " kept from the clip";
+            }
+            List<string> aux = done.Where(n => n.EndsWith(".t", StringComparison.Ordinal)).ToList();
+            int signals = done.Count - aux.Count;
+            notes.Add("recomputed from the new motion: " + (aux.Count > 0 ? string.Join(", ", aux) + " (foot IK targets)" : "") +
+                      (aux.Count > 0 && signals > 0 ? ", " : "") + (signals > 0 ? signals + " foot height/speed channels" : ""));
+        }
+
+        private ClipData ClipDataFromBvh(byte[] data, ulong clipKey, AnimClip clip, List<string> notes)
+        {
+            ClipData cd = ClipDataFromUpload("bvh", data, clip.Channels, clip.Sample());
+            RebuildFootChannels(cd, clip, ClipOnSkeleton(H(clipKey)), notes);
+            return cd;
+        }
+
+        private ClipData ClipDataFor(string fmt, byte[] data, ulong clipKey, AnimClip clip, List<string> notes)
+        {
+            if (fmt == "fbx") return ClipDataFromFbx(data, clipKey, clip, notes);
+            if (fmt == "bvh") return ClipDataFromBvh(data, clipKey, clip, notes);
+            return ClipDataFromUpload(fmt, data, clip.Channels, null);
         }
 
         private ClipData ClipDataFromUpload(string fmt, byte[] data, IList<Channel> channels, IList<float[][]> fallback)
@@ -86,34 +252,53 @@ namespace FrostyAnimationEditor.Core
 
         private static string Codec4(string codec) { return ((codec ?? "VBR") + " ").Substring(0, 4); }
 
-        public JObject ClipReplace(object key, string fmt, byte[] data, string codec = "VBR", double tolerance = Encode.TolDefault)
+        /// <param name="reduceKeys">VBR: &gt; 0 drops the keys interpolation reproduces within this tolerance (the
+        /// shipped clips store keys only where the motion needs them); 0 stores one key per frame</param>
+        public JObject ClipReplace(object key, string fmt, byte[] data, string codec = "VBR", double tolerance = Encode.TolDefault, double reduceKeys = 0)
         {
             ulong ctrl;
             ulong k = ClipKey(key, out ctrl);
             AnimClip c = AnimClip.Load(Db, k, Rig());
-            ClipData cd = ClipDataFromUpload(fmt, data, c.Channels, fmt == "bvh" ? c.Sample() : null);
+            List<string> notes = new List<string>();
+            ClipData cd = ClipDataFor(fmt, data, k, c, notes);
             EncodeReport rep = null;
-            Change("replace animation " + NameOf(Db.Get(k)), new[] { k }, () => rep = AnimOps.Replace(Db, k, cd, Codec4(codec), tolerance));
+            GdObj oldBase = Db.Get(k)["__base"] as GdObj;
+            float trim, dur;
+            AnimOps.KeptTrim(oldBase, cd.EndFrame, out trim, out dur);
+            Change("replace animation " + (Alias(k) ?? NameOf(Db.Get(k))), new[] { k }, () => rep = AnimOps.Replace(Db, k, cd, Codec4(codec), tolerance, true, reduceKeys));
+            List<string> uses = SeqUseNotes(k);
+            notes.Add("kept the clip's TrimOffset " + F1(trim) + "; TrimmedDuration " + F1(dur) + (oldBase != null ? " (was " + F1(oldBase.GetFloat("TrimmedDuration")) + ", EndFrame " +
+                      oldBase.GetInt("EndFrame") + " → " + cd.EndFrame + ")" : ""));
+            if (uses.Count > 0)
+            {
+                notes.Add(uses.Count + " sequence entr" + (uses.Count == 1 ? "y plays" : "ies play") + " part of this clip and keep their frame numbers:");
+                notes.AddRange(uses.Take(12).Select(u => "  " + u));
+                notes.Add("to play another clip's whole motion there, edit those sequence entries (Sequence tab) or point the object that plays the sequence at another SequenceContainerAsset");
+            }
             ResetRig();
-            Say("replaced animation " + NameOf(Db.Get(k)) + ": " + rep);
+            foreach (string n in notes) Say("  " + n);
+            Say("replaced animation " + (Alias(k) ?? NameOf(Db.Get(k))) + ": " + rep);
             JObject r = new JObject();
             r["report"] = rep.ToString();
+            r["notes"] = notes.Cast<object>().ToList();
+            r["frames"] = (long)cd.NKeys;
             r["key"] = H(k);
             return r;
         }
 
         public JObject ClipAdd(object template, string fmt, byte[] data, string codec = "VBR", double tolerance = Encode.TolDefault, string name = null,
-                               object controller = null, bool makeController = true, string ctrlName = null)
+                               object controller = null, bool makeController = true, string ctrlName = null, double reduceKeys = 0)
         {
             ulong ctrl;
             ulong tk = ClipKey(template, out ctrl);
             AnimClip tpl = AnimClip.Load(Db, tk, Rig());
-            ClipData cd = ClipDataFromUpload(fmt, data, tpl.Channels, fmt == "bvh" ? tpl.Sample() : null);
+            List<string> notes = new List<string>();
+            ClipData cd = ClipDataFor(fmt, data, tk, tpl, notes);
             ulong k = 0, ck = 0;
             EncodeReport rep = null;
             Change("add animation " + (name ?? ""), new ulong[0], () =>
             {
-                k = AnimOps.Add(Db, cd, tk, string.IsNullOrEmpty(name) ? null : name, 0, 0, Codec4(codec), tolerance, null, out rep);
+                k = AnimOps.Add(Db, cd, tk, string.IsNullOrEmpty(name) ? null : name, 0, 0, Codec4(codec), tolerance, null, out rep, reduceKeys);
                 ulong tc = controller != null && !(controller is string && ((string)controller).Length == 0) ? K(controller) : ctrl;
                 if (tc == 0)
                 {
@@ -121,13 +306,18 @@ namespace FrostyAnimationEditor.Core
                     tc = cs.Count > 0 ? cs[0].Key : 0;
                 }
                 if (tc != 0 && makeController) ck = AnimOps.AddClipController(Db, tc, k, string.IsNullOrEmpty(ctrlName) ? null : ctrlName);
+                // the game's clips are named after their controller's key ("<16 hex digits>.chan")
+                if (ck != 0 && string.IsNullOrEmpty(name)) Db.Get(k)["__name"] = ck.ToString("x16") + ".chan";
             });
             ResetRig();
+            foreach (string n in notes) Say("  " + n);
             Say("added animation " + H(k) + " " + rep);
             JObject r = new JObject();
             r["key"] = H(k);
             r["controller"] = ck != 0 ? (object)H(ck) : null;
             r["report"] = rep.ToString();
+            r["notes"] = notes.Cast<object>().ToList();
+            r["frames"] = (long)cd.NKeys;
             return r;
         }
 
@@ -501,6 +691,46 @@ namespace FrostyAnimationEditor.Core
                 r["modes"] = modes; r["resets"] = resets;
                 return r;
             }
+            if (o.Type.Name == "PiecewiseLinearAsset")
+            {
+                // the game keeps only PointValues: 8 x values, then 8 y values
+                // of the 0x60-byte object, 8 of each. The titles, the ranges and Slope are not read by the game.
+                List<object> pts = new List<object>();
+                double xmin = double.MaxValue, xmax = double.MinValue, ymin = double.MaxValue, ymax = double.MinValue;
+                foreach (object p in o["PointValues"] as IList ?? new object[0])
+                {
+                    double x = 0, y = 0;
+                    GdStruct v = p as GdStruct;
+                    IList comp = p as IList;
+                    float[] fa = p as float[];
+                    if (fa != null && fa.Length >= 2) { x = fa[0]; y = fa[1]; }
+                    else if (v != null) { x = v["x"] != null ? Num.ToDouble(v["x"]) : 0; y = v["y"] != null ? Num.ToDouble(v["y"]) : 0; }
+                    else if (comp != null && comp.Count >= 2) { x = Num.ToDouble(comp[0]); y = Num.ToDouble(comp[1]); }
+                    else continue;
+                    JObject pj = new JObject();
+                    pj["x"] = x; pj["y"] = y;
+                    pts.Add(pj);
+                    xmin = Math.Min(xmin, x); xmax = Math.Max(xmax, x); ymin = Math.Min(ymin, y); ymax = Math.Max(ymax, y);
+                }
+                r["kind"] = "piecewise";
+                r["points"] = pts;
+                r["graph_title"] = o["GraphTitle"] as string ?? "";
+                r["x_title"] = o["XTitle"] as string ?? "";
+                r["y_title"] = o["YTitle"] as string ?? "";
+                r["x_min"] = (double)o.GetFloat("XMin"); r["x_max"] = (double)o.GetFloat("XMax");
+                r["y_min"] = (double)o.GetFloat("YMin"); r["y_max"] = (double)o.GetFloat("YMax");
+                r["slope"] = o.GetInt("Slope");
+                r["point_min"] = pts.Count > 0 ? (object)xmin : null; r["point_max"] = pts.Count > 0 ? (object)xmax : null;
+                r["value_min"] = pts.Count > 0 ? (object)ymin : null; r["value_max"] = pts.Count > 0 ? (object)ymax : null;
+                List<object> issues = new List<object>();
+                if (pts.Count > 8) issues.Add(pts.Count + " points: the game holds 8, so the rest overwrite the y values");
+                if (pts.Count == 0) issues.Add("no points: the game uses 8 zero points");
+                for (int i = 1; i < pts.Count; i++)
+                    if (((JObject)pts[i]).Dbl("x") < ((JObject)pts[i - 1]).Dbl("x")) { issues.Add("the x values are not increasing (point " + i + ")"); break; }
+                r["issues"] = issues;
+                r["note"] = "the game loads only PointValues; GraphTitle, XTitle, YTitle, XMin, XMax, YMin, YMax and Slope are not read by the game";
+                return r;
+            }
             throw new ApiError(o.Type.Name + " has no curve view");
         }
 
@@ -583,6 +813,11 @@ namespace FrostyAnimationEditor.Core
                 g = Graph.StateMachine(Db, sfc);
             }
             else g = Graph.Build(Db, new[] { k }, depth, incoming, maxNodes, null, null, progress);
+            foreach (GraphNode n in g.NodeList)
+            {
+                string a = Alias(n.Key);
+                if (a != null) n.Name = a;
+            }
             g.AttachDetails(Db);
             g.Layout();
             return g;
@@ -594,6 +829,7 @@ namespace FrostyAnimationEditor.Core
         {
             SaveResult r = Db.Save(withoutPrefix, Say, true, true, h7, h8, progress);
             S.Dirty = false;
+            if (clipNames != null) clipNames.Reset();
             return r;
         }
     }

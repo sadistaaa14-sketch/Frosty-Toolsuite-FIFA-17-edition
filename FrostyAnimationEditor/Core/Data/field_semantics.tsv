@@ -1,0 +1,1575 @@
+# type	field	what it does (an empty field describes the asset type)	status: unknown = the game reads it but what it changes is not known; noeffect = the game never reads it; derived = the editor recomputes it when you save
+ActorControllerAsset		Plays a sequence: one PlaybackTrack per track, evaluated every update; their poses are merged into one (channel masks OR-ed, later tracks written over earlier ones).	
+ActorControllerAsset	DefaultInitParam	The actor's start settings: a SequenceContainer creates the actor's controller with them, and a container that plays one actor uses them when the caller gave no start settings.	
+ActorControllerAsset	PassTagsToChildren	When set, each track's PlaybackTrack and its elements get the actor controller as their parent context.	
+ActorControllerAsset	Length	Sequence length in ticks: the controller's time is clamped to it.	
+ActorControllerAsset	NumTracks	How many tracks the actor has. The game sets up one track per count, so it must match the length of Tracks; the editor keeps the two in step when you save.	derived
+ActorControllerAsset	Tracks	The tracks (SequenceAnimTrack); each becomes a PlaybackTrack.	
+ActorControllerAsset	TrajectoryState	The actor's recorded root path: positions and facing sampled at regular ticks through the sequence. 4,563 of the game's 19,244 actor controllers carry one. What the game uses the path for is not known.	unknown
+ActorControllerAsset	TrackSelectionEnumValue	An EnumerationValueAsset: the value of the container's TrackSelectionGameStateEnum for which this actor is the one played.	
+ActorControllerAsset	ActorContentFlags	Bit 9 starts the controller mirrored (XOR with the start settings' mirror flag); bits 10 and 11 select how the tracks are combined while mirrored.	
+ActorControllerAsset	SnapToStartLocation	Copied into the ActorController: the first update adds a snap to the start location, then clears it.	
+ActorControllerAsset	LoopPoint	Default -1. When >= 0, time past Length calls the controller's loop handler instead of stopping.	
+SequenceAnimTrack		One track of a sequence: the target, its warpers and its entries.	
+SequenceAnimTrack	Target	The game reads this, but what it changes is not known.	unknown
+SequenceAnimTrack	NumWarpers	Number of SequenceWarper entries.	
+SequenceAnimTrack	WarpersParam	The track's SequenceWarpers. A warper with a non-zero TranslateX or TranslateZ turns on trajectory warping for the track.	
+SequenceAnimTrack	NumAnims	Number of entries.	
+SequenceAnimTrack	Anims	The entries in play order. The track's current entry is the last one whose StartTime + EndInTime is at or before the time, and the track ends at the last entry's StartTime + EndInTime.	
+SequenceAnimation		One entry of a track. It is active on the sequence timeline from StartTime + StartInTime to StartTime + EndInTime; its controller runs at (sequence time - StartTime) x Scale. An entry that starts before the previous one ends is blended in.	
+SequenceAnimation	Asset	The controller played.	
+SequenceAnimation	BlendAsset	The blend used when this entry takes over from the previous one.	
+SequenceAnimation	InitParams	Start settings passed to the controller when the entry starts, e.g. a ClipInitParam start tick.	
+SequenceAnimation	Flags	The game reads this, but what it changes is not known.	unknown
+SequenceAnimation	StartTime	Sequence time of the entry's in-time 0.	
+SequenceAnimation	StartInTime	In-time where the entry becomes active; its controller starts at StartInTime x Scale.	
+SequenceAnimation	EndInTime	In-time where the entry ends.	
+SequenceAnimation	Scale	Controller ticks per sequence tick for this entry.	
+SequenceContainerAsset		A sequence: one ActorControllerAsset per actor. What the game creates from it: with TrackSelectionGameStateEnum, only the actor whose TrackSelectionEnumValue matches the enum's current value (the first actor if none does); without it, a SequenceContainer that plays every actor when the container has at least one tag, otherwise only the first actor's controller; a NullController when there are no actors. The SequenceContainer lasts as long as its longest actor and, given a ClipInitParam with a StartTick, is advanced by that many ticks when it is created.	
+SequenceContainerAsset	ActorAssets	The actors' controllers. Each one is started with its actor's DefaultInitParam.	
+SequenceContainerAsset	TrackSelectionGameStateEnum	A GameStateEnumerationAsset. When set, its current value picks the one actor that is played: the first actor whose TrackSelectionEnumValue has that value, else the first actor.	
+ClipControllerAsset		Plays one clip. NumTicks = ceil(clip TrimmedDuration / TimeScale); each update samples the clip at ticks x TimeScale (+ the clip's TrimOffset).	
+ClipControllerAsset	Anim	The clip.	
+ClipControllerAsset	TickOffset	Shown by the debugger as TickOffset.	
+ClipControllerAsset	FPS	The controller's time is in ticks; TimeScale maps ticks to clip frames.	unknown
+ClipControllerAsset	TimeScale	Clip frames per controller tick: sample frame = ticks x TimeScale + TrimOffset.	
+ClipControllerAsset	Distance	How far the clip travels. Speed-scaling controllers divide it by the child's duration and multiply by 60 to get the clip's speed, then time-scale the child so it moves at a requested speed; a BlendArray reports the weight-summed distance of its children.	
+ClipControllerAsset	Modes	Bits: 0 = sample with the previous time too (root motion delta), 1 = flag passed to that delta sampling, 3 = looping, 4 = reversed, 5 = passed to the clip setup. The debugger prints bit 3 as Looping and bit 4 as Reversed.	
+AnimationAsset	TrimOffset	Added to every sample time: frame = controller time x TimeScale + TrimOffset (negative = the first frame is held first).	
+AnimationAsset	TrimmedDuration	The playable length in frames: a ClipController lasts ceil(TrimmedDuration / TimeScale) ticks (frames past EndFrame hold the last one).	
+AnimationAsset	CodecType	The clip's codec as four characters: "VBR ", "DCT ", "RAW " or "FRAM".	
+AnimationAsset	ChannelToDofAsset	The ChannelToDofAsset whose DofIds give the rig DOF of each channel of the clip, in channel order (rotations, then vectors, then floats).	
+AnimationAsset	DofSetList	The pose layout (DofSetList) the clip's DOFs belong to.	
+AnimationAsset	Additive	Marks an additive clip (all 12,844 VBR clips are false).	
+ClipInitParam	StartTick	The ClipController's start time in ticks.	
+IBlendAsset	BlendTime	Blend duration in ticks.	
+IBlendAsset	LaunchAngle	The game reads this, but what it changes is not known.	unknown
+BlendCurveAsset		Blends from the current pose to the new one over BlendTime ticks; the outgoing pose's weight is curve(CurveType, elapsed / BlendTime).	
+BlendCurveAsset	CurveType	0 = cos(x*pi/2), 1 = S-curve (21-sample table), 2 = 1 - sin(x*pi/2), 3 = 1 - x (outgoing weight at phase x).	
+BlendCurveAsset	ShouldSyncPhase	When set, the incoming controller's time is advanced at a phase-matched rate during the blend.	
+ControllerAsset		Base of every controller asset; its one field is the controller's tags.	
+ControllerAsset	TagCollectionSet	The controller's tags: a TagCollectionSetAsset, resolved.	
+TagCollectionSetAsset		The tag collections of one or more controllers.	
+TagCollectionSetAsset	TagCollectionKeys	The tag collections.	
+TagCollectionAsset		Base of the tag collections (Default, BranchOut, BranchIn).	
+TagCollectionAsset	TagKeys	The collection's tags; 2,884 BranchIn collections hold BranchInPointTags, 16,029 BranchOut collections BranchOutPointTags, 18,354 Default collections the rest.	
+DefaultTagCollectionAsset	MonitoredTags	The tags in this collection. The game checks every one of them on each update while the clip plays, so each tag's window opens and closes on time.	
+DefaultTagCollectionAsset	HasExitTags	The game reads this, but what it changes is not known.	unknown
+DefaultTagCollectionAsset		The tag collection a controller uses by default: the tags it monitors every update, plus the flag that says some of them are exit tags.	
+MonitoredTag	TagEnable	Resolved as a bool game-state value.	unknown
+MonitoredTag		A tag the game watches while its clip plays. On every update it checks whether the playhead is inside the tag's window, and acts when the window opens, while it is open, and when it closes - passing along how far through the window it is, from 0 at the start to 1 at the end.	
+TimelinePointTag		Base of every tag with a time.	
+TimelinePointTag	StartLinkOffset	Where the tag's window starts, in the owner controller's ticks (a sequence's ticks on an ActorControllerAsset, the controller's ticks on a ClipControllerAsset). Read as 0 when LinkFlags has 0x80; a fraction of the owner's length when LinkFlags has 0x40.	
+TimelinePointTag	LinkFlags	0x80: the window starts at 0 (StartLinkOffset ignored). 0x40: start and length are fractions of the owner's length. Values in the game's data: 0x20 x91,207, 0xA0 x7,496, 0 x3,072, 0x10 x655, 0x80 x438, 0x40 x40, 0x90 x1.	unknown
+TimelinePointTag	StartLinkUpdates	The game reads this, but what it changes is not known.	unknown
+TimelineTag		A TimelinePointTag with a length.	
+TimelineTag	EndLinkOffset	The window's length, not its end time: the branch code computes start + phase x EndLinkOffset, and 52,093 of 96,152 sequence tags have EndLinkOffset < StartLinkOffset. Scaled like the start when LinkFlags has 0x40.	
+StateFlowControllerAsset		A state machine. One node plays at a time; on each update the current node's animation advances and its transitions are tried. When a transition fires partway through an update, the rest of that update's time goes to the new node, so switches happen on the exact frame.	
+StateFlowControllerAsset	StartNode	The node the machine starts in. A node that is no machine's StartNode gets empty flattened tables.	
+StateFlowControllerAsset	Identifier	The machine's own id, and the value a BranchTypeAsset's ControllerFilterIdentifier is matched against: a branch window whose type filters on a different identifier cannot fire a transition of this machine. It is derived from the asset's key - xor (key >> 32) - which reproduces all 96 the game's controllers, so the editor recomputes it on save.	derived
+StateFlowControllerAsset	UsesGateNodes	True when any of the machine's nodes has NodeType 3, which reproduces all 96 the game's controllers, so the editor recomputes it on save. 44 of the game's 96 machines use gate nodes.	derived
+StateFlowControllerAsset	MaxActiveNodes	Every one of the game's 96 controllers has 5.	unknown
+StateFlowControllerAsset	MirroredSignal	A bool game state or signal: 6 of the game's 96 controllers name one.	unknown
+StateFlowControllerAsset	StateOpAsset	An operation. Empty in every controller.	unknown
+StateFlowControllerAsset	BlendTag	The machine's default blend. It is the last fallback of the blend choice: a transition's OverrideBlend, or the branch type's blend, is used first. 88 of the game's 96 controllers share one blend asset, 8 have none.	
+StateFlowControllerAsset	GameStateEnum	A GameStateEnumerationAsset, which goes with EnumToGUIDMap and the nodes' EnumValue. Empty in every controller, so the whole enum path is unused in the game's data.	unknown
+StateFlowControllerAsset	InitializeFromEnum	A bool game state. Empty in every controller.	unknown
+StateFlowControllerAsset	EnumToGUIDMap	Nodes indexed by the enum's value. Empty in every controller.	unknown
+StateFlowControllerAsset	AssertOnBranchTagErrors	A debug flag; false in every controller.	
+StateFlowControllerAsset	UseBranchInBlend	A flag; false in every controller.	unknown
+StateFlowNodeControllerAsset	FlattenedTransitions	The node's transitions as the game tries them: a tree (FirstChildIndex, SiblingIndex) walked from entry 0; of the entries that can fire, the one that fires earliest in the update wins, the earlier one on a tie.	
+StateFlowNodeControllerAsset	AllTransitionConditions	Every condition this node's transitions test. Each one is checked at most once per update and the answer reused, so many transitions can share a condition cheaply.	derived
+StateFlowNodeControllerAsset	AllBranchTypes	The branch types this node's transitions wait for. The first three entries are placeholders; the rest are the real types. The editor recomputes this list when you save.	derived
+StateFlowNodeControllerAsset		One state of a state machine: what it plays (SubjectController), the transitions out of it and the conditions they test. NodeType says whether it is a normal state, a conduit (a junction with no animation of its own) or a gate.	
+StateFlowNodeControllerAsset	StateFlowController	The state machine the node belongs to.	
+StateFlowNodeControllerAsset	SubjectController	What the node plays while it is the current state. Its length and its branch windows are what end-of-clip and branch-window transitions are timed against.	
+StateFlowNodeControllerAsset	SubjectControllerInitParams	The start settings handed to the subject.	
+StateFlowNodeControllerAsset	Transitions	The transitions out of this node. The game does not walk this list directly - it uses FlattenedTransitions, which the editor builds from it when you save. For a conduit, these transitions are folded into every node that leads to it.	
+StateFlowNodeControllerAsset	TransitionLinks	Authoring data for the original tool: one entry per transition.	noeffect
+StateFlowNodeControllerAsset	StateOpAsset	An operation the node runs. 3 of the game's 1,622 nodes set it.	unknown
+StateFlowNodeControllerAsset	EntryConditionsRequiredTrue	Conditions that must all be true for the machine to enter this node. They are checked together with the conditions of the transition leading here, before that transition fires.	
+StateFlowNodeControllerAsset	EntryConditionsRequiredFalse	Conditions that must all be false for the machine to enter this node.	
+StateFlowNodeControllerAsset	ActiveSignals	Signals this node turns on while it is the current state. When exactly they are turned off again is not known.	unknown
+StateFlowNodeControllerAsset	NodeType	0 a state, 1 a conduit (it has no subject of its own; the nodes that transition to it take its transitions as the children of that entry), 3 a gate (an entry that goes through it also needs the gate's own check). A state machine with any NodeType 3 node has UsesGateNodes set.	
+StateFlowNodeControllerAsset	EnumValue	0 in every node in the game's data. What it changes is not known.	unknown
+FlattenedTransitionData	TrueConditionIndices	Conditions (indices into AllTransitionConditions) that must all be true for the entry; they include the target node's entry conditions.	
+FlattenedTransitionData	FalseConditionIndices	Conditions that must all be false for the entry.	
+FlattenedTransitionData	BranchTypeIndex	When the entry can fire in the update: 0 at once; 1 (BranchAtEnd) at the playing animation's time left minus the transition's BranchAtEndOffset; 2 (BranchAfterFirstUpdate) at once except in the node's first update; 3 and up inside a window of a BranchOutPointTag on the playing animation's timeline whose BranchTypeAsset is AllBranchTypes[index].	
+FlattenedTransitionData	FirstChildIndex	Which entry starts this entry's children (a conduit's transitions, or a nested machine's start). A parent fires only once its chosen child can fire too. An entry with no children points past the end of the table. The editor recomputes this when you save.	derived
+FlattenedTransitionData	SiblingIndex	The next entry at the same level of the tree; pointing past the end of the table ends the level. The editor recomputes this when you save.	derived
+FlattenedTransitionData	GateNodeId	255 means no gate. Otherwise the transition also has to pass its gate node's check; what that check tests is not known. The editor recomputes this when you save.	derived
+FlattenedTransitionData		One entry of a node's transition table - the form the game actually uses. The editor builds this table from the node's Transitions, the transitions' From/To and the conditions when you save, so you never need to edit it by hand.	derived
+FlattenedTransitionData	TransitionNode	The node the entry leads to - the transition's To, or, for the nested entry a node with a state-machine subject gets, that machine's StartNode. Resolved as StateFlowNodeControllerAsset. For a gate entry it is also the gate node whose check must pass.	
+FlattenedTransitionData	Transition	The transition this entry stands for; 0 for a nested entry. The fire time reads BranchAtEndOffset from it.	
+FlattenedTransitionData	GateNodeParams	Empty in every entry in the game's data. What a gate does with it is not known.	unknown
+FlattenedTransitionData	IsNested	Set on the one entry a node with a state-machine subject gets for that machine's StartNode. The editor's run skips these, so nested machines are not followed there.	
+StateFlowTransitionAsset	BranchAtEndOffset	Ticks before the end of the node's controller at which a BranchAtEnd transition fires.	
+StateFlowTransitionAsset		One transition of a state machine: from which node, to which, under what conditions and when it may fire. The game uses these through the node's transition table, which the editor rebuilds from them when you save.	
+StateFlowTransitionAsset	From	The node the transition leaves. It decides which node's transition table the transition is placed in.	
+StateFlowTransitionAsset	To	The node the transition goes to. It is also the TransitionNode of the derived FlattenedTransitions entry.	
+StateFlowTransitionAsset	ConditionsRequiredTrue	Conditions that must all be true for the transition to fire.	
+StateFlowTransitionAsset	ConditionsRequiredFalse	Conditions that must all be false for the transition to fire.	
+StateFlowTransitionAsset	BranchWindowTypeAsset	The branch type whose window the transition waits for. Set, it makes the flattened entry's BranchTypeIndex point at this type in the node's AllBranchTypes, and the transition can only fire while a BranchOutPointTag of the subject with that BranchTypeAsset is open (and only if the type's ControllerFilterIdentifier is 0 or the state machine's Identifier).	
+StateFlowTransitionAsset	BranchInWindowTypeAsset	A second branch type for the destination side. Only 3 of the game's 3,737 transitions set it, and what it changes is not known.	unknown
+StateFlowTransitionAsset	BranchAtEnd	Fire when the leaving node's subject reaches its end. It becomes BranchTypeIndex 1 in the flattened entry (when BranchWindowTypeAsset is empty), and the fire time is the playing animation's time left minus BranchAtEndOffset.	
+StateFlowTransitionAsset	BranchAfterFirstUpdate	Fire at any time except during the node's first update. It becomes BranchTypeIndex 2 (when BranchWindowTypeAsset and BranchAtEnd are not set), where the fire time is 0, or 1e35 (never) while the node's first-update flag is set.	
+StateFlowTransitionAsset	BranchInAny	The game reads this, but what it changes is not known.	unknown
+StateFlowTransitionAsset	OverrideBlend	The blend used when this transition fires. It is picked by walking the chosen flattened entry and its parents: the first transition along that chain with an OverrideBlend set wins; failing that the branch type's own blend is asked for; failing that the state machine's BlendTag is used.	
+StateFlowTransitionAsset	TagCollectionSet	A TagCollectionSetAsset, so the transition can bring tag collections of its own.	unknown
+StateFlowTransitionAsset	DestinationPhase	A float: how far into the new node's subject to start.	unknown
+StateFlowTransitionAsset	DestinationPhaseSignal	A FloatAsset, a destination phase read from the game instead of the fixed one.	unknown
+StateFlowTransitionAsset	BranchInPhase	What it changes is not known.	unknown
+BranchTypeAsset	ControllerFilterIdentifier	Which state machine may use windows of this type: 0 means any, otherwise the transition only fires when the machine's Identifier matches.	
+BranchTypeAsset		A branch type: the name a BranchOutPointTag window and a transition's BranchWindowTypeAsset agree on, plus the tuning either side of the window and the state machine it is restricted to. 48 in the game's data.	
+BranchTypeAsset	BranchTuner	The tuner that shifts the window's ends. The editor's state-machine run does not model it and uses the untuned window.	
+BranchTypeAsset	BufferTuner	A second tuner, the same type as BranchTuner.	unknown
+BranchOutPointTag		A branch window on a controller's timeline: a state machine transition with the same branch type can fire while the controller's time is inside it.	
+BranchOutPointTag	BranchTypeAsset	The branch type of the window: transitions whose BranchWindowTypeAsset is this type use it.	
+BranchOutPointTag	Active	The state machine's own branch windows ignore this. Other parts of the game that look for branch-out points (dribbling, previews, warps) only take tags with Active set. False on every tag in the game's data.	
+BranchOutPointTag	BlendAsset	The game reads this, but what it changes is not known.	unknown
+BranchOutPointTag	TargetInitParam	The start settings the ActorPreviewController creates TargetAsset with; also read by the DribbleController ctor.	
+BranchOutPointTag	TargetAsset	The controller that follows an Active branch tag in the ActorPreviewController.	
+BranchOutPointTag	StartTuningOffset	When above 0, gameplay code picks the branch time inside [window start, start + StartTuningOffset] from a 0..1 value of the player object: time = min(start + StartTuningOffset, start + 30 x (1 - value)).	
+BranchOutPointTag	EndTuningOffset	The game reads this, but what it changes is not known.	unknown
+BranchOutPointTag	DestinationPhase	The game reads this, but what it changes is not known.	unknown
+ChooserControllerAsset		Plays one of its entries, picked by its policy (random, by an enumeration, or by signals). With none of ChooseOnReset, ChooseEveryUpdate, ChooseFirstUpdate and Looping set, it picks once when it starts - the last entry if the policy picks none - and never changes.	
+ChooserControllerAsset	PolicyAsset	The policy that picks the entry.	
+ChooserControllerAsset	EntryAssetList	The entries, in the order the policies scan them.	
+ChooserControllerAsset	CurrentChoice	Receives the chosen index.	
+ChooserControllerAsset	ChooseOnReset	When set, the chooser can pick again when it is reset. Exactly how it re-picks is not known.	unknown
+ChooserControllerAsset	ChooseEveryUpdate	When set, the chooser can pick again on every update. Exactly how it re-picks is not known.	unknown
+ChooserControllerAsset	ChooseFirstUpdate	When set, the chooser picks on its first update rather than when it is created. Exactly how it re-picks is not known.	unknown
+ChooserControllerAsset	Looping	Set: the game makes a ChooserController, which takes it as its looping flag.	
+ChooserControllerAsset	ChooseOnLoop	The game reads this, but what it changes is not known.	unknown
+ChooserControllerAsset	PhaseMatchPrevious	The game reads this, but what it changes is not known.	unknown
+ChooserControllerAsset	LoopPreviousController	The game reads this, but what it changes is not known.	unknown
+ChooserControllerAsset	BlendTag	The blend used when the chooser switches entry.	unknown
+ChooserEntryAsset	ControllerAsset	The controller the entry plays.	
+RandomChooserPolicyAsset		Random pick by weight: r = a 16-bit random number from the game state of RandomValueAsset / 65535 x the sum of the weights; the entries' weights are subtracted in order and the first that brings r to 0 or below is chosen. No positive weight: none.	
+RandomChooserPolicyAsset	RandomValueAsset	The game state the random number is read from.	
+RandomChooserEntryAsset	Weight	The entry's share of the random pick.	
+RandomChooserEntryAsset		One entry of a random chooser: the animation to play and its weight. A higher weight makes the entry more likely to be picked.	
+EnumChooserPolicyAsset		Picks the first entry whose enumeration value equals the value of GameStateAsset (an integer game state); an entry without a value is the default; game state -1: none.	
+EnumChooserPolicyAsset	GameStateAsset	The integer game state compared with the entries' values.	
+EnumChooserEntryAsset	EnumerationValueAsset	The value this entry is for (the value object's Value); none: this is the default entry.	
+EnumChooserEntryAsset		One entry of an EnumChooserPolicyAsset: the enumeration value that selects it. 70 in the game's data; an entry with no value is the policy's default.	
+SignalChooserPolicyAsset		Picks the first entry whose TrueSignals are all on and FalseSignals all off; none: none.	
+SignalChooserPolicyAsset	CacheLastChoice	Keeps the previous entry while its signals still hold (if it has any).	
+SignalChooserEntryAsset	TrueSignals	Signals that must all be on for this entry.	
+SignalChooserEntryAsset	FalseSignals	Signals that must all be off for this entry.	
+SignalChooserEntryAsset		One entry of a SignalChooserPolicyAsset: the signals that must be on and the ones that must be off for it to be chosen. 32 in the game's data.	
+LayersControllerAsset		Runs its layers' controllers and combines their poses in layer order.	
+LayersControllerAsset	ControllerAssets	Each layer's controller.	
+LayersControllerAsset	SignalAssets	Each layer's weight (a float signal); a layer whose weight is 1.5e-5 or less is not updated unless its UpdateMode is 1.	
+LayersControllerAsset	BlendMaskControllers	Each layer's blend mask - which joints the layer affects. How the mask is applied is not known.	unknown
+LayersControllerAsset	UpdateModes	When each layer runs. 0: never. 1: always, even at weight 0. 2: only while its weight is above 0. 3: as 2, and at weight 0 the layer is told so (what that does is not known). In the game's data, 220 layers use 2 and 26 use 1.	
+LayersControllerAsset	UpdateRates	How the layer's time advances (phase = time / length): 0 by the update's time; 1 to the first layer's phase; 2 to the previous layer's phase; 3 by the first layer's phase change; 4 by the previous layer's phase change. In the game's data,: 0 x210, 1 x36.	
+LayersControllerAsset	BlendModes	The game reads this, but what it changes is not known.	unknown
+LayersControllerAsset	BranchInModes	The game reads this, but what it changes is not known.	unknown
+LayersControllerAsset	MasterEntryIndex	0 in all 93 layer controllers in the game's data. What it changes is not known.	unknown
+LayersControllerAsset	SupportNestedMirroring	The game reads this, but what it changes is not known.	unknown
+BoolAsset	Default	The value the bool starts at. The game does not take its starting value from here; the editor's state-machine preview does. True in 35 of the game's 470 bools.	noeffect
+BoolAsset		A named true/false value the game sets and state machines test - 470 of them in the game's data, with names like bool_jostle_physics_do_pull. Transition and entry conditions point at these.	
+BoolAsset	DeactivateAfterUpdate	True in 2 of the game's 470 bools.	unknown
+BoolAsset	DeactivateAfterTransition	True in 37 of the game's 470 bools.	unknown
+BoolAsset	DeactivateAfterUpdateValue	False in every bool.	unknown
+UCCDistillAsset		A celebration candidate of a UCC state: when asked whether it is available it runs Expression, reads MinCDBScore, checks UCCUnlockableComponent (unavailable when that check fails) and runs PostExpression; when chosen it makes ControllerAsset's controller and passes it to AnimLaunchedCallback.	unknown
+UCCDistillAsset	ControllerAsset	The controller (a celebration sequence) this candidate plays: point it at another SequenceContainerAsset to play another celebration here.	
+UCCDistillAsset	Expression	An expression run first when the candidate is checked.	
+UCCDistillAsset	PostExpression	An expression run after the checks pass.	
+UCCDistillAsset	UCCUnlockableComponent	Its check must pass for the candidate to be available (the celebration's unlock).	
+UCCDistillAsset	MinCDBScore	A score threshold checked when the celebration is considered. How the score is compared is not known.	unknown
+UCCDistillAsset	AnimLaunchedCallback	Told about the controller made for the candidate.	
+GateNodeDistillChooserAsset		A gate node's chooser: asks DistillPolicy for what to play and post-processes the result.	
+GateNodeDistillChooserAsset	DistillPolicy	The policy that answers the gate.	unknown
+FootPlantResetTag	ResetFoot	Which feet to reset. 0 (used by 4,591 of the game's 4,683 tags) means both feet, 1 and 2 mean one foot each. Any other value means none - 48 and 64 occur in the game's data and do nothing.	
+FootPlantResetTag		A tag that resets the foot planting. 4,683 in the game's data.	
+LoopingControllerAsset		Plays an animation in a loop, restarting it each time it reaches its end (or LoopEndTime).	
+LoopingControllerAsset	SubjectControllerAsset	The looped child. The LoopingController creates it with its own start settings and copies the child's time and duration into its own.	
+LoopingControllerAsset	SubjectInitParams	The looping controller ignores this and passes its own start settings to the animation it loops.	noeffect
+LoopingControllerAsset	IsLoopControl	When set, LoopEndTime (if it is not past the child's duration) replaces the child's end as the loop point, and after each restart the child is advanced by LoopStartTime.	
+LoopingControllerAsset	StartTime	On the first update the child is advanced by StartTime ticks before the frame's own update.	
+LoopingControllerAsset	LoopStartTime	Ticks the child is advanced right after it restarts (only with IsLoopControl and when above 0).	
+LoopingControllerAsset	LoopEndTime	The loop point, in the looped animation's ticks (only with IsLoopControl). When the playhead crosses it, the animation is restarted and jumps to LoopStartTime, and the rest of that update plays on from there. The two poses may be blended across the jump.	
+MirrorController		Mirrors an animation left to right, and flips the values listed in its MirrorListAsset while doing so. With a PhaseOffset between 0 and 1 the mirrored copy also runs that far ahead.	
+MirrorController	ControllerAsset	The animation that is mirrored. It gets the same start settings as the mirror controller.	
+MirrorController	MirrorListAsset	An AssetListAsset of game-state values. While the child is created and on every update, each element's value is written into an override context negated: a bool as its opposite, a float with its sign bit flipped, an integer as its negative.	
+MirrorController	PhaseOffset	Below 1.5258789e-05 or above 0.99998474 a plain MirrorController is made; otherwise a MirrorPhaseOffsetController keeps the child offset by this fraction of its duration (its time is derived from PhaseOffset and the child's phase and duration).	
+SyncPointControllerAsset		Plays an animation locked to a phase: it moves the animation to whatever time its sync points give for the current phase. With NumCycles of 2 or more it covers several cycles.	
+SyncPointControllerAsset	SubjectControllerAsset	The animation that is played. It gets the same start settings as this controller, with SubjectControllerInit added.	
+SyncPointControllerAsset	SubjectControllerInit	Extra start settings handed to the played animation.	
+SyncPointControllerAsset	SyncPointTimes	The sync points as fractions of the played animation's length (0 = start, 1 = end). Each update the controller finds the two points around the current phase and sets the animation's time between them.	
+SyncPointControllerAsset	Mirrored	When set, the output pose is mirrored.	
+SyncPointControllerAsset	NumCycles	How many cycles the sync points cover: fewer than 2 gives a SyncPointController, otherwise a MultiCycleSyncPointController; sync points per cycle = (count - 1) / NumCycles + 1.	
+NullControllerAsset		Outputs a still default pose - what other controllers fall back on when they have nothing to play. Its time runs from 0 to 1 and stops there.	
+NullControllerAsset	Target	The layout whose default pose is output.	
+PhaseShiftControllerAsset		Plays a child controller started at a phase offset.	
+PhaseShiftControllerAsset	SubjectControllerAsset	The animation that is played. It gets the same start settings as this controller.	
+PhaseShiftControllerAsset	PhaseOffset	Where the child starts, as a fraction of its duration: the ctor keeps the fractional part of the wrapped value and the reset sets the child's time to it x the child's duration.	
+StreetMoveGroupItemControllerAsset		One move of a street move group: plays its animation on a phase that its speed, start phase and phase count turn into a time in the animation.	
+StreetMoveGroupItemControllerAsset	ControllerAsset	The animation that is played.	
+StreetMoveGroupItemControllerAsset	ItemSpeed	Playback rate of the child: the item's time is the child's time / ItemSpeed and its duration the child's duration / ItemSpeed / NumPhase, so each item tick moves the child ItemSpeed ticks.	
+StreetMoveGroupItemControllerAsset	ItemStartPhase	Phase offset, in units of one of the child's NumPhase cycles, added before the phase is mapped to the child's time.	
+StreetMoveGroupItemControllerAsset	ItemMirror	Adds half a cycle to the phase and mirrors the output pose.	
+StreetMoveGroupItemControllerAsset	NumPhase	How many cycles the child holds: the item's cycle is the child's duration / NumPhase and its phase wraps at NumPhase.	
+StreetMoveGroupItemControllerAsset	ItemAchievedAngle	The game never reads this, so changing it has no effect.	noeffect
+StreetMoveGroupItemControllerAsset	Velocity	The game never reads this, so changing it has no effect.	noeffect
+StreetMoveGroupControllerAsset		Drives a blend array by a facing angle and a speed, keeps a master animation in step with it, and sets a "facing forward" value. The speed, angle and phase it starts with come from its start settings.	
+StreetMoveGroupControllerAsset	BlendArrayControllerAsset	The blend array that is played. Every update it is given three values - the angle, the speed and the phase (half a cycle later when mirrored) - and advances at the speed factor.	
+StreetMoveGroupControllerAsset	MasterControllerAsset	A second controller kept in step: created to start at (MasterControllerPhaseOffset + phase) x MasterLength ticks and moved there every update.	
+StreetMoveGroupControllerAsset	MasterLength	The master controller's cycle in ticks: its target time is the wrapped phase x MasterLength.	
+StreetMoveGroupControllerAsset	MasterControllerPhaseOffset	Phase added before the master's target time is computed.	
+StreetMoveGroupControllerAsset	Mirrored	Compared with the mirror setting the move group was started with: when the two differ, the angle is flipped and the output pose is mirrored.	
+StreetMoveGroupControllerAsset	AngleMeaning	The game reads this, but what it changes is not known.	unknown
+StreetMoveGroupControllerAsset	OneToOneSpeed	When set, the BlendArray is time-scaled so its distance per tick (its distance interface / its duration) matches the speed; otherwise it plays at rate 1.	
+StreetMoveGroupControllerAsset	Direction	A bool game-state value the controller writes: true while the angle stays within +-(90 degrees + DirectionTolerance), switching with DirectionTolerance as hysteresis.	
+StreetMoveGroupControllerAsset	DirectionTolerance	Radians of hysteresis around +-90 degrees for Direction.	
+StreetMoveGroupControllerAsset	MinSpeed	The lowest speed the move group accepts from its start settings.	
+StreetMoveGroupControllerAsset	SignalRelativeFacingAngle	A float game-state value read every update into the angle.	
+StreetMoveGroupControllerAsset	SignalSpeed	A float game-state value read every update into the speed.	
+StreetMoveGroupControllerAsset	MaxDeltaRelFacingAnglePerTick	The move group itself never uses this. Whether anything else does is not known.	unknown
+StreetMoveGroupControllerAsset	MaxDeltaSpeedPerTick	The move group itself never uses this. Whether anything else does is not known.	unknown
+StreetMoveGroupControllerAsset	LimitDeltaFacingAndSpeed	The move group itself never uses this. Whether anything else does is not known.	unknown
+BlendArrayAsset		A blend of animations placed along one axis. For a given value it picks the one or two items around it, plays them in step (each sped up or slowed down to the blended length) and blends their poses.	
+BlendArrayAsset	NumItems	How many items there are; it must match the length of Items. The editor keeps the two in step when you save.	derived
+BlendArrayAsset	Items	The BlendArrayItems. They must be in increasing X: the parameter is clamped to the first and last X and the pair around it is found by walking up.	
+BlendArrayAsset	Min	The game never reads this, so changing it has no effect.	noeffect
+BlendArrayAsset	Max	The game never reads this, so changing it has no effect.	noeffect
+BlendArrayAsset	SnapToAnim	When set, the weight between the two items snaps to 0 or 1 (0.5 and up picks the upper item), so the array plays one item instead of blending.	
+BlendArrayAsset	EnableProcessChildrenTags	When clear, the tags on the blended animations are not acted on - only the blend array's own tags are.	
+BlendArrayItem		One controller of a BlendArrayAsset.	
+BlendArrayItem	Clip	The item's controller.	
+BlendArrayItem	InitParams	Start settings for the item's controller.	
+BlendArrayItem	X	The item's place on the blend axis: between two items the weight is (parameter - X_i) / (X_i+1 - X_i).	
+BlendArrayItem	EndTime	The item's length in ticks as the asset reports it for a parameter: the asset's duration interface returns the EndTime at the parameter, interpolated between two items, or asks the item's controller when it has one.	
+ActorControllerInitParams		Where and how an actor starts: its start tick, position, scale, mirroring and facing (as an angle, or as a full rotation when UseQuat is set).	
+ActorControllerInitParams	StartTick	The controller's start time in ticks (its time and phase are set from it).	
+ActorControllerInitParams	X	The actor's start position along X. The actor passes its start position, scale, start tick and facing on to its tracks - to all of them, or only those after the first, depending on ActorContentFlags.	
+ActorControllerInitParams	Y	Start position Y; handed on like X.	
+ActorControllerInitParams	Z	Start position Z; handed on like X.	
+ActorControllerInitParams	Scale	Actor scale; handed on like X.	
+ActorControllerInitParams	Mirror	Non-zero mirrors the actor left to right (combined with the mirror bit of ActorContentFlags, so the two together cancel out).	
+ActorControllerInitParams	FacingAngle	Facing angle (radians) kept when UseQuat is false; handed on with the position.	
+ActorControllerInitParams	UseQuat	Which facing is used: off uses FacingAngle, on uses the full rotation in Orientation.	
+ActorControllerInitParams	Orientation	The orientation quaternion used when UseQuat is set.	
+EvalBranchOutPointTag		A BranchOutPointTag that also records the player's state at the branch point, for gameplay to predict where the player will be.	
+EvalBranchOutPointTag	posPlayer	The player's position at the branch point: gameplay scales it and negates Z when the animation is mirrored.	
+EvalBranchOutPointTag	Speed	The player's speed at the branch point.	
+EvalBranchOutPointTag	MoveAngle	The movement angle at the branch point; negated when mirrored.	
+EvalBranchOutPointTag	BodyAngle	The body facing angle at the branch point; negated when mirrored.	
+BranchInPointTag		A branch-in point on a controller's timeline.	
+BranchInPointTag	BlendAsset	When a state machine enters a node whose controller has a BranchInPointTag, that tag's BlendAsset is the blend into the controller.	
+BranchInPointTag	ReferenceAsset	The game reads this, but what it changes is not known.	unknown
+BranchInPointTag	ReferenceInitParams	The game reads this, but what it changes is not known.	unknown
+VbrAnimationAsset		An animation stored in the "VBR" compressed format: keys in blocks of 8, each channel group packed as 8 frequency coefficients scaled into its Min/Max range, with channels that never change stored once. The editor decodes and re-encodes it exactly as the game reads it.	
+VbrAnimationAsset	QuatMin	Lower end of the rotation range: decoded rotation lanes = IDCT value x (QuatMax - QuatMin) + QuatMin; constants likewise, then normalised.	
+VbrAnimationAsset	QuatMax	Upper end of the rotation range (see QuatMin).	
+VbrAnimationAsset	TrajMin	Lower end of the range of the first vector group (the trajectory) when there are animated vectors.	
+VbrAnimationAsset	TrajMax	Upper end of the trajectory range.	
+VbrAnimationAsset	Vec3Min	Lower end of the range of the other vector groups and of constant vectors.	
+VbrAnimationAsset	Vec3Max	Upper end of the vector range.	
+VbrAnimationAsset	FloatMin	Lower end of the float range (animated and constant floats).	
+VbrAnimationAsset	FloatMax	Upper end of the float range.	
+VbrAnimationAsset	VectorOffsetScale	Scale of the vector offset ramps: ramp values are signed bytes x VectorOffsetScale / 127, added to the decoded vector lanes.	
+VbrAnimationAsset	FloatOffsetScale	Scale of the float offset ramps (as VectorOffsetScale).	
+VbrAnimationAsset	Dct	Quantisation step base: coefficient k of a block with weight w is scaled by ((w + 1) x Dct x 0.2 x ln(k + 2) + 1) x Dct / 32768.	
+VbrAnimationAsset	QuaternionCount	Animated rotation channels.	
+VbrAnimationAsset	Vector3Count	Animated vector channels.	
+VbrAnimationAsset	FloatCount	Animated float channels (coded 4 to a group).	
+VbrAnimationAsset	ConstQuaternionCount	Constant rotation channels (4 bytes each in Data, dequantised with the rotation range).	
+VbrAnimationAsset	ConstVector3Count	Constant vector channels (3 bytes each).	
+VbrAnimationAsset	ConstFloatCount	Constant float channels (1 byte each).	
+VbrAnimationAsset	KeyTimeSize	Bytes of the key-time table at the start of Data (run-length key times; used unless Flags bit 1 says one key per frame).	
+VbrAnimationAsset	NumKeys	Number of keys; blocks hold 8 keys each.	
+VbrAnimationAsset	ConstChanMapSize	Bytes of the constant-channel map in Data: alternating run lengths of animated and constant channels over all rig channels (rotations, vectors, floats).	
+VbrAnimationAsset	ConstPaletteSize	0: constant bytes are dequantised as byte / 255; otherwise they index ConstantPalette.	
+VbrAnimationAsset	VectorOffsetSize	Bytes of the vector offset-ramp table in Data (0 = none).	
+VbrAnimationAsset	FloatOffsetSize	Bytes of the float offset-ramp table in Data (0 = none).	
+VbrAnimationAsset	Flags	Bit 0: the clip loops. Bit 1: one key per frame. Bit 2: selects the compact decoding path (set by the editor when the data is small enough). Bit 3: set when no channel is constant. The editor sets these itself when it encodes a clip and keeps any higher bits as they were.	derived
+VbrAnimationAsset	ConstantPalette	Float palette that constant bytes index when ConstPaletteSize is not 0.	
+VbrAnimationAsset	FrameBlockSizes	Byte size of each 8-key block in Data (each block body is stored byte-reversed after 3 weight bytes).	
+VbrAnimationAsset	Data	Key-time table, constants, constant-channel map, per-scalar nibble widths, offset-ramp tables, then the blocks.	
+DctAnimationAsset		An animation stored in the "DCT" compressed format: keys in blocks of 8, each channel packed as 8 frequency coefficients. The editor decodes it exactly as the game reads it.	
+DctAnimationAsset	NumKeys	Number of keys.	
+DctAnimationAsset	NumQuats	Rotation channels.	
+DctAnimationAsset	NumVec3	Vector channels.	
+DctAnimationAsset	NumFloat	Float channels.	
+DctAnimationAsset	NumFloatVec	Float channel groups of 4 (the coded float lanes).	
+DctAnimationAsset	Cycle	The clip loops in seeks.	
+DctAnimationAsset	QuantizeMultBlock	Divisor of every coefficient: value = sum_k coef_k x (k x QuantizeMultSubblock x 0.1 + 1) / QuantizeMultBlock x B[r][k].	
+DctAnimationAsset	QuantizeMultSubblock	Per-coefficient step growth (see QuantizeMultBlock).	
+DctAnimationAsset	KeyTimes	Frame of each key (empty: one key per frame).	
+DctAnimationAsset	CatchAllBitCount	The bit width that a nibble width of 15 stands for.	
+DctAnimationAsset	DofTableDescBytes	One byte per channel; its high nibble is how many BitsPerSubblock words the channel has.	
+DctAnimationAsset	DeltaBaseX	Coefficient-0 base of lane X per channel (added to the decoded coefficient 0).	
+DctAnimationAsset	DeltaBaseY	Coefficient-0 base of lane Y.	
+DctAnimationAsset	DeltaBaseZ	Coefficient-0 base of lane Z.	
+DctAnimationAsset	DeltaBaseW	Coefficient-0 base of lane W.	
+DctAnimationAsset	BitsPerSubblock	Per channel and coefficient, a 16-bit word of four nibble widths (one per lane).	
+DctAnimationAsset	DataSize	Bytes of Data.	
+DctAnimationAsset	Data	The coefficient bit stream.	
+RawAnimationAsset		An animation stored uncompressed: every key in full. Rotations are blended along the shortest arc, positions and floats linearly.	
+RawAnimationAsset	KeyTimes	Frame of each key (Int16).	
+RawAnimationAsset	MappingIndices	Stored channel -> rig channel.	
+RawAnimationAsset	ChannelIndices	Rig channel -> stored channel (the inverse of MappingIndices).	
+RawAnimationAsset	Data	NumKeys rows of [rotations x4][vectors x4][floats], padded to 4 floats.	
+RawAnimationAsset	ConstData	Constant channels: [rotations x4][vectors x4][floats].	
+RawAnimationAsset	FloatCount	Animated float channels.	
+RawAnimationAsset	Vec3Count	Animated vector channels.	
+RawAnimationAsset	QuatCount	Animated rotation channels.	
+RawAnimationAsset	ConstFloatCount	Constant float channels.	
+RawAnimationAsset	ConstVec3Count	Constant vector channels.	
+RawAnimationAsset	ConstQuatCount	Constant rotation channels.	
+RawAnimationAsset	NumKeys	Number of keys.	
+RawAnimationAsset	Cycle	The clip loops in seeks.	
+FrameAnimationAsset		The "FRAM" codec: one static pose.	
+FrameAnimationAsset	Data	The pose: [rotations x4][vectors x4][floats].	
+FrameAnimationAsset	FloatCount	Float channels.	
+FrameAnimationAsset	Vec3Count	Vector channels.	
+FrameAnimationAsset	QuatCount	Rotation channels.	
+SequenceWarper		A warp on one track of a sequence: it moves, rotates or turns the track's path over a time window, so the animation lines up with where the game needs the player to be.	
+SequenceWarper	StartTime	First tick of the warper's window, in the track's ticks. A warper with StartTime 0 and Duration 0 is not a window but the track's constant rotation warp (see Rotation).	
+SequenceWarper	Duration	Length of the window in ticks: the warp ramps in over StartTime..StartTime+Duration and stays fully applied after it.	
+SequenceWarper	BlendType	The blend curve of the ramp, as BlendCurveAsset.CurveType: the applied fraction is 1 - curve(BlendType, (time - StartTime) / Duration).	
+SequenceWarper	TranslateX	X of the translation the warp adds to the track's trajectory: the track sums fraction x TranslateX x WarpSignal.x over its active warpers (and the same for Y and Z), then applies the difference between two times as the frame's root motion.	
+SequenceWarper	TranslateY	Y of the warp translation (see TranslateX). With FullBodyYTranslation clear it is taken out of the body translation and applied to the joints named by YTranslateMainJointID (and the two feet when YTranslateFootEffectors is set) instead.	
+SequenceWarper	TranslateZ	Z of the warp translation (see TranslateX).	
+SequenceWarper	Rotation	A rotation (radians about the up axis) applied to the whole track; it is read from the warper whose StartTime and Duration are both 0, and RotationSignal overrides it when set.	
+SequenceWarper	FacingAngle	The facing angle the warp turns the track towards (radians). Only warpers with IsFacingWarper set count: the track takes the weighted mean of their FacingAngle, with the mean weight, and hands both to the facing solve.	
+SequenceWarper	FacingBegin	Ticks after StartTime over which the facing warp ramps in (fraction = (time - StartTime) / FacingBegin through the BlendType curve); full weight between FacingBegin and FacingEnd.	
+SequenceWarper	FacingEnd	Ticks after StartTime at which the facing warp starts ramping out, reaching 0 at StartTime + Duration.	
+SequenceWarper	IsFacingWarper	Marks the warper as a facing warp: only these are summed by the facing solve, and a track that has one gets two FacingData objects (hips and the two ankle effectors) built for it.	
+SequenceWarper	YTranslateMainJointID	The joint (a JointMapTemplateIDAsset) that takes the vertical warp when FullBodyYTranslation is clear.	
+SequenceWarper	YTranslateLeftFootJointID	The left-foot joint that also takes the vertical warp when YTranslateFootEffectors is set.	
+SequenceWarper	YTranslateRightFootJointID	The right-foot joint that also takes the vertical warp when YTranslateFootEffectors is set.	
+SequenceWarper	WarpSignal	A Vector3Asset game-state value whose x, y and z scale TranslateX, TranslateY and TranslateZ every update (1,1,1 when it is empty).	
+SequenceWarper	RotationSignal	A game value (number) that replaces Rotation while the game runs, wrapped into the range -180 to 180 degrees.	
+SequenceWarper	YTranslateFootEffectors	Also applies the vertical warp to YTranslateLeftFootJointID and YTranslateRightFootJointID.	
+SequenceWarper	FullBodyYTranslation	When set, the vertical part of the warp translation moves the whole body with the rest of the translation; when clear it is removed from the body translation and applied to the joints instead.	
+ContextDatabaseAsset		A table the game picks animations from. Its columns are the FieldDescriptionAssets (each a game value such as speed or angle), its rows the EntryAssets, and each row holds one cell per column plus the animations that row selects. The Database tab shows it as a readable table.	
+ContextDatabaseAsset	EntryAssets	The rows (EntryAssets). A row's Assets are what it selects: one asset is stored in the row's slot, two or more make a list object and set the row's bit in a "has a list" bitmap.	
+ContextDatabaseAsset	FieldDescriptionAssets	The columns, in order: a RegistryFieldAsset names one of the engine's 462 registry fields, a FieldDescriptionAsset declares a custom column driven by a game-state value. Each row must have one cell per column.	
+ContextDatabaseAsset	FieldInputSourceIndices	One per column when present. When it is there, each built-in column takes its name from its FieldInstanceName and its value from the input this list points at.	
+ContextDatabaseAsset	NumAuxiliaryEntryAsset	How many of the last rows are continuation rows. Values above the row count are capped.	
+ContextDatabaseAsset	NumDeduplicatedListAssets	How many rows have more than one asset (and so get a list object).	
+ContextDatabaseAsset	NumEntryAssetsTotal	The total number of assets over all rows.	
+ContextDatabaseAsset	DebugCategoryId	The engine's debug category for the database.	unknown
+EntryAsset		One row of a ContextDatabaseAsset.	
+EntryAsset	Assets	What the row selects (an animation or controller). With two or more the engine builds a list object for the row, which is what NumDeduplicatedListAssets counts.	
+EntryAsset	Cells	The row's cells, one per column of the database, in column order.	
+CellAsset		One cell of a context database row. Which of its four values is used depends on the column's type: Int0 for bool, enum, int and bitmap columns, Float0 and Float1 for float and angle columns, and Float0 to Float2 for a three-float column.	
+CellAsset	Int0	A bool column reads it as 1 true, 0 false, 2 "any"; an enum column as the value, with -1 meaning "any"; a whole number column as the value, with -1 meaning "any"; a bitmap column as the set of bits that match.	
+CellAsset	Float0	A number column's lower end, or an angle column's angle. The game stores it at reduced precision: 255 steps between the column's own minimum and maximum.	
+CellAsset	Float1	A number column's upper end, or an angle column's tolerance either side of Float0, stored at reduced precision (128 steps of the column's range).	
+CellAsset	Float2	The third value of a three-float column (field type 8).	
+RegistryFieldAsset		A database column that uses one of the game's built-in values (speed, angle, distance and so on). The Database tab shows its real name, type, range, unit and option names.	
+RegistryFieldAsset	ClassGuid	The data interface the field belongs to. Core/Data/context_interfaces.tsv holds their names.	
+RegistryFieldAsset	FieldId	Which field of that interface, as the registry keys it.	
+RegistryFieldAsset	FieldInstanceId	Replaces the field id in the column's descriptor, so a database can hold several instances of the same engine field.	
+RegistryFieldAsset	FieldInstanceName	Replaces the registry's name for this column (only read when the database has FieldInputSourceIndices).	
+FieldDescriptionAsset		A custom column of a ContextDatabaseAsset, driven by a game-state value instead of an engine field. The engine gives it the GameState interface id, or the metadata one when IsMetadata is set, and a running index within that group as its field id.	
+FieldDescriptionAsset	FieldName	The column's name.	
+FieldDescriptionAsset	FieldType	What the column holds and how its cells are read: 0 bool, 1 enum, 2 int, 3 bitmap, 4 float, 5 angle, 6 float (second form), 7 angle (second form), 8 three floats.	
+FieldDescriptionAsset	IsMetadata	Puts the column in the metadata group instead of the queried GameState group.	
+FieldDescriptionAsset	IsCustomField	The game reads this, but what it changes is not known.	unknown
+FieldDescriptionAsset	IntMax	Number of values of an enum or int column.	
+FieldDescriptionAsset	IntDefault	Default value of an enum or int column.	
+FieldDescriptionAsset	FloatMin	Lower end of a float or angle column's range; the cells' bytes are places in this range.	
+FieldDescriptionAsset	FloatMax	Upper end of the column's range.	
+FieldDescriptionAsset	GameStateDriverAsset0	The game-state value that supplies this column's value when the game queries the database; its enumeration also names an enum column's values.	
+FieldDescriptionAsset	GameStateRemapAsset0	Remaps the driver's value for this column.	
+FieldDescriptionAsset	AutoShiftEnumsForBitmap	Stored in the column's driver record.	
+FieldDescriptionAsset	Ordering	The game reads this, but what it changes is not known.	unknown
+FieldDescriptionAsset	CompareTypeForBitmap	The game reads this, but what it changes is not known.	unknown
+FieldDescriptionAsset	FloatDefault0	Default of a float or angle column.	
+FieldDescriptionAsset	FloatDefault1	Second default of a three-float column.	
+FieldDescriptionAsset	FloatDefault2	Third default of a three-float column.	
+GameStateTagAsset		Base of the tags that write a game-state value while their window is open: on enter the tag remembers the value, on update it writes the new one, and on leave ResetOnLeave decides what is put back.	
+GameStateTagAsset	ValueAsset	The game-state value the tag writes; the tag asks it for the interface of its own kind and goes through that to read and write.	
+GameStateTagAsset	ResetOnLeave	On a bool or integer tag: 0 leaves the value the tag wrote in place, 1 writes the value's own default, anything else writes back what the tag saved when its window opened. A float tag also applies its mode once more at the leave phase when ResetOnLeave is 0 (or above 2), and 2 writes back the saved value.	
+BoolGameStateTag		Writes a bool game state while its window is open.	
+BoolGameStateTag	Value	The value written in Mode 1.	
+BoolGameStateTag	Mode	0 = the tag does nothing; 1 = write Value; 2 = write the opposite of the current value; any other value writes false.	
+IntegerGameStateTag		Writes an integer game state while its window is open.	
+IntegerGameStateTag	Value	The slot of Mode.	
+IntegerGameStateTag	Mode	0 = the tag does nothing; 1 = write Value; 2 = add Value to the current value; 3 = subtract it; 4 = multiply by it; any other value writes 0.	
+FloatGameStateTag		Writes a float game state while its window is open, through a curve over the window: the hooks get the phase (0 at the window's start, 1 at its end) and the tag samples Spline at it.	
+FloatGameStateTag	Value	The amplitude the sampled spline is multiplied by.	
+FloatGameStateTag	Spline	The curve over the tag's window. It is sampled at the phase, linearly between points; with fewer than two points the first point is used. s below is that sample times Value.	
+FloatGameStateTag	Mode	What is written, with s = Spline(phase) x Value and v the current value: 1 = s; 2 = s x v; 3 = (1 - Spline(phase)) x v + s (a blend towards Value); 4 = v + s; 5 = v - s; 6 = s, with the phase moved on by v first (clamped to 1); 7 = v + s, reading v from the value already written this update instead of the saved one; any other value writes 0.	
+FloatGameStateTag	SplineRaw	The tag's curve over its window, in packed form. The Curves tab shows it as a graph.	
+FloatGameStateTag	SplineStorageFlags	The game reads this, but what it changes is not known.	unknown
+Vector3GameStateTag		Writes a vector3 game state while its window is open.	
+Vector3GameStateTag	Value	The vector written.	
+Vector3GameStateTag	Mode	What the tag does with its value over the window. The modes have not been worked out for this tag.	unknown
+Vector3GameStateTag	Splines	One curve per component over the tag's window.	
+CopyGameStateTagAsset		Copies one game-state value into another while its window is open.	
+CopyGameStateTagAsset	Value	The game-state value that is read.	
+OverrideGameStatesCollectionAsset		Game-state values an actor starts with. When an actor is set up, the collection is applied to its game-state table: OverrideTargets is walked once, in order, and consumed in five blocks - first one target per OverrideAssets entry, then per OverrideVec3s, OverrideFloats, OverrideInts and OverrideBools entry. So the length of OverrideTargets should be the sum of the five value lists.	
+OverrideGameStatesCollectionAsset	OverrideTargets	The game values that are overridden, one per override value, in the order the values are listed above them. The editor checks on save that there is exactly one target per value.	
+OverrideGameStatesCollectionAsset	OverrideAssets	For the first block of targets: another game-state value whose value is copied into the target.	
+OverrideGameStatesCollectionAsset	OverrideVec3s	Vector values written into the targets of the second block.	
+OverrideGameStatesCollectionAsset	OverrideFloats	Float values written into the targets of the third block.	
+OverrideGameStatesCollectionAsset	OverrideInts	Integer values written into the targets of the fourth block.	
+OverrideGameStatesCollectionAsset	OverrideBools	Bool values written into the targets of the last block.	
+AnimatableConfigAsset		How an actor is set up: its parent, pose, start place and scale, the features it gets and the game states it starts with.	
+AnimatableConfigAsset	Parent	The config this one builds on: the parent's overrides are applied first, then this one's.	
+AnimatableConfigAsset	OverrideGameStatesCollection	The game values the actor starts with.	
+AnimatableConfigAsset	DefaultPose	The game reads this, but what it changes is not known.	unknown
+AnimatableConfigAsset	StartPosition	The game reads this, but what it changes is not known.	unknown
+AnimatableConfigAsset	StartRotation	The game reads this, but what it changes is not known.	unknown
+AnimatableConfigAsset	PlayerScale	The game reads this, but what it changes is not known.	unknown
+AnimatableConfigAsset	FeatureCollection	The FeatureCollectionAsset whose features the actor gets.	
+ActorAsset		One actor of a sequence or group: the animatable it plays on and the config it is set up with.	
+ActorAsset	AnimatableAsset	The game reads this, but what it changes is not known.	unknown
+ActorAsset	ConfigAsset	The AnimatableConfigAsset the actor is set up with.	
+ControllerFeatureAsset		A feature that gives the animatable a controller.	
+ControllerFeatureAsset	ControllerAsset	The controller the feature adds.	
+ControllerFeatureAsset	ControllerInitParams	The start settings it is created with.	
+FeatureCollectionAsset	FeatureAssets	The features in the collection, in order. If two features are of the same type, the later one wins.	
+FeatureCollectionAsset		A list of features. Any kind of feature can be in it.	
+WarpControllerAsset		Plays a child controller along a recorded trajectory and warps that trajectory towards where the game wants the player to end up. The WarpAsset's fields are loaded inline into this object: the trajectory, the segments, the rest. 18,873 of the context database rows in the game's data select a WarpControllerAsset, so this is the most picked controller class.	
+WarpControllerAsset	ChildAsset	The controller whose animation is warped.	
+WarpControllerAsset	WarpAsset	The warp data (a nested WarpAsset): the trajectory, its segments and the touch.	
+WarpControllerAsset	ActorIdx	Which actor of the warp this controller is.	unknown
+WarpControllerAsset	WarpInitializerAsset	The WarpInitializerAsset whose game-state values set the warp up; the controller's constructor calls it with the asset before anything else.	
+WarpAsset		The recorded trajectory of a warp and how far it may be bent: samples every DeltaT (LenPosition of them, from StartT), cut into NumSegments segments that each cap how much the trajectory may be warped, plus the touch (TouchSeg, TouchPosition, the touch regions).	
+WarpAsset	DeltaT	Seconds (or ticks) between trajectory samples: the trajectory's whole length is (LenPosition - 1) x DeltaT.	
+WarpAsset	StartT	The trajectory's start time.	
+WarpAsset	LenPosition	How many path samples the warp has. It must match the sample lists; the editor keeps it in step when you save.	derived
+WarpAsset	Pose	The trajectory samples themselves (16 bytes each), set into the trajectory object through its setters.	
+WarpAsset	Lean	A lean value per trajectory sample, loaded only when StoreLeanPose is set.	
+WarpAsset	StoreLeanPose	Whether the Lean samples are loaded at all, and it is passed to the trajectory's allocation.	
+WarpAsset	NumSegments	Number of WarpSegments.	
+WarpAsset	Segments	The warp's segments; TouchSeg picks one of them by its position in this list.	
+WarpAsset	TouchSeg	The segment in which the ball is touched, or -1 for no touch.	
+WarpAsset	TouchPosition	Where the touch happens.	
+WarpAsset	UseTouchTag	With a touch segment and WarpAfterTouch clear, the warp takes its end time from the child controller's touch tag instead of the whole trajectory. It defaults to true for assets saved before the field existed.	
+WarpAsset	WarpAfterTouch	When set, the warp keeps bending the trajectory past the touch: the end time is the whole trajectory even when there is a touch segment. It defaults to true for assets saved before the field existed.	
+WarpAsset	NumTouchRegionSpeeds	How many touch regions there are; it must match TouchRegions. The editor keeps it in step when you save.	derived
+WarpAsset	TouchRegions	The touch regions along the warp's path.	
+WarpAsset	NumTouchRegionTouchTimes	How many touch times there are; it must match TouchTimes.	derived
+WarpAsset	TouchTimes	One time per touch region.	
+WarpAsset	StartRunStyle	The run style the warp starts in. The game uses it when it works out the path's timing. The matching database column takes fwd, sideL, sideR, back, stop or crouch.	
+WarpAsset	EndRunStyle	The WarpDatabaseQuery column of the same name takes fwd, sideL, sideR, back, stop or crouch (matched by name).	unknown
+WarpAsset	EndPhase	The game reads this, but what it changes is not known.	unknown
+WarpAsset	MoveTurnDir	The game reads this, but what it changes is not known.	unknown
+WarpAsset	ShoulderTurnDir	The WarpDatabaseQuery column of the same name is a bitmap of LOCO_TURN_POSITIVE, LOCO_TURN_NEGATIVE and LOCO_STRAIGHT (matched by name).	unknown
+WarpAsset	Urgency	The game reads this, but what it changes is not known.	unknown
+WarpAsset	HoldPoseT	The game reads this, but what it changes is not known.	unknown
+WarpAsset	BonusRotation	The game reads this, but what it changes is not known.	unknown
+WarpAsset	UseIKRegion	The game reads this, but what it changes is not known.	unknown
+WarpAsset	ForceShoulderBlend	The game reads this, but what it changes is not known.	unknown
+WarpSegment		One segment of a warp trajectory: the stretch of time it covers and how far the trajectory may be moved, turned and stretched inside it.	
+WarpSegment	Type	The game reads this, but what it changes is not known.	unknown
+WarpSegment	StartT	Where the segment starts in the warp path's time.	
+WarpSegment	EndT	The game reads this, but what it changes is not known.	unknown
+WarpSegment	NormalizedT	The game reads this, but what it changes is not known.	unknown
+WarpSegment	StartMoveAngle	The game reads this, but what it changes is not known.	unknown
+WarpSegment	EndMoveAngle	The game reads this, but what it changes is not known.	unknown
+WarpSegment	StartSpeed	The game reads this, but what it changes is not known.	unknown
+WarpSegment	EndSpeed	The game reads this, but what it changes is not known.	unknown
+WarpSegment	MaxPositiveWarp	The game reads this, but what it changes is not known.	unknown
+WarpSegment	MaxNegativeWarp	The game reads this, but what it changes is not known.	unknown
+WarpSegment	MaxPositiveRotation	The game reads this, but what it changes is not known.	unknown
+WarpSegment	MaxNegativeRotation	The game reads this, but what it changes is not known.	unknown
+WarpSegment	MaxPositiveScale	The game reads this, but what it changes is not known.	unknown
+WarpSegment	MaxNegativeScale	The game reads this, but what it changes is not known.	unknown
+WarpInitializerAsset		The game values a warp is set up from: where the player is on their current path and where the game wants them to end up.	
+WarpInitializerAsset	ActiveTrackInfoValidAsset	A bool that gates the four active-track values below - they are only read when it is true.	
+WarpInitializerAsset	ActiveTrackPositionAsset	Where the player is on the track it is already following (a vector).	
+WarpInitializerAsset	ActiveTrackMoveAngleAsset	The move angle of that track.	
+WarpInitializerAsset	ActiveTrackShoulderAngleAsset	The shoulder angle of that track.	
+WarpInitializerAsset	ActiveTrackSpeedAsset	The speed on that track.	
+WarpInitializerAsset	ActiveTrackPhaseAsset	The game reads this, but what it changes is not known.	unknown
+WarpInitializerAsset	LastTrackIDAsset	The id of the path the player was on last. The game compares it with the warp's own id to tell whether the player is still on the same path.	
+WarpInitializerAsset	DesiredMoveAngleAsset	The move angle the warp aims at (-44 stands in when the value is missing).	
+WarpInitializerAsset	DesiredShoulderAngleAsset	The shoulder angle the warp aims at (-44 stands in when missing).	
+WarpInitializerAsset	DesiredFarTargetAsset	The far target (a vector) the warp aims at; which of the three warp solves runs depends on which of the desired values are present.	
+WarpInitializerAsset	IsMirroredAsset	Whether the warp is mirrored.	
+WarpInitializerAsset	SnapToShoulderAngleAsset	Read into the solve's parameters.	
+WarpInitializerAsset	PreventShorteningAsset	Passed to the solve as a flag.	
+WarpInitializerAsset	CalculateEndMoveErrorFromStart	Passed to the solve as a flag.	
+WarpInitializerAsset	TimeScaleModifierAsset	The game reads this, but what it changes is not known.	unknown
+PiecewiseLinearAsset		A curve given as up to 8 points. The game only uses PointValues; the titles, ranges and slope are for the authoring tool. An empty list is read as eight points at zero. All 8,598 curves in the game's data have one to eight points.	
+PiecewiseLinearAsset	PointValues	The points, as x then y. The game holds at most 8 - a 9th point would corrupt the curve, and the editor warns about it on save.	
+PiecewiseLinearAsset	GraphTitle	A name for the curve. The game never reads it, so changing it has no effect.	noeffect
+PiecewiseLinearAsset	XTitle	What the x axis means (for example "Ticks"). The game never reads it, so changing it has no effect.	noeffect
+PiecewiseLinearAsset	YTitle	What the y axis means (for example "Speed"). The game never reads it, so changing it has no effect.	noeffect
+PiecewiseLinearAsset	XMin	The low end of the x axis in the authoring tool. The game ignores it, and the points do not have to stay inside it.	noeffect
+PiecewiseLinearAsset	XMax	The authored x range's high end. The game never reads it, so changing it has no effect.	noeffect
+PiecewiseLinearAsset	YMin	The authored y range's low end. The game never reads it, so changing it has no effect.	noeffect
+PiecewiseLinearAsset	YMax	The authored y range's high end. The game never reads it, so changing it has no effect.	noeffect
+PiecewiseLinearAsset	Slope	The game never reads this, so changing it has no effect.	noeffect
+AnimatableFeatureAsset		The base of every animatable feature. An animatable collects one feature of each type: its parent's first, then its own, and a later feature of the same type replaces an earlier one - so a child can override a feature it inherits.	
+ModelFeatureAsset		The feature that names the animatable's model. All 22,971 in the game's data are named "Model Feature".	
+ModelFeatureAsset	Model	A string kept: the model's file name (values in the game's data such as antrig_gen4_fifa16_goalie.bin, story_prop_sml_Chair_model).	unknown
+ModelFeatureAsset	ModelAsset	A link to a model asset outside the animation file. Empty in every model feature in the game's data - Model and ModelPath name the model instead.	
+ModelFeatureAsset	ModelPath	A string kept: the folder the model is looked up in (values in the game's data such as gameplay\common\Models\player).	
+ActorGroupAsset		Base of ActorAsset and ActorGroupContainerAsset; no fields of its own.	
+Branch		The base of every branch tag.	
+BranchOutTagCollectionAsset		The collection that holds a controller's branch-out tags - the windows where a state machine may leave the animation.	
+BranchInTagCollectionAsset		The collection that holds a controller's branch-in tags - the points where a state machine may enter the animation.	
+ImmediateTagCollectionAsset		A tag collection whose tags act at once, instead of over a window on the timeline.	
+ImmediateTagCollectionAsset	ImmediateTagKeys	The collection's tags, each.	unknown
+DiffBlendAsset		A blend with no settings at all. How it blends the two poses is not known. 4,935 in the game's data, all named "Diff Blend".	unknown
+BallInTag		Marks where the ball comes in. The tag has no settings of its own; game code looks for it on the animation directly. What it then does is not known.	unknown
+BallOutTag		A PieRangeTag with a height band. 8,267 in the game's data, all named "BallOutTag".	
+BallOutTag	YMin	The low end of the height band. 0 on every tag in the game's data. What it changes is not known.	unknown
+BallOutTag	YMax	The high end of the height band. 1000 on every tag in the game's data. What it changes is not known.	unknown
+ShieldTargetTag		A VectorTag with no fields and no tag behaviour of its own, so the vector it carries is VectorTag's. 893 in the game's data, all named "ShieldTargetTag".	
+HoldBallTag		Marks the window where the player holds the ball. Game code looks for it on the animation directly. Every tag in the game's data is the left- or right-hand version (HoldBallLTag, HoldBallRTag).	
+SceneDriverAsset		The base of the scene drivers - the assets that line characters up with each other or with the world (AlignmentDriverAsset, CopyJointToJointDriverAsset, WarpTrajectoryDriverAsset).	
+IKTagBase		Base of the tags that drive IK over a stretch of a controller's timeline. The IK pass walks the controller's tag collections for IK tags and, for each active one, builds up to four pose operations: a reach and a delta operation from the Reach/Delta index pair, and the same again from the Aux pair.	
+IKTagBase	IKActive	The pass ends at the first tag whose IKActive is clear - not just skips it - so an inactive IK tag hides the IK tags after it in the same collection. 313 of the game's 10,432 IK tags have it false, and those are exactly the 313 that leave the Reach/Delta indices unset (checked over the whole file: the two never disagree).	
+IKTagBase	ReachIndex	Which effector the IK reaches with, as a slot in the rig's effector table. It is used together with DeltaIndex; if either is unset (-2147483648) the IK for this pair is skipped. The reach is applied with the weights IKReachT and IKReachR.	
+IKTagBase	DeltaIndex	The delta column, resolved the same way; the operation built from it carries IKControllerOffset instead of the weights. In all 10,119 the game's tags that set it, DeltaIndex is ReachIndex - 1.	
+IKTagBase	ReachAuxIndex	A second reach column, handled exactly like ReachIndex; the Aux pair is dropped when either of ReachAuxIndex and DeltaAuxIndex is unset. 9,437 of the game's 10,432 tags leave it unset.	
+IKTagBase	DeltaAuxIndex	The Aux pair's delta column, handled exactly like DeltaIndex.	
+IKTagBase	ReachMirrorIndex	The effector slot to use when the animation is mirrored. In the game's data it is always the left/right swap of ReachIndex (1 and 3 swap, 5 and 7 swap, 9 and 11 stay). Where the game reads it is not known.	unknown
+IKTagBase	DeltaMirrorIndex	The mirrored counterpart of DeltaIndex - always ReachMirrorIndex - 1 in the game's data. Where the game reads it is not known.	unknown
+IKTagBase	ReachAuxMirrorIndex	The game reads this, but what it changes is not known.	unknown
+IKTagBase	DeltaAuxMirrorIndex	The game reads this, but what it changes is not known.	unknown
+IKTagBase	Orientation	10,191 of the game's 10,432 tags have 0; the rest are small angles in radians. The game never reads it, so changing it has no effect.	noeffect
+IKTag		An IKTagBase with the amounts the IK applies: how much of the reach to take in rotation and in translation, and an offset for the delta operation.	
+IKTag	IKReachR	Goes into the reach operation's value as its third component - the vector the pass builds is (weight, IKReachT, IKReachR, weight), so it scales the rotation part against the same weight.	
+IKTag	IKReachT	Goes into the reach operation's value as its second component (see IKReachR).	
+IKTag	IKControllerOffset	The offset applied by the IK's delta step.	
+IKTag	Flags	A set of on/off bits. The IK itself never looks at them. 0 on 7,998 of the game's 10,432 IK tags. What they change is not known.	unknown
+TouchTag		An IKTag that marks a contact: the cage the contact point lives in, the plane it is on, where the player was, and the IK ramp. 8,194 in the game's data, all named "TouchTag".	
+TouchTag	IKBlendIn	The ramp before the tag's window, in the tag's own time unit. The pass takes d = (current time) - (the tag's start); when d is positive it subtracts the tag's length and clamps at 0, so d is 0 inside the window, negative before it and positive after it. For d < 0 the IK weight is 1 - (-d / IKBlendIn) while -d <= IKBlendIn, and 0 further out. Values in the game's data: run 0 to 20.	
+TouchTag	IKBlendOut	The ramp after the window: for d >= 0 the IK weight is 1 - (d / IKBlendOut) while d <= IKBlendOut, and 0 beyond. The test needs IKBlendOut greater than 0 before any weight is set, so a tag with IKBlendOut 0 applies no IK at all, not even inside its own window. 17 of the game's 8,194 TouchTags have 0, so those apply no IK at all; the rest run 1 to 22.	
+TouchTag	IKCage	The cage the contact point may move within: the point itself, built as a chain of joints so it fits players of any build, and how far it may move each way.	
+TouchTag	TouchPartVelocity	The game reads this, but what it changes is not known.	unknown
+TouchTag	TouchPlaneYaw	The game reads this, but what it changes is not known.	unknown
+TouchTag	TouchPlanePitch	The game reads this, but what it changes is not known.	unknown
+TouchTag	PlayerDistAtTouch	The game reads this, but what it changes is not known.	unknown
+TouchTag	PlayerDistAngleAtTouch	The game reads this, but what it changes is not known.	unknown
+TouchTag	PlayerFaceAngleAtTouch	The game reads this, but what it changes is not known.	unknown
+TouchTag	PosDuration	The game reads this, but what it changes is not known.	unknown
+TouchTag	NegDuration	0 on every tag in the game's data. What it changes is not known.	unknown
+TackleTag		A tag carrying a list of tackle points, and an IK tag in its own right: when the IK pass finds a TackleTag rather than a TouchTag it takes the ramp from EaseIn/EaseOut instead of IKBlendIn/IKBlendOut.	
+TackleTag	EaseIn	The ramp before the tag's window, used in place of a TouchTag's IKBlendIn. Values in the game's data: 1, 4 and 5.	
+TackleTag	EaseOut	The ramp after the window, used in place of IKBlendOut - and, as there, it must be greater than 0 or the tag applies no IK. Values in the game's data: 1, 3, 4, 5, 6 and 10.	
+TackleTag	TacklePoints	The tackle points, their count. In the game's data, tags carry 2 to 17.	unknown
+IKCage		The volume a contact point may be moved within: the point itself as a chain of joint transforms, plus the tolerances around it.	
+IKCage	Dimensions	The tolerances around the point.	
+IKCage	Point	The point, as a transform chain.	
+IKCageDimensions		How far a cage's contact point may move each way - forwards and backwards on each axis.	
+IKCageDimensions	TolPos	The positive tolerance.	
+IKCageDimensions	TolNeg	The negative tolerance.	
+IKCageDimensions	TolPosInv	1 divided by TolPos, kept alongside it so the game does not have to divide. It is exactly that in every cage in the game's data, so keep the two in step if you change TolPos.	
+IKCageDimensions	TolNegInv	Stored alongside TolNeg; in all 13,455 the game's cages it is exactly the componentwise reciprocal of TolNeg.	unknown
+ScaledPoint		A point given as a chain of up to 16 joint transforms rather than a single position, so it fits players of any build. NumTransforms says how many of the 16 are used.	
+ScaledPoint	TransformChain	The chain, 16 slots long whatever the count.	
+ScaledPoint	NumTransforms	How many of the 16 slots are used: 6 in 12,295 of the game's 13,455 points, then 11 (530), 10 (480) and 7 (150).	
+JointTransform		One link of a ScaledPoint's chain: a joint's translation and rotation, and the scale region it belongs to. 215,280 in the game's data, all of them inside the 13,455 ScaledPoints (16 each); every ScaledPoint sits in an IKCage, 8,194 of them a TouchTag's and 5,261 a TacklePoint's.	
+JointTransform	T	The link's translation.	
+JointTransform	Q	The link's rotation.	
+JointTransform	ScaleRegion	Which scale region the link belongs to, so a differently proportioned player scales it the right way. 15 distinct values over all 215,280 the game's transforms: 0, then 2 to 14, and 18.	unknown
+TacklePoint		One point of a TackleTag: a cage, the plane the contact is on and the foot's velocity there.	unknown
+TacklePoint	IKCage	The cage the tackle point lives in.	
+TacklePoint	TouchPlaneNormal	The normal of the plane the contact is on.	
+TacklePoint	FootVelocity	The foot's velocity at the contact.	
+TacklePoint	TouchPlaneYaw	The plane's yaw in radians; the values in the game's data are multiples of pi/18 and pi/4 among others.	
+TacklePoint	TouchPlanePitch	The plane's pitch in radians.	
+TouchInnerSpheroid		A centre and a radius vector, listed by GKBridgeSequenceQueryMapAsset.	unknown
+TouchInnerSpheroid	Center	The spheroid's centre.	
+TouchInnerSpheroid	Radius	Its radii, one per axis.	
+RelativeIkActorControllerAsset		Plays an actor controller with relative-IK entries attached, so one actor's joints can be driven towards another animatable's. 1,487 in the game's data.	
+RelativeIkActorControllerAsset	ActorControllerAsset	The actor controller that is played.	
+RelativeIkActorControllerAsset	Entries	The relative-IK entries, each.	
+RelativeIkActorControllerAsset	PreviewActorScale	Probably the scale of the preview character in the authoring tool. What it changes in the game is not known.	unknown
+RelativeIkEntry		One joint's relative-IK drive: which effector it moves, the joint maps that say where it is on this actor and on the target, the per-frame offsets to the target, and the curves that fade the reach in. 3,926 in the game's data, all named "Relative IK Entry".	unknown
+RelativeIkEntry	IKJointEffectorID	The effector this entry drives. Values in the game's data: 0,1,2,3,4,8, mostly 4 (2,265) and 3 (1,451).	
+RelativeIkEntry	MirroredIKJointEffectorID	The effector used on the mirrored side. In the the game's entries it is mostly the opposite-side effector (4 and 3 exchange, 2 and 1, 8 and 7, and one 5 -> 6) and sometimes the same id (0, 10, 15).	
+RelativeIkEntry	RelativeJointMapTemplateID	A JointMapTemplateIDAsset: the joint on the target that the offsets are measured from.	
+RelativeIkEntry	MirroredRelativeJointMapTemplateID	The mirrored counterpart.	
+RelativeIkEntry	PullJointMapTemplateID	A JointMapTemplateIDAsset. Only 4 of the game's 3,926 entries set it.	
+RelativeIkEntry	MirroredPullJointMapTemplateID	The mirrored counterpart.	
+RelativeIkEntry	PullJointTranslationWeight	The game reads this, but what it changes is not known.	unknown
+RelativeIkEntry	TargetAnimatableId	An AnimatableIdAsset: which other animatable the entry reaches towards. The the game's entries name 100-odd different ones.	
+RelativeIkEntry	RelTranslationList	The position of the driven joint relative to the target joint, one per frame.	
+RelativeIkEntry	RelTranslationOffset	A whole number that goes with RelTranslationList. Values in the game's data: spread over 0..600 and equal RelRotationOffset in 3,924 of the 3,926 entries.	unknown
+RelativeIkEntry	RelRotationList	The rotation of the driven joint relative to the target joint, one per frame. The same length as RelTranslationList in all but 2 of the game's 3,926 entries.	
+RelativeIkEntry	RelRotationOffset	A whole number that goes with RelRotationList.	
+RelativeIkEntry	ReachTCurve	A PiecewiseLinearAsset: the curve the translation reach follows. Every one of the game's 3,926 entries sets both curves.	
+RelativeIkEntry	ReachRCurve	A PiecewiseLinearAsset: the curve the rotation reach follows.	
+RelativeIkEntry	UseTargetRelativeOrientation	A flag; true in all 3,926 the game's entries.	
+RelativeIkEntry	UseTargetScaleToScaleRelativeTranslation	A flag: true in 809 of the game's 3,926 entries.	
+RelativeIkEntry	ActiveCondition	0 on 3,870 of the game's entries, 1 on 46 and 2 on 10. What it changes is not known.	unknown
+VectorTag		A tag carrying a distance, a height and an angle (ShieldTargetTag is one). What the game does with them is not known.	unknown
+VectorTag	Distance	The first of the three floats.	
+VectorTag	Height	The second.	
+VectorTag	Angle	The third.	
+PieRangeTag		A tag carrying an angle with a tolerance either side (BallInTag and BallOutTag are ones).	unknown
+PieRangeTag	Ideal	The angle.	
+PieRangeTag	NegTol	The tolerance below it.	
+PieRangeTag	PosTol	The tolerance above it.	
+StepClipAsset		One clip of the locomotion step database: the animation it describes and the steps inside it. 684 in the game's data, named after the clip (F17_FK_Start_ToFwd_000_Sprint_01 and the like), each deriving ContextDatabaseAsset so a database row can pick it.	
+StepClipAsset	Animation	The controller that plays the clip. In the game's data it is a ClipControllerAsset for 466 of the 684 assets, a SequenceContainerAsset for 215 and an ActorControllerAsset for 3; the ClipControllerAsset ones all have FPS 30 and TimeScale 0.5, which is what makes a step tick half a frame.	
+StepClipAsset	Steps	The steps in the clip, each. In the game's data, clips carry 1 to 10.	
+StepClipAsset	AssetInfo	Its one sub-field goes.	unknown
+StepAssetAnt		One step of the locomotion step database: where it starts and ends in its clip, how much it speeds up and turns, where the feet plant, and which step comes next. 3,472 in the game's data, named <clip>#<n>.	
+StepAssetAnt	AssetImpl	The step's data.	
+StepAssetImpl		The data of one step. Across a clip's chain of steps three rules hold, and the editor checks them on save: each step starts where the previous one ended (AnimStartT + EndT), each step's StartSpeed is the previous one's plus its DeltaSpeed, and each step's StartPhase is the previous one's plus its DeltaPhase (wrapping at 256, which is one full stride cycle).	
+StepAssetImpl	StepClip	The StepClipAsset the step belongs to. Set in all 3,472 the game's steps.	
+StepAssetImpl	NextStepAsset	The step that follows this one. 2,972 of the game's 3,472 steps name one; the other 500 end their chain.	
+StepAssetImpl	CurrentStepID	Values in the game's data: 0..16.	
+StepAssetImpl	AnimStartT	Where the step starts in the clip, in ticks. A tick is half a clip frame - the clips the steps describe are played by a ClipControllerAsset with TimeScale 0.5, and the last step of a chain ends at the clip's last frame. In every chain AnimStartT is the previous step's AnimStartT + EndT. Values in the game's data: 0..694.	
+StepAssetImpl	Type	19 distinct values in the game's data, 0..18.	
+StepAssetImpl	ClipType	16 distinct values in the game's data, 0..18.	
+StepAssetImpl	Flags	A set of on/off bits. 19 different combinations are used in the game's data, up to 154. What each bit means is not known.	unknown
+StepAssetImpl	PushOffT	Values in the game's data: 1..55.	
+StepAssetImpl	ClipPushOffT	Values in the game's data: 18..255.	
+StepAssetImpl	EndT	The step's length in ticks. ShoulderAngle has exactly EndT + 1 entries in every step, so the list is one angle per tick from 0 to EndT, and the next step starts at this step's AnimStartT + EndT. Values in the game's data: 5..151.	
+StepAssetImpl	InterruptableT	Exactly two tick ranges where the step may be interrupted. More than two would corrupt the step's data in game, and the editor warns about it on save.	
+StepAssetImpl	PlantInfo	Exactly four foot plants. More than four would corrupt the step's data in game, and the editor warns about it on save.	
+StepAssetImpl	DeltaSpeed	The speed change over the step, in StartSpeed's unit: StartSpeed(n+1) - StartSpeed(n) equals it exactly in 2,139 of the game's 2,788 pairs and is off by one in the rest. Values in the game's data: -29..39.	
+StepAssetImpl	DeltaSpeedMax	The highest speed change the step allows; see DeltaSpeedMin. Values in the game's data: -4..64.	
+StepAssetImpl	DeltaSpeedMin	The lowest speed change the step allows. DeltaSpeed lies between DeltaSpeedMin and DeltaSpeedMax in every one of the game's 3,472 steps. Values in the game's data: -55..14.	
+StepAssetImpl	DeltaTurn	How much the step turns. The values span the whole range from -128 to 127. The unit is not known: the clips themselves do not turn, so the game applies the turn rather than reading it from the animation.	unknown
+StepAssetImpl	DeltaTurnMax	The most it may turn; see DeltaTurnMin. Values in the game's data: -112..127.	
+StepAssetImpl	DeltaTurnMin	The least the step may turn. DeltaTurn lies between DeltaTurnMin and DeltaTurnMax in 3,412 of the game's 3,472 steps. Values in the game's data: -128..109.	
+StepAssetImpl	MoveAtClipEnd	Values in the game's data: -128..127.	
+StepAssetImpl	ShoulderAtClipEnd	Values in the game's data: -128..127.	
+StepAssetImpl	StartSpeed	The speed the step starts at. Measured against the clips, one unit is about 0.14 m/s, so the full range 0 to 63 tops out near 9 m/s.	
+StepAssetImpl	StartPhase	The gait phase the step starts at, with 256 standing for one full cycle: StartPhase(n+1) = (StartPhase(n) + DeltaPhase(n)) mod 256 holds in 2,637 of the game's 2,788 pairs. 3,350 of the 3,472 steps start at 64 or 192 - a quarter and three quarters of the cycle - so consecutive steps alternate between the two feet.	
+StepAssetImpl	DeltaPhase	How far the step advances the phase, out of 256. 128 - half a cycle, one foot to the other - in 3,136 of the game's 3,472 steps.	
+StepAssetImpl	RunCurveRunStyle	Values in the game's data: 0 (2,147 steps), 1 (526), 2 (333) and 3 (466).	
+StepAssetImpl	ShoulderAngle	The shoulder angle at each tick of the step - always exactly EndT + 1 values. The editor checks this on save.	
+StepAssetImpl	StartLeanAngle	Exactly two lean values at the start of the step. A third would corrupt the step's data in game, and the editor warns about it on save.	
+StepAssetImpl	EndLeanAngle	Exactly two lean values at the end of the step. A third would corrupt the game's data, and the editor warns about it on save.	
+StepPlantInfo		One foot plant of a step: when it happens, and where the foot is and which way it faces at push-off and at the end. Four per step.	
+StepPlantInfo	TimeRange	The ticks the plant covers.	
+StepPlantInfo	PlantPushOffPosition	Where the foot is at push-off.	
+StepPlantInfo	PlantEndPosition	Where the foot is when the plant ends.	
+StepPlantInfo	PlantPushOffFacing	The facing at push-off.	
+StepPlantInfo	PlantEndFacing	The facing when the plant ends.	
+StepTimeRange		A range of ticks within a step: StartT to EndT.	
+StepTimeRange	StartT	The first tick.	
+StepTimeRange	EndT	The last tick.	
+StepPosition		A position in the step's plane, two 16-bit values.	unknown
+StepPosition	X	The first of the two.	
+StepPosition	Z	The second.	
+StepAngle		An angle of a step, from -128 to 127. The unit is not known - the clips the steps describe do not turn, so it cannot be measured from them.	unknown
+StepAngle	Angle	The angle, from -128 to 127.	
+StepTime		A tick of a step. A tick is half a clip frame: the clips are played by a ClipControllerAsset with TimeScale 0.5, so at 30 frames a second a tick is 1/60 s.	
+StepTime	T	The tick, from 0 to 255.	
+StepTime16		A tick of a step, for values past 255 (AnimStartT reaches 694). Same unit as StepTime.	
+StepTime16	T	The tick.	
+StepSpeed		A speed of a step. Measured against the clips, one unit is about 0.14 m/s.	
+StepSpeed	Speed	The speed, from -128 to 127 (about 0.14 m/s per unit).	
+StepPhase		A gait phase, 256 to the full cycle - proven from the chain relation StartPhase(n+1) = (StartPhase(n) + DeltaPhase(n)) mod 256, which holds in 2,637 of the 2,788 consecutive pairs of the game's data.	
+StepPhase	Phase	The phase, from 0 to 255 for one full stride cycle.	
+StepTypeCompact		A step type; 19 values are used (0..18).	unknown
+StepTypeCompact	Type	The step type.	unknown
+StepID		A step id; the values in the game's data are 0..16.	
+StepID	Id	The step id.	
+StepFlags		A step's flag bits; 19 combinations are used, up to 154.	
+StepFlags	Flags	The flag bits.	unknown
+StepRunStyle		The run style of a step; the values in the game's data are 0, 1, 2 and 3.	
+StepRunStyle	RunStyle	The run style: 0 to 3.	unknown
+LocomotionInitParams		The state locomotion starts from: where the player is in the stride cycle, how fast they are going, and how they lean. 7,798 in the game's data. How the game uses them is not known.	unknown
+LocomotionInitParams	InitRelMoveAngle	The game reads this, but what it changes is not known.	unknown
+LocomotionInitParams	InitSpeed	The game reads this, but what it changes is not known.	unknown
+LocomotionInitParams	InitLeanAngle	The game reads this, but what it changes is not known.	unknown
+LocomotionInitParams	PlayerScale	The game reads this, but what it changes is not known.	unknown
+LocomotionInitParams	InitBodyAngle	The game reads this, but what it changes is not known.	unknown
+LocomotionInitParams	InitPhase	The game reads this, but what it changes is not known.	unknown
+LocomotionInitParams	InitCycleLength	The game reads this, but what it changes is not known.	unknown
+LocomotionInitParams	Mirrored	On or off: start mirrored.	
+AudioEventTag		A tag that fires a sound event, with parameters. Every one of the game's 7,300 audio tags uses system 1, event 1, the name "AudioANTTag" and three integer parameters - nothing else. What plays the sound is not known.	
+AudioEventTag	SystemID	The audio system to send to; 1 in every tag.	
+AudioEventTag	EventID	The event; 1 in every tag.	
+AudioEventTag	EventName	The event's name as a string; "AudioANTTag" in every tag.	
+AudioEventTag	ParamTypes	One entry per parameter, saying which list it comes from. Its length is always IntIDs + FloatIDs + BoolIDs + StringIDs; the editor checks this on save.	
+AudioEventTag	IntIDs	The names of the integer parameters. Always the same length as IntVals; the editor checks this on save.	
+AudioEventTag	IntVals	The values of the integer parameters.	
+AudioEventTag	IntGSIDs	The names of the integer parameters whose value comes from the game rather than a fixed number. Always the same length as IntGSs.	
+AudioEventTag	IntGSs	The integer game states those parameters read.	
+AudioEventTag	FloatIDs	The names of the decimal parameters. Always the same length as FloatVals. Empty on every tag in the game's data.	
+AudioEventTag	FloatVals	The values of the decimal parameters.	
+AudioEventTag	FloatGSIDs	The names of the decimal parameters whose value comes from the game. Always the same length as FloatGSs.	
+AudioEventTag	FloatGSs	The float game states they read.	
+AudioEventTag	BoolIDs	The names of the on/off parameters. Always the same length as BoolVals. Empty on every tag in the game's data.	
+AudioEventTag	BoolVals	The values of the on/off parameters.	
+AudioEventTag	BoolGSIDs	The names of the on/off parameters whose value comes from the game. Always the same length as BoolGSs.	
+AudioEventTag	BoolGSs	The bool game states or signals they read.	
+AudioEventTag	StringIDs	The names of the text parameters. Always the same length as StringVals. Empty on every tag in the game's data.	
+AudioEventTag	StringVals	Their fixed values.	
+PATag		A look-at tag: where the eyes and head are aimed while it is open. 5,792 in the game's data.	unknown
+PATag	Constraint	An enumerated constraint. Values in the game's data: are 11 (4,498 tags), 6, 0, 12 and 15 among others.	
+PATag	CurrentEyeDirection	An enumerated direction. Values in the game's data: 0 (1,736), 9, 1, 6, 4 and more.	
+PATag	ToEyeDirection	The direction to look to. Values in the game's data: 0 (2,484), 4, 1, 6, 2 and more.	
+PATag	ContextualTarget	The game reads this, but what it changes is not known.	unknown
+PATag	TargetID	The game reads this, but what it changes is not known.	unknown
+PATag	BlinkOnStart	The game reads this, but what it changes is not known.	unknown
+PATag	DisableSaccade	The game reads this, but what it changes is not known.	unknown
+PATag	EnableHeadRollOnYaw	Lets the head tilt as it turns. On for exactly one tag in the game's data.	
+PATag	BlendInTime	Values in the game's data: 8 (5,759 tags), 16 (31) and 20 (2).	
+TrajectoryTag		Records the trajectory at a point in a clip: where it is, how fast, and which way. 2,398 in the game's data, each with its own values. What the game uses them for is not known.	unknown
+TrajectoryTag	Distance	The game reads this, but what it changes is not known.	unknown
+TrajectoryTag	Height	The game reads this, but what it changes is not known.	unknown
+TrajectoryTag	Angle	The direction, in radians.	
+TrajectoryTag	Speed	The game reads this, but what it changes is not known.	unknown
+TrajectoryTag	FacingAngle	The game reads this, but what it changes is not known.	unknown
+TrajectoryTag	RelMoveAngle	The move direction relative to the facing, in radians.	
+InteractionScaleTag		A tag that scales an interaction to the player's size over a window. 4,319 in the game's data.	unknown
+InteractionScaleTag	EaseIn	Values in the game's data: 0 (2,692 tags), 8, 10, 12, 1 and more.	
+InteractionScaleTag	EaseOut	Values in the game's data: 0 (2,276 tags), 12, 8, 5, 19 and more.	
+InteractionScaleTag	ScaleAdjust	1 on 3,216 of the game's tags and 0 on the other 1,103.	
+InteractionScaleTag	ScaledEffector	Which effector is scaled. Values in the game's data: 44 (3,019 tags), 4, 3, 0 and 2.	
+InteractionScaleTag	UsesAITrajectory	On for 3,019 of the game's 4,319 tags - exactly the ones whose ScaledEffector is 44.	
+EvalBranchInPointTag		A branch-in point that also records the state the clip is in there, so a transition can be judged on it. 2,866 in the game's data.	
+EvalBranchInPointTag	Speed	The speed at the branch-in point.	unknown
+EvalBranchInPointTag	MoveAngle	The move angle there.	unknown
+EvalBranchInPointTag	BodyAngle	The body angle there.	unknown
+DatasetPreSaveAsset		A pre-computed table of an NX by NY grid with one plane per blend time: the data the game reads instead of searching at run time. Only 31 in the game's data, but they hold 43,834 of its rows.	
+DatasetPreSaveAsset	PreSaveDatasetType	Which dataset the table is for.	
+DatasetPreSaveAsset	NX	The grid's first dimension. Values in the game's data: 1, 16, 32, 48 and 64.	
+DatasetPreSaveAsset	NY	The second. Values in the game's data: 1, 16 and 32.	
+DatasetPreSaveAsset	BlendTime	Values in the game's data: 8 (26 assets), 6 and 18.	
+DatasetPreSaveAsset	MaximumTime	Values in the game's data: 8..20.	
+DatasetPreSaveAsset	BlendTimesCount	How many blend times the table covers. In the 29 the game's assets that set it, Min and Max have exactly BlendTimesCount entries and Data has NX x NY x ((BlendTimesCount + 1) / 2) - so the table holds one plane per pair of blend times. Two assets leave it 0 and carry 48 Min/Max entries with three planes, so the count is simply not filled in for those.	
+DatasetPreSaveAsset	Min	The low end of each blend time's range, one per blend time.	
+DatasetPreSaveAsset	Max	The game reads this, but what it changes is not known.	unknown
+DatasetPreSaveAsset	Data	The table itself: NX by NY cells for each pair of blend times.	
+DatasetPreSaveRaw		One cell of a pre-computed table, nine values. What each value means is not known beyond its name.	unknown
+DatasetPreSaveRaw	IX	The cell's first grid index.	
+DatasetPreSaveRaw	IY	Its second grid index.	
+DatasetPreSaveRaw	BlendTime	The blend time the cell was measured at.	
+DatasetPreSaveRaw	JumpX	The x of the jump the cell records.	
+DatasetPreSaveRaw	JumpZ	Its z.	
+DatasetPreSaveRaw	HipsY	The hip height at the cell.	
+DatasetPreSaveRaw	JumpFaceAngle	The facing angle at the cell.	
+DatasetPreSaveRaw	BlendX	The x of the blend coordinate the cell sits at.	
+DatasetPreSaveRaw	BlendY	Its y.	
+LayoutEntry		One named slot of a LayoutAsset: the name the rest of the game's data refers to it by, and its kind. 4,595 in the game's data, with names like JawUD and MouthOC.	
+LayoutEntry	Name	The slot's name.	
+LayoutEntry	Type	The slot's kind as a number.	unknown
+ContactAssetInfo		One contact option in a contact group: the animation to play and the state it expects at its start and at its branch point. 2,714 in the game's data. How the game chooses between them is not known.	unknown
+ContactAssetInfo	Asset	The asset this entry offers.	
+ContactAssetInfo	InitialRelativeMoveAngle	The move angle, relative to the facing, the entry starts from (radians).	
+ContactAssetInfo	InitialSpeed	The speed it starts from.	
+ContactAssetInfo	LaunchAngle	0 in the the game's entries sampled.	
+ContactAssetInfo	BranchSpeed	The speed at the branch point.	
+ContactAssetInfo	BranchMoveAngle	The move angle at the branch point (radians).	
+ContactAssetInfo	BranchBodyAngle	The body angle at the branch point (radians).	
+ContactAssetInfo	VecOffSetToBranchFromStart	The offset from the start to the branch point.	
+MomentumInfo		One sample of a wrapped controller's momentum, taken at Time: how fast it moves, how it is turned and how much angular momentum it carries. 2,036 in the game's data.	
+MomentumInfo	Time	The tick the sample is taken at.	
+MomentumInfo	MoveSpeed	The move speed there.	
+MomentumInfo	FacingRelMoveAngle	The facing relative to the move direction (radians).	
+MomentumInfo	HipsRelMoveAngle	The hips relative to the move direction (radians).	
+MomentumInfo	HipHeight	The hip height there.	
+MomentumInfo	HipRotation	The hip rotation there.	
+MomentumInfo	AngularMomentum	The angular momentum vector.	
+MomentumInfo	AngularMomentumMagnitude	Its magnitude.	
+IKControlPlane		A plane an IK control point may move in, with the tolerance around it. 2,078 in the game's data.	
+IKControlPlane	Range	The tolerance in the plane.	
+IKControlPlane	Center	The plane's centre.	
+IKControlPlane	Offset	The offset applied to it.	
+IKControlRange		A two-dimensional tolerance: how far the point may go each way in the plane.	
+IKControlRange	TolPos	The positive tolerance.	
+IKControlRange	TolNeg	The negative tolerance.	
+FilterInputAsset		One input of a query filter: which group and which element of it to compare. 2,024 in the game's data.	
+FilterInputAsset	Filter	Which group and which element of it.	
+FilterInput		Which group and which element a filter input points at. What the numbers refer to is not known.	unknown
+FilterInput	GroupId	The group of the asset.	
+FilterInput	ElementKey	The element.	
+RigamateScalar		One scalar of a RigamateAsset: the position it is written to and its value. 2,153 in the game's data, in only 2 assets.	
+RigamateScalar	Position	The register the value goes to.	
+RigamateScalar	Value	The value.	
+GKCoverageMapReturnValue		One answer of a goalkeeper coverage-map decision tree: which group and sequence to play, and whether mirrored. 3,162 in the game's data.	
+GKCoverageMapReturnValue	GroupId	The group to play, or -1 for none.	
+GKCoverageMapReturnValue	SeqId	The sequence within the group.	
+GKCoverageMapReturnValue	Mirror	Whether to mirror it.	
+StepClipAssetInfo		A set of on/off bits on a step clip. 0 everywhere in the game's data. What they change is not known.	unknown
+StepClipAssetInfo	Flags	The flags themselves.	
+DefaultDofFloat		A rig's default value for one float joint channel: the DOF's id and its value. 1,745 in the game's data.	
+DefaultDofFloat	DofId	The joint channel.	
+DefaultDofFloat	Value	Its default.	
+DefaultDofVector3		A rig's default value for one three-component joint channel. 1,787 in the game's data.	
+DefaultDofVector3	DofId	The joint channel.	
+DefaultDofVector3	Value	Its default.	
+DefaultDofVector4		A rig's default value for one four-component joint channel. 893 in the game's data.	
+DefaultDofVector4	DofId	The joint channel.	
+DefaultDofVector4	Value	Its default.	
+SignalAsset		A named signal: like a BoolAsset but it also carries a float, and a state machine node can set it (ActiveSignals). 417 in the game's data, with names like Flick_Over_Skill and SigDRV_LeftStickMagnitude_Prototype. Every one of them leaves all five of its fields at the default, so the game's data never uses buffering or deactivation.	
+SignalAsset	DefaultFloat	0 in every signal.	
+SignalAsset	DefaultBool	False in every signal.	
+SignalAsset	Buffered	False in every signal.	unknown
+SignalAsset	DeactivateAfterUpdate	False in every signal.	unknown
+SignalAsset	DeactivateAfterTransition	False in every signal.	unknown
+ExpressionAsset		A compiled expression: a small program the game runs each update, reading and writing game values and joint channels. 617 in the game's data. The Expression tab shows it as readable steps and can run it.	
+ExpressionAsset	ExpressionKernel	The compiled program. Every function it calls must exist in the game - a call to one the game does not have crashes it. The Expression tab shows the program in readable form.	
+ExpressionAsset	GameStateValueAssets	The game values the expression reads or writes, one per entry. GameStateAssetOffsets and GameStateInterfaceTypes need one entry each for every value listed here; the editor warns if they fall short.	
+ExpressionAsset	GameStateAssetOffsets	The slot each game-state asset is bound to, in the same order.	
+ExpressionAsset	GameStateInterfaceTypes	Which interface each game-state asset is read through, in the same order.	
+ExpressionAsset	DofMapping	The joint channels the expression uses, in groups of four entries. A length that is not a multiple of four breaks the expression, and the editor warns about it on save.	
+ExpressionAsset	DofNames	The list of names that DofMapping points into.	
+ExpressionAsset	PoseRegisterOffset	Where in the expression the pose is kept, or none.	
+ExpressionAsset	MasterPoseRegisterOffset	The slot that holds the master pose.	
+ExpressionAsset	DeltaTicksRegisterOffset	The slot that holds the time since the last update.	
+ExpressionAsset	TableRegisterOffset	The slot that holds the table.	
+ExpressionAsset	OwnerAsset	Kept exactly as it is by the editor.	
+ExpressionAsset	GameStateValueAssetsDBL	An authoring copy of GameStateValueAssets. In all but one of the game's 617 expressions every DBL field is an exact copy of its twin.	noeffect
+ExpressionAsset	GameStateAssetOffsetsDBL	An authoring copy of GameStateAssetOffsets.	noeffect
+ExpressionAsset	GameStateInterfaceTypesDBL	An authoring copy of GameStateInterfaceTypes.	noeffect
+ExpressionAsset	ExpressionKernelDBL	An authoring copy of ExpressionKernel. It is the one DBL field that differs from its twin in one of the game's expressions.	noeffect
+ExpressionAsset	DofMappingDBL	An authoring copy of DofMapping.	noeffect
+ExpressionAsset	DofNamesDBL	An authoring copy of DofNames.	noeffect
+ExpressionAsset	PoseRegisterOffsetDBL	An authoring copy of PoseRegisterOffset.	noeffect
+ExpressionAsset	MasterPoseRegisterOffsetDBL	An authoring copy of MasterPoseRegisterOffset.	noeffect
+ExpressionAsset	DeltaTicksRegisterOffsetDBL	An authoring copy of DeltaTicksRegisterOffset.	noeffect
+ExpressionAsset	TableRegisterOffsetDBL	An authoring copy of TableRegisterOffset.	noeffect
+ExpressionTagAsset		A tag that runs an expression at a point on the controller's timeline. 589 in the game's data.	
+ExpressionTagAsset	Expression	The expression to run.	
+ExpressionTagAsset	NormalizedTime	A FloatAsset: the time within the window, read from the game rather than fixed.	
+ExpressionTagAsset	ExecuteImmediate	Run the expression at once rather than over the tag's window. Exactly what changes is not known.	unknown
+EnumerationValueAsset		One value of an enumeration: which enumeration it belongs to and (in the game's data) which value it is. 1,293 in the game's data.	
+EnumerationValueAsset	EnumerationAsset	The enumeration.	
+EnumerationValueAsset	Value	The value's number. The game takes it from the enumeration instead.	noeffect
+AssetListAsset		A plain list of assets. 615 in the game's data.	unknown
+AssetListAsset	AssetListItems	The assets, in order.	
+ActorAssignTag		A tag that says which player an actor of a sequence is assigned to, as two bit masks. 1,403 in the game's data.	unknown
+ActorAssignTag	PlayerTeamFlags	The game reads this, but what it changes is not known.	unknown
+ActorAssignTag	PlayerRoleFlags	The game reads this, but what it changes is not known.	unknown
+QueryTaskTag		A tag that names a query task to run. 1,075 in the game's data.	
+QueryTaskTag	QueryTaskAsset	The task.	
+QueryTaskAsset		A search the game runs to find something to interact with: filters narrow the candidates, processors score them, and the result is posted for other assets to read. 534 in the game's data. How the results are used is not known.	
+QueryTaskAsset	Filters	The filters, each a BaseQueryFilterAsset.	
+QueryTaskAsset	Processors	The processors, each a QueryProcessorAsset.	
+QueryTaskAsset	CommonBuses	Where the task posts its results.	
+QueryTaskAsset	MappedBuses	Mapped buses.	
+QueryTaskAsset	Enable	A bool game state that turns the task on.	
+QueryTaskAsset	VolumeCullingTable	A CullingTableAsset.	
+QueryTaskAsset	RayCullingTable	A CullingTableAsset.	
+QueryTaskAsset	SceneOpID	The game reads this, but what it changes is not known.	unknown
+ChooserGateNodeWrapperAsset		Wraps a chooser so it can act as a state machine's gate node: the gate's type and the chooser that answers it. 641 in the game's data.	unknown
+ChooserGateNodeWrapperAsset	GateNodeType	The game reads this, but what it changes is not known.	unknown
+ChooserGateNodeWrapperAsset	ControllerChooser	The chooser that answers the gate.	
+BlockCollisionReactionTag		A tag that names which blocking reaction to play on a collision. 698 in the game's data.	unknown
+BlockCollisionReactionTag	Type	Which blocking reaction to play.	unknown
+PrimaryRigFeatureAsset		The feature that names an animatable's rig, and the colour the editor draws its skeleton in. 474 in the game's data.	
+PrimaryRigFeatureAsset	Rig	The rig.	
+PrimaryRigFeatureAsset	SkeletonColor	The game reads this, but what it changes is not known.	unknown
+CharacterInteractionControllerAsset		Two or more characters playing together: a master controller and one slave per interaction slot, aligned to each other by a scene driver, with query tasks that find the partner and signals that report how it went. 712 in the game's data, 711 of them with exactly one slot.	
+CharacterInteractionControllerAsset	MasterControllerAsset	The controller the master plays.	
+CharacterInteractionControllerAsset	MasterControllerInitParams	Its start settings.	
+CharacterInteractionControllerAsset	SlaveControllerAsset	One controller per interaction slot. NumInteractionSlots must match its length (and QueryTasks' and SlaveControllerInitParams'); the editor checks this on save.	
+CharacterInteractionControllerAsset	SlaveControllerInitParams	One set of start settings per slot.	
+CharacterInteractionControllerAsset	QueryTasks	One query task per slot - what finds the character to interact with -.	
+CharacterInteractionControllerAsset	NumInteractionSlots	How many slaves the interaction has. 711 of the game's 712 assets have 1, one has 0.	
+CharacterInteractionControllerAsset	SlaveTrajectoryState	One entry per slot. Empty in every asset.	unknown
+CharacterInteractionControllerAsset	AlignmentDriver	The scene driver that aligns the characters - usually an AlignmentDriverAsset.	
+CharacterInteractionControllerAsset	AlignmentStartTime	When aligning starts. Values in the game's data: 20..60 mostly, and in 711 of the 712 assets AlignmentMaxDuration is the same number.	
+CharacterInteractionControllerAsset	AlignmentEndTime	When aligning ends. Never earlier than AlignmentStartTime in any the game's asset.	
+CharacterInteractionControllerAsset	AlignmentMaxDuration	The longest the alignment may take. Equal to AlignmentStartTime in all but one of the game's 712 interactions.	
+CharacterInteractionControllerAsset	AlignmentMinDuration	The game reads this, but what it changes is not known.	unknown
+CharacterInteractionControllerAsset	AlignImmediately	Off in every interaction in the game's data. What it changes is not known.	unknown
+CharacterInteractionControllerAsset	BroadcastSignal	The signal the interaction raises to offer itself.	
+CharacterInteractionControllerAsset	BroadcastSignalStartTime	When the broadcast window opens.	
+CharacterInteractionControllerAsset	BroadcastSignalEndTime	When it closes. Never earlier than the start in any the game's asset.	
+CharacterInteractionControllerAsset	ConnectedSignal	The signal raised once the partner is found.	
+CharacterInteractionControllerAsset	FailureSignal	The signal raised when the interaction cannot be set up.	
+CharacterInteractionControllerAsset	AbortSignal	The signal that aborts a running interaction.	
+CharacterInteractionControllerAsset	InteractionInfoAsset	An InteractionInfoAsset.	
+CharacterInteractionControllerAsset	InteractionFeaturePtr	A PointerAsset: where the interaction feature is found.	
+InteractionResultTag		A tag that runs a query over its window and hands the result to a processor. 1,116 in the game's data. When the window opens, the processor's entry is called and - only if Recurrence is 1 - the query task is started once; while the window is open, Recurrence 0 starts the query task every update; when the window closes, ResetQueryTask is started.	
+InteractionResultTag	QueryTask	The query to run. With Recurrence 0 it is started on every update of the window, with Recurrence 1 once when the window opens.	
+InteractionResultTag	Recurrence	0 runs the query on every update while the window is open; 1 runs it once when the window opens. Every tag in the game's data uses 0.	
+InteractionResultTag	ResultProcessorAsset	What the result is handed to when the window opens.	
+InteractionResultTag	ResetQueryTask	A second query, started when the window closes.	
+InteractionResultTag	GameState	A game value. The tag itself does not use it; what does is not known.	unknown
+InteractionResultTag	ResetValue	Off on every tag in the game's data. The tag itself does not use it; what does is not known.	unknown
+InteractionResultTag	Reset	The game reads this, but what it changes is not known.	unknown
+InteractionResultTag	Scope	The game reads this, but what it changes is not known.	unknown
+AlignmentDriverAsset		Brings two characters together for an interaction: which joint of each is lined up, how much of the move each one makes, and whether they lock once aligned. 712 in the game's data - one per CharacterInteractionControllerAsset. How the percentages combine is not known.	
+AlignmentDriverAsset	FromTemplateId	The joint on the mover, as a JointMapTemplateIDAsset.	
+AlignmentDriverAsset	ToTemplateId	The joint on the target.	
+AlignmentDriverAsset	LockingMode	The game reads this, but what it changes is not known.	unknown
+AlignmentDriverAsset	LockWhileAligning	The game reads this, but what it changes is not known.	unknown
+AlignmentDriverAsset	TurnToFace	The game reads this, but what it changes is not known.	unknown
+AlignmentDriverAsset	LaunchIdealAngle	The game reads this, but what it changes is not known.	unknown
+AlignmentDriverAsset	FacingAlignPct	How much of the facing difference is taken out.	
+AlignmentDriverAsset	TranslationAlignPct	How much of the position difference is taken out.	
+AlignmentDriverAsset	FacingMasterControlPct	The master's share of the facing correction.	
+AlignmentDriverAsset	FacingSlaveControlPct	The slave's share.	
+AlignmentDriverAsset	TranslationMasterControlPct	The master's share of the position correction.	
+AlignmentDriverAsset	TranslationSlaveControlPct	The slave's share.	
+WarpTrajectoryDriverAsset		A scene driver that warps a character onto a trajectory relative to another animatable: the offset to hold, which axes to align, and how fast it may turn. 554 in the game's data.	unknown
+WarpTrajectoryDriverAsset	OtherAnimatableIdAsset	Which animatable to warp relative to, read from an integer game state.	
+WarpTrajectoryDriverAsset	Translation	A fixed offset, four numbers.	
+WarpTrajectoryDriverAsset	TranslationGS	The offset read from a vector game state instead.	
+WarpTrajectoryDriverAsset	RotationGS	The rotation read from a game state.	
+WarpTrajectoryDriverAsset	Rotation	A fixed rotation.	
+WarpTrajectoryDriverAsset	WarpBias	The game reads this, but what it changes is not known.	unknown
+WarpTrajectoryDriverAsset	AlignTransXYZ	Which translation axes are aligned, as a mask.	
+WarpTrajectoryDriverAsset	AlignRotationXYZ	Which rotation axes are aligned, as a mask.	
+WarpTrajectoryDriverAsset	SourceRelativeOffset	Probably measures the offset from the source rather than the target. What it changes is not known.	unknown
+WarpTrajectoryDriverAsset	MaxRotPerTick	The turn limit per tick.	
+WarpTrajectoryDriverAsset	FromTemplateId	The joint on the mover.	
+WarpTrajectoryDriverAsset	ToTemplateId	The joint on the target.	
+CopyJointToJointDriverAsset		A scene driver that copies one animatable's joint onto another's, with an offset and axis masks. 371 in the game's data. The same fields as WarpTrajectoryDriverAsset apart from Mode in place of WarpBias and SourceRelativeOffset.	unknown
+CopyJointToJointDriverAsset	Mode	The game reads this, but what it changes is not known.	unknown
+CopyJointToJointDriverAsset	Translation	A fixed offset, four numbers.	
+CopyJointToJointDriverAsset	TranslationGS	The offset read from a vector game state instead.	
+CopyJointToJointDriverAsset	RotationGS	The rotation read from a game state.	
+CopyJointToJointDriverAsset	Rotation	A fixed rotation.	
+CopyJointToJointDriverAsset	OtherAnimatableIdAsset	Which animatable to copy from, read from an integer game state.	
+CopyJointToJointDriverAsset	AlignTransXYZ	Which translation axes are copied, as a mask.	
+CopyJointToJointDriverAsset	AlignRotationXYZ	Which rotation axes are copied, as a mask.	
+CopyJointToJointDriverAsset	MaxRotPerTick	The turn limit per tick.	
+CopyJointToJointDriverAsset	FromTemplateId	The joint copied from.	
+CopyJointToJointDriverAsset	ToTemplateId	The joint copied to.	
+DiveInTag		A goalkeeper dive tag: the hip and centre heights the dive is valid for. 827 in the game's data.	unknown
+DiveInTag	HipsY	The hip height at the dive.	
+DiveInTag	MaxHipsY	The highest hip height it covers.	
+DiveInTag	MinHipsY	The lowest.	
+DiveInTag	MaxCenterY	The highest centre height it covers.	
+DiveInTag	MinCenterY	The lowest.	
+SetPlayTag		Marks which set piece a clip belongs to (pass, shot, stance and so on). 354 in the game's data. What the game does with it is not known.	unknown
+SetPlayTag	Flags	The game reads this, but what it changes is not known.	unknown
+SetPlayTag	StanceType	The game reads this, but what it changes is not known.	unknown
+SetPlayTag	PassType	The game reads this, but what it changes is not known.	unknown
+SetPlayTag	ShotType	The game reads this, but what it changes is not known.	unknown
+SetPlayTag	ActionType	The game reads this, but what it changes is not known.	unknown
+CollisionTag		Makes a collision push the ball: how much it bounces and with what force. 550 in the game's data. What applies the force is not known.	
+CollisionTag	Restitution	How much of the speed survives the bounce.	
+CollisionTag	ForceMagnitude	The force applied.	
+CollisionTag	ForceYaw	Its yaw.	
+CollisionTag	ForcePitch	Its pitch.	
+CollisionTag	UseForceAsBallOut	Probably uses the force as the direction the ball leaves in. What it changes is not known.	unknown
+CrescentCollisionTag		Like CollisionTag, with a crescent-shaped contact area. 632 in the game's data. What applies the force is not known.	
+CrescentCollisionTag	Restitution	How much of the speed survives the bounce.	
+CrescentCollisionTag	ForceMagnitude	The force applied.	
+CrescentCollisionTag	ForceYaw	Its yaw.	
+CrescentCollisionTag	ForcePitch	Its pitch.	
+CrescentCollisionTag	UseForceAsBallOut	The game reads this, but what it changes is not known.	unknown
+UserControlledCelebrationTag		A tag that marks a clip as a user-controlled celebration and says who may play it and how it ends. 532 in the game's data.	unknown
+UserControlledCelebrationTag	RoleFlags	Which roles may play it, as a bit mask.	
+UserControlledCelebrationTag	AttribFlags	Which attributes are required.	
+UserControlledCelebrationTag	IntensityFlags	Which intensities it covers.	
+UserControlledCelebrationTag	IsHighAgilityMove	The game reads this, but what it changes is not known.	unknown
+UserControlledCelebrationTag	EndState	The state the celebration ends in.	
+UserControlledCelebrationTag	AnimID	The game reads this, but what it changes is not known.	unknown
+UserControlledCelebrationTag	UnlockID	Which unlockable gates it - the same idea as UCCDistillAsset's UCCUnlockableComponent check.	
+UserControlledCelebrationTag	Zoom	The game reads this, but what it changes is not known.	unknown
+ValueCompareQueryFilterAsset		A query filter that keeps candidates by comparing two inputs, or one input against a fixed number. 787 in the game's data. Which comparison each code stands for is not known.	
+ValueCompareQueryFilterAsset	FromInput	The left-hand input, a FilterInputAsset.	
+ValueCompareQueryFilterAsset	ToInput	The right-hand input.	
+ValueCompareQueryFilterAsset	Comparison	Which comparison is made.	unknown
+ValueCompareQueryFilterAsset	CompareType	Which kind of value is compared.	unknown
+ValueCompareQueryFilterAsset	CompareIntValue	The fixed integer to compare against.	
+ValueCompareQueryFilterAsset	CompareFloatValue	The fixed float.	
+MoveGroupAssetInitParams		The state a move group starts from: speed, stride cycle length, move angle and phase. 726 in the game's data.	
+MoveGroupAssetInitParams	Speed	The game reads this, but what it changes is not known.	unknown
+MoveGroupAssetInitParams	CycleLength	The game reads this, but what it changes is not known.	unknown
+MoveGroupAssetInitParams	RelMoveAngle	The game reads this, but what it changes is not known.	unknown
+MoveGroupAssetInitParams	Phase	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag		A goalkeeper tuning book: 24 values that set how the keeper's hands and arms deflect the ball while the tag's window is open. 373 in the game's data. How the game uses them is not known.	unknown
+ParameterBookTag	Use	Whether the book applies at all.	
+ParameterBookTag	MasterWeight	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	MasterPostWeight	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	DeflectWithLeg	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	HandRestitution	How much speed survives a hand deflection.	
+ParameterBookTag	HandSlideFriction	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	MaximumAcceleration	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	StartAccelerationDown	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	MaximumSpeed	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	StartSpeedDown	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	DeflectWithForeArm	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	DeflectWithUpArm	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	DeflectConeAngle	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	DeflectMaximumSpeed	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	DeflectMaximumRotationSpeed	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	UseDeflectSpeedControl	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	UseForceDeflectControl	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	OwnGoalAvoiderMaxScaleLimit	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	AddDeflectSpeed	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	DisableWristControl	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	UseWristRotLimit	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	WristRotLimitRoll	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	WristRotLimitPitch	The game reads this, but what it changes is not known.	unknown
+ParameterBookTag	WristRotLimitYaw	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset		A candidate ball contact: the controller to play plus the game states it reads to judge and queue the touch. 364 in the game's data. Almost every field is a game state or a PointerAsset, so the asset is mostly a wiring table.	unknown
+BallContactDistilleryAsset	ControllerAsset	The controller the contact plays.	
+BallContactDistilleryAsset	BallPhysicsInfo	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	PlayerScaleRegion	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	PlayerPos	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	FaceAngle	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	MoveAngle	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	Speed	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	IsSafeToTouch	A bool game state.	
+BallContactDistilleryAsset	AnimationTriggeredCB	A PointerAsset: the callback run when the contact's animation starts.	
+BallContactDistilleryAsset	QueueTouch	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	FieldLogic	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	IsFakeShot	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	SkillMoveTimeScale	The game reads this, but what it changes is not known.	unknown
+BallContactDistilleryAsset	IgnoreContactTest	A bool game state.	
+BallContactDistilleryAsset	SkillMoveLogic	The game reads this, but what it changes is not known.	unknown
+JointInfo		One joint of a skeleton: its name, its parent, and its kind. The editor uses these to put clips on the player rig.	
+JointInfo	JointName	The joint's name (the first is "Reference").	
+JointInfo	ParentIndex	The parent joint's index, -1 for the root.	
+JointInfo	JointType	The joint's kind as a number.	unknown
+PieWedgeZone		A wedge of a pie-shaped query zone: a distance band and an angular sector around a facing. 788 in the game's data.	
+PieWedgeZone	RangeMin	The near edge of the band.	
+PieWedgeZone	RangeMax	The far edge.	
+PieWedgeZone	AngleFacing	The sector's centre direction, in radians.	
+PieWedgeZone	HalfAngle	Half the sector's width, in radians (pi/4 in the entry sampled).	
+RigamateVector		A constant vector in a Rigamate graph, and the slot it is written to.	
+RigamateVector	Position	The register the value goes to.	
+RigamateVector	Value	The vector.	
+RigamateBinaryMath		One two-input arithmetic node of a Rigamate graph: the operation, its two slot registers and where the result goes. 711 in the game's data.	
+RigamateBinaryMath	Position	The register the result goes to.	
+RigamateBinaryMath	Type	Which operation.	unknown
+RigamateBinaryMath	A	The first slot's register.	
+RigamateBinaryMath	B	The second slot's register.	
+RigamateBinaryMath	Result	The register the result is written to.	
+RigamateConditional		One conditional node of a Rigamate graph: compare A with B and take the True or the False register. 393 in the game's data.	
+RigamateConditional	Operation	Which comparison.	unknown
+RigamateConditional	Position	The register the node is at.	
+RigamateConditional	A	The first register compared.	
+RigamateConditional	B	The second.	
+RigamateConditional	Result	The register the answer goes to.	
+RigamateConditional	True	The register taken when the comparison holds.	
+RigamateConditional	False	The register taken when it does not.	
+RigamateJointIO		One joint read or write of a Rigamate graph: which joint, which of its parts (whole SQT, scale, rotation, translation) and whether in local space. 704 in the game's data.	
+RigamateJointIO	Position	The register the node is at.	
+RigamateJointIO	Connectivity	The game reads this, but what it changes is not known.	unknown
+RigamateJointIO	JointIndex	Which joint of the rig.	
+RigamateJointIO	VirtualJoint	The game reads this, but what it changes is not known.	unknown
+RigamateJointIO	SQT	The register for the whole scale-rotation-translation.	
+RigamateJointIO	Scale	The register for the scale alone.	
+RigamateJointIO	Quaternion	The register for the rotation alone.	
+RigamateJointIO	Translation	The register for the translation alone.	
+RigamateJointIO	LocalSpace	Whether the joint is read or written in its parent's space.	
+RigamateJointIO	Reader	Whether the node reads the joint (true) or writes it.	
+RigamateDofIO		One degree-of-freedom read or write of a Rigamate graph, with the factor it is scaled by. 414 in the game's data.	
+RigamateDofIO	Position	The register the node is at.	
+RigamateDofIO	Value	The register the value is in.	
+RigamateDofIO	Index	Which component of the DOF.	
+RigamateDofIO	JointIndex	Which joint the DOF belongs to.	
+RigamateDofIO	ConversionFactor	The factor applied on the way in or out.	
+RigamateDofIO	Reader	Whether the node reads the DOF (true) or writes it.	
+RigamateDofIO	Vector	Whether the DOF is a vector rather than a scalar.	
+RigamateDofValue		A reference to one joint channel by DOF-set index and index within it. 414 in the game's data.	
+RigamateDofValue	DofSetIndex	Which DOF set.	
+RigamateDofValue	DofIndex	Which DOF within it.	
+VoronoiItem		One authored site of a blend space: where it is and what plays there. 402 in the game's data.	
+VoronoiItem	Position	The site's position in the blend space's two axes.	
+VoronoiItem	BlendAsset	What plays at the site.	
+VoronoiItem	XAxis	Authored alongside the position.	unknown
+VoronoiItem	Snap	Marks the site as one a nearby query snaps exactly to, within BlendSpace.SnapTolerance.	
+VoronoiEdge		One edge of a blend space's hull, clockwise. 412 in the game's data; the direction, normal and length all follow from the two ends, so they are a cache the editor recomputes.	derived
+VoronoiEdge	PosBegin	The edge's first end.	
+VoronoiEdge	PosEnd	Its second end.	
+VoronoiEdge	Edge	The unit direction from one end to the other.	
+VoronoiEdge	Normal	The perpendicular of that direction.	
+VoronoiEdge	Length	The distance between the ends.	
+VoronoiEdge	TriangleIndex	The triangle the hull edge belongs to.	
+VoronoiEdge	IsDegenerate	Whether the edge has no extent.	
+GamepadMatchStateData		One controller input to match, and how long it must be held.	
+GamepadMatchStateData	MinTime	The shortest hold that counts.	
+GamepadMatchStateData	MaxTime	The longest.	
+GamepadMatchStateData	GamepadStateList	The state itself.	
+GamepadStateData		A gamepad state to match: for each stick a state code, a power band, an angle band and velocity thresholds; for each trigger a state and a range; and the buttons held, pressed and released. The l- fields are the left stick, the r- the right, lt/rt the triggers. 1,006 in the game's data.	
+GamepadStateData	lState	The left stick's state code.	unknown
+GamepadStateData	lMinPower	The least deflection that counts.	
+GamepadStateData	lMaxPower	The most.	
+GamepadStateData	lMinAngle	The start of the angle band, in radians.	
+GamepadStateData	lMaxAngle	Its end.	
+GamepadStateData	lMinAngularV	The least angular speed that counts.	
+GamepadStateData	lMinRadialV	The least radial speed.	
+GamepadStateData	lUseVelocityFilter	Whether the two velocity thresholds apply.	
+GamepadStateData	lCharRelative	Whether the angle is measured against the character rather than the camera.	
+GamepadStateData	lMirrorAnalog	Whether the stick is mirrored.	
+GamepadStateData	rState	The right stick's state code.	
+GamepadStateData	rMinPower	As lMinPower, for the right stick.	
+GamepadStateData	rMaxPower	As lMaxPower.	
+GamepadStateData	rMinAngle	As lMinAngle.	
+GamepadStateData	rMaxAngle	As lMaxAngle.	
+GamepadStateData	rMinAngularV	As lMinAngularV.	
+GamepadStateData	rMinRadialV	As lMinRadialV.	
+GamepadStateData	rUseVelocityFilter	As lUseVelocityFilter.	
+GamepadStateData	rCharRelative	As lCharRelative.	
+GamepadStateData	rMirrorAnalog	As lMirrorAnalog.	
+GamepadStateData	ltState	The left trigger's state code.	
+GamepadStateData	ltMinRange	The least pull that counts.	
+GamepadStateData	ltMaxRange	The most.	
+GamepadStateData	rtState	The right trigger's state code.	
+GamepadStateData	rtMinRange	As ltMinRange.	
+GamepadStateData	rtMaxRange	As ltMaxRange.	
+GamepadStateData	deltaLtRt	The difference between the two triggers that counts.	
+GamepadStateData	Hold	The buttons that must be held, as a bit mask.	
+GamepadStateData	Press	The buttons that must have just been pressed.	
+GamepadStateData	Release	The buttons that must have just been released.	
+FloatAsset		A named decimal value the game sets and other assets read. 269 in the game's data.	
+FloatAsset	Default	The value it starts at. The game never loads this field, so changing it has no effect in game.	noeffect
+EnumerationAsset		A named enumeration: its values, which of them means "none", and a hash of the set. 126 in the game's data.	
+EnumerationAsset	EnumerationValues	The values, each an EnumerationValueAsset.	
+EnumerationAsset	NoneValue	Which value stands for "none".	
+EnumerationAsset	ZeroBasedSequential	Whether the values run 0, 1, 2 and so on in order. When set, the game can look values up directly instead of searching.	
+EnumerationAsset	VersionHash	A hash of the value set, so a saved index can be checked against the enumeration it came from.	unknown
+GameStateEnumerationAsset		An enumeration read from the game: the enumeration it draws from and the value it starts at. 155 in the game's data; it is what a StateFlowControllerAsset's GameStateEnum and an EnumChooserPolicyAsset's GameStateAsset point at.	
+GameStateEnumerationAsset	EnumerationAsset	The enumeration.	
+GameStateEnumerationAsset	Default	The value it starts at. Unlike BoolAsset's and FloatAsset's Default, the game does load this one.	
+EnumerationEnumeratorPair		A condition that holds while a game-state enumeration has a particular value: the pair (enumeration, value). 345 in the game's data. It is the second kind of state-machine condition - the flattening numbers Bool and Signal conditions first and these after - and the editor's run starts it false.	
+EnumerationEnumeratorPair	GameStateEnumeration	The enumeration read from the game.	
+EnumerationEnumeratorPair	Enumerator	The value it must have, an EnumerationValueAsset.	
+JointMapTemplateIDAsset		One joint named through a joint-map template: the template and the index within it. 189 in the game's data - what the drivers' FromTemplateId and ToTemplateId and RelativeIkEntry's joint maps point at.	
+JointMapTemplateIDAsset	TemplateAsset	The template, a BaseJointMapTemplateAsset.	
+JointMapTemplateIDAsset	TemplateIndex	Which entry of it.	
+SkillMoveInfoTag		A tag that says which skill move a clip is and how hard it is to pull off. 353 in the game's data.	unknown
+SkillMoveInfoTag	SkillMove	Which move.	
+SkillMoveInfoTag	Intensity	Its intensity.	
+SkillMoveInfoTag	Difficulty	How hard it is.	
+SkillMoveInfoTag	MinBallOutSpeed	The slowest ball-out speed it produces.	
+SkillMoveInfoTag	MaxBallOutSpeed	The fastest.	
+SkillMoveInfoTag	SkillMoveError	The error allowed.	
+SetPhaseTag		Sets the stride phase at a point in a clip. 304 in the game's data. What applies it is not known.	unknown
+SetPhaseTag	Phase	The phase.	
+SlideTackleTag		Marks a slide tackle, with the blend length it prefers and the direction it goes. 187 in the game's data. What the game does with it is not known.	unknown
+SlideTackleTag	PreferredBlendLength	The game reads this, but what it changes is not known.	unknown
+SlideTackleTag	SlideTackleDirection	The game reads this, but what it changes is not known.	unknown
+WetSlideTag		A tag that slides the player on wet ground by a fixed offset.	unknown
+WetSlideTag	TranslateX	The slide along x.	
+WetSlideTag	TranslateZ	The slide along z.	
+BookingCardTag		For a referee showing a card: which hand, which card, and when the arm is fully raised. 128 in the game's data. What the game does with it is not known.	unknown
+BookingCardTag	Hand	Which hand.	
+BookingCardTag	Card	Which card.	
+BookingCardTag	FullExtensionTime	When the arm is fully extended.	
+RelativeIkControllerAsset		Runs relative IK over a sequence: the sequence it watches and the per-actor entry sets to apply. 352 in the game's data.	
+RelativeIkControllerAsset	Subject	The sequence it works on, a SequenceContainerAsset.	
+RelativeIkControllerAsset	RelativeIkActorControllerAssets	One entry set per actor.	
+CrescentTouchTag		A touch tag whose cage is a crescent rather than a box, with the body controls that go with it. 260 in the game's data; it has an IKTagBase part, so the IK pass treats it like a TouchTag.	unknown
+CrescentTouchTag	IKCrescentCage	The crescent cage the contact point lives in.	
+CrescentTouchTag	Rotation	The cage's rotation.	
+CrescentTouchTag	PinRotationAxis	The axis the rotation is pinned to.	
+CrescentTouchTag	UsePinRotationAxis	Whether the axis is used.	
+CrescentTouchTag	LeftShoulderControl	How much the left shoulder is driven.	
+CrescentTouchTag	RightShoulderControl	How much the right shoulder is driven.	
+CrescentTouchTag	HipsControl	How much the hips are driven.	
+CrescentTouchTag	HipsOnGround	Used while the hips are on the ground.	
+CrescentTouchTag	FrictionOnGround	The friction while on the ground.	
+CrescentTouchTag	ProcedureIn	The ramp in.	
+CrescentTouchTag	ProcedureOut	The ramp out.	
+IKCrescentCage		A crescent-shaped cage: the planes the control point may move in, and the ones that count as acceptable. 260 in the game's data.	
+IKCrescentCage	Plane	The planes the point may move in.	
+IKCrescentCage	AcceptablePlane	The planes that count as acceptable.	
+CollisionWrapperAsset		Wraps an animation with the momentum and on-ground samples a collision needs, and the window in which the wrap applies. 344 in the game's data. How the samples are used is not known.	
+CollisionWrapperAsset	SubjectControllerAsset	The controller being wrapped.	
+CollisionWrapperAsset	WrappingRange	A BoolAsset that says whether wrapping applies.	
+CollisionWrapperAsset	MomentumInfo	The game reads this, but what it changes is not known.	unknown
+CollisionWrapperAsset	OnGroundInfo	Samples taken while the player is on the ground: the tick, the speed and the move angle.	
+OnGroundInfo		One on-ground sample of a wrapped controller: the tick, the speed and the move angle there. 344 in the game's data.	
+OnGroundInfo	Time	The tick the sample is taken at.	
+OnGroundInfo	Speed	The speed there.	
+OnGroundInfo	RelativeMoveAngle	The move angle relative to the facing.	
+AuditionAsset		Picks an actor group for a scene by running a scene-op matrix over it every so often. 295 in the game's data.	unknown
+AuditionAsset	ActorGroupAsset	The group auditioned.	
+AuditionAsset	SceneOpMatrixAsset	The matrix that judges it.	
+AuditionAsset	UpdateFrequency	How often the audition is re-run.	
+ActorGroupContainerAsset		A group of actor groups: an ActorGroupAsset that holds others. 295 in the game's data.	
+ActorGroupContainerAsset	Group	The groups it contains.	
+CommandQueryFilterListAsset		A list of command query filters, with the option to leave the asking character out of the results. 314 in the game's data.	
+CommandQueryFilterListAsset	Filters	The filters.	
+CommandQueryFilterListAsset	ExcludeMe	Leave the asking character out.	
+InteractionResultProcessorAsset		What an interaction result tag does with its query result: it sets an on/off game value on the target character, with a reset rule and a scope. 198 in the game's data. How the reset and scope work is not known.	
+InteractionResultProcessorAsset	GameState	The bool game state set.	
+InteractionResultProcessorAsset	TargetAnimId	Which animatable it is set on, an AnimatableIdAsset.	
+InteractionResultProcessorAsset	Value	The value written.	
+InteractionResultProcessorAsset	ResetValue	The value written on reset.	
+InteractionResultProcessorAsset	Reset	When the reset happens.	
+InteractionResultProcessorAsset	Scope	The scope the write applies to - the same idea as InteractionResultTag.Scope.	
+LayoutHierarchyAsset		A tree of LayoutAssets with the DOF list it names slots in. 135 in the game's data.	
+LayoutHierarchyAsset	LayoutAssets	The layouts at this level of the tree.	
+LayoutHierarchyAsset	Children	The hierarchies below this one.	
+LayoutHierarchyAsset	DofListId	The list of joint channels the layouts' slots refer to.	
+VoronoiTriangle		One triangle of a blend space's derived triangulation, clockwise with y up. 308 in the game's data; the editor recomputes them all from the items.	derived
+VoronoiTriangle	V	The three item indices, clockwise.	
+VoronoiTriangle	Positions	Their positions.	
+VoronoiTriangle	EdgeNormals	The unit perpendiculars of the three edges, in the order P1-P0, P2-P1, P0-P2.	
+VoronoiTriangle	Area	Half the magnitude of the cross product of two edges.	
+VoronoiTriangle	InverseArea	1 / Area, or 0 when the triangle is degenerate, so barycentric coordinates need no division.	
+VoronoiGridItem		One cell of a blend space's lookup grid: the triangles that touch it. 122 in the game's data.	
+VoronoiGridItem	TriangleIndices	The triangles touching the cell.	
+RigamateVirtualJoint		A joint a Rigamate graph makes up rather than reads from the rig: its index, its parent and its local transform. 272 in the game's data.	
+RigamateVirtualJoint	Index	The virtual joint's own index.	
+RigamateVirtualJoint	ParentIndex	Its parent.	
+RigamateVirtualJoint	Offset	Its translation from the parent.	
+RigamateVirtualJoint	Rotation	Its rotation.	
+RigamateVirtualJoint	Scale	Its scale.	
+RigamateVectorBuildSplit		A Rigamate node that either builds a vector from three scalar registers or splits one into them; Build says which way. 291 in the game's data.	
+RigamateVectorBuildSplit	Position	The register the node is at.	
+RigamateVectorBuildSplit	Vector	The vector register.	
+RigamateVectorBuildSplit	Base	The game reads this, but what it changes is not known.	unknown
+RigamateVectorBuildSplit	X	The register for the first component.	
+RigamateVectorBuildSplit	Y	The second.	
+RigamateVectorBuildSplit	Z	The third.	
+RigamateVectorBuildSplit	Connections	The game reads this, but what it changes is not known.	unknown
+RigamateVectorBuildSplit	Build	True builds the vector from the three components, false splits it into them.	
+GamepadConfigMappingData		One mapping of a gamepad configuration: the signal it drives and the drivers that feed it, with how many of them are additive. 275 in the game's data.	
+GamepadConfigMappingData	SignalAsset	The signal the mapping drives.	
+GamepadConfigMappingData	SignalDriverList	The drivers that feed it.	
+GamepadConfigMappingData	AdditiveSignalDriverCount	How many of the drivers add rather than replace.	
+DofWeightCurvesAsset_DofSetCurves		The weight curves for one set of joint channels, in packed form, with which channels inherit their weight instead. The Curves tab shows them as graphs.	
+DofWeightCurvesAsset_DofSetCurves	CurveBytes	The curves, in packed form.	
+DofWeightCurvesAsset_DofSetCurves	InheritedMaskBytes	Which DOFs take their weight from the parent instead, as a bit mask.	
+DofWeightCurvesAsset_DofSetCurves	ForEachDof	Whether the curves are per DOF rather than one for the set.	
+BranchFromOnGroundPose1Tag		A marker on the timeline for branching out from the first on-ground pose. It has no settings; it works by its type alone. One of a family that also covers poses 2 to 7, saves turning into misses, and the keeper's branch-out window. 183 in the game's data. What looks for it is not known.	unknown
+BranchFromOnGroundPose2Tag		As BranchFromOnGroundPose1Tag, the second on-ground pose. 956 in the game's data - the commonest of the family.	
+BranchFromOnGroundPose3Tag		As BranchFromOnGroundPose1Tag, the third on-ground pose. 226 in the game's data.	
+BranchFromOnGroundPose4Tag		As BranchFromOnGroundPose1Tag, the fourth on-ground pose. 303 in the game's data.	
+BranchFromOnGroundPose5Tag		As BranchFromOnGroundPose1Tag, the fifth on-ground pose. 207 in the game's data.	
+BranchFromOnGroundPose6Tag		As BranchFromOnGroundPose1Tag, the sixth on-ground pose. 326 in the game's data.	
+BranchFromOnGroundPose7Tag		As BranchFromOnGroundPose1Tag, the seventh on-ground pose. 133 in the game's data.	
+EvalBranchFromOnGroundPose6Tag		The Eval twin of BranchFromOnGroundPose6Tag, from the same family and also with no fields.	
+EvalBranchFromSaveToMissTag		A marker branch tag for the keeper going from a save to a miss; no fields, class id 0. 341 in the game's data.	
+EvalBranchOutWindowFIFAGoalKeeperTag		A marker branch tag for the keeper's branch-out window; no fields, class id 0.	
+HoldBallLTag		The left-hand version of HoldBallTag. It has no settings of its own. 351 in the game's data.	
+HoldBallRTag		The right-hand hold-ball tag, the mirror of HoldBallLTag. 432 in the game's data.	
+LayoutAsset		A named set of slots - the names the rest of the data uses for a group of joint channels. 121 in the game's data. The editor reads the slot names; how the game uses them is not known.	
+LayoutAsset	Slots	The named slots, in order.	
+LayoutAsset	MinAlignment	The alignment the slots must keep to.	unknown
+LayoutAsset	NoReorder	Whether the slots must stay in the authored order.	unknown
+GamepadAsset		A controller gesture: the inputs to match, in order, and how far back in time the match may look. 256 in the game's data. What matches them is not known.	
+GamepadAsset	MatchStateList	The states to match, in order.	
+GamepadAsset	BufferLength	How many ticks of input the match may look back over.	
+ContactGroupAsset		A group of contact options the game chooses between. 250 in the game's data. How it chooses is not known.	unknown
+ContactGroupAsset	ContactAssetInfo	The candidates.	
+GKBridgeSequenceQueryMapAsset		One entry of the goalkeeper save map: the area a save covers (where the ball can be touched, where the hands and hips end up) and how the ball is deflected. 1,517 in the game's data. How the map is searched is not known.	
+GKBridgeSequenceQueryMapAsset	BoundaryCenterPosAndRadius	The sphere that bounds the save, as centre plus radius in one vector.	
+GKBridgeSequenceQueryMapAsset	BoundaryCenterHoldBallPosAndRadius	The same for the hold-ball case.	
+GKBridgeSequenceQueryMapAsset	TouchCenterPosAndRadius	The sphere the touch must happen in.	
+GKBridgeSequenceQueryMapAsset	TouchMinMaxY	The height band of the touch.	
+GKBridgeSequenceQueryMapAsset	HoldBallPosAtEnd	Where the ball ends up when it is held.	
+GKBridgeSequenceQueryMapAsset	HoldBallExtends	The extent around that position.	
+GKBridgeSequenceQueryMapAsset	LeftHandPositions	Where the left hand goes.	
+GKBridgeSequenceQueryMapAsset	RightHandPositions	Where the right hand goes.	
+GKBridgeSequenceQueryMapAsset	TouchInnerSpheroidList	The inner spheroids the touch is tested against.	
+GKBridgeSequenceQueryMapAsset	DeflectAngle	The angle the ball is deflected at.	
+GKBridgeSequenceQueryMapAsset	DeflectType	Which kind of deflection.	unknown
+GKBridgeSequenceQueryMapAssetList		A list of goalkeeper bridge map entries. 131 in the game's data.	
+GKBridgeSequenceQueryMapAssetList	AssetList	The entries.	
+GKCoverageMapDecisionTreeAsset		A decision tree fitted offline over goalkeeper touch positions, with the error figures from fitting it: the game asks it which group and sequence cover a touch instead of searching. 262 in the game's data.	unknown
+GKCoverageMapDecisionTreeAsset	AttributeTouchPosX	The x side of the decision tree's tests. The three attribute lists are never the same length, so they are the tree's branches rather than a table of samples.	
+GKCoverageMapDecisionTreeAsset	AttributeTouchPosY	The game reads this, but what it changes is not known.	unknown
+GKCoverageMapDecisionTreeAsset	AttributeTouchPosZ	The game reads this, but what it changes is not known.	unknown
+GKCoverageMapDecisionTreeAsset	ReturnValues	The answers at the ends of the tree's branches.	
+GKCoverageMapDecisionTreeAsset	RangeMin	The low corner of the space the tree covers, four numbers.	
+GKCoverageMapDecisionTreeAsset	RangeMax	The high corner.	
+GKCoverageMapDecisionTreeAsset	NumSamples	How many samples it was fitted on.	
+GKCoverageMapDecisionTreeAsset	NumValidationSamples	How many were held back.	
+GKCoverageMapDecisionTreeAsset	RatioErrors	The error rate measured on them.	
+GKCoverageMapDecisionTreeAsset	RatioFalseValids	The false-positive rate.	
+GKCoverageMapDecisionTreeAsset	RatioFalseInvalids	The false-negative rate.	
+GKCoverageMapDecisionTreeAsset	RawEvalAbsErrorDeltaMax	The worst absolute error.	
+GKCoverageMapDecisionTreeAsset	RawEvalAbsErrorDeltaAverage	The mean absolute error.	
+PieWedgeQueryFilterAsset		A query filter that keeps candidates inside a pie-slice zone: two zones each for the source and the target, with a size ratio and angle taken from game values. 197 in the game's data.	
+PieWedgeQueryFilterAsset	FromInput	The source input, a FilterInputAsset.	
+PieWedgeQueryFilterAsset	ToInput	The target input.	
+PieWedgeQueryFilterAsset	FromZone0	The source's first zone.	
+PieWedgeQueryFilterAsset	FromZone1	Its second wedge.	
+PieWedgeQueryFilterAsset	ToZone0	The target's first wedge.	
+PieWedgeQueryFilterAsset	ToZone1	Its second wedge.	
+PieWedgeQueryFilterAsset	RatioAsset	A FloatAsset that scales the wedges.	
+PieWedgeQueryFilterAsset	AngleInput	A FloatAsset the wedge angles are measured from.	
+PieWedgeQueryFilterAsset	ReturnSetMethod	How the matching set is returned.	unknown
+PieWedgeQueryFilterAsset	PieWedgeBus	The game reads this, but what it changes is not known.	unknown
+RelayValueProcessorAsset		A query processor that copies a value from one game state to another, on this animatable or another one, or writes a fixed value. 192 in the game's data.	unknown
+RelayValueProcessorAsset	RelayMode	Which way the relay works.	unknown
+RelayValueProcessorAsset	RelayType	Which kind of value is relayed.	unknown
+RelayValueProcessorAsset	RelayIntegerValue	The fixed integer.	
+RelayValueProcessorAsset	RelayVector4Value	The fixed vector, four numbers.	
+RelayValueProcessorAsset	RelayQuaternionValue	The fixed rotation, four numbers.	
+RelayValueProcessorAsset	TheirAnimId	Which other animatable the relay reads or writes.	
+RelayValueProcessorAsset	SourceGameState	The game state read.	
+RelayValueProcessorAsset	DestGameState	The game state written.	
+InteractionFeatureAsset		The feature that gives an animatable its interaction machinery: the context bundles it offers, the queries it runs, the drivers it can align with, and the culling tables that bound the searches. 160 in the game's data.	
+InteractionFeatureAsset	ContextBundles	The context bundles the feature offers.	
+InteractionFeatureAsset	QueryTasks	The queries run every update.	
+InteractionFeatureAsset	OneShotQueryTasks	The queries run once.	
+InteractionFeatureAsset	Drivers	The scene drivers available to the feature.	
+InteractionFeatureAsset	InteractionFeaturePtr	A PointerAsset - the same wiring CharacterInteractionControllerAsset.InteractionFeaturePtr uses.	
+InteractionFeatureAsset	QueryGroupAsset	The query group the feature belongs to.	
+InteractionFeatureAsset	CollisionWorldPtr	The game reads this, but what it changes is not known.	unknown
+InteractionFeatureAsset	VolumeCullingTable	A CullingTableAsset.	
+InteractionFeatureAsset	RayCullingTable	A CullingTableAsset.	
+InteractionFeatureAsset	AnimatableCulling	The game reads this, but what it changes is not known.	unknown
+ContextDatabaseChooserWrapperAsset		Wraps a context database as a chooser: the game asks for a row by index, or lets the wrapper pick one at random, and the chosen row's asset comes back through SelectedAsset. 151 in the game's data.	
+ContextDatabaseChooserWrapperAsset	ContextDatabaseAsset	The database the rows come from.	
+ContextDatabaseChooserWrapperAsset	RequestedIndexAsset	The integer game state that asks for a row.	
+ContextDatabaseChooserWrapperAsset	SelectedIndexAsset	The integer game state the chosen row's index is written to.	
+ContextDatabaseChooserWrapperAsset	SelectedAsset	An AssetPointerAsset that the chosen row's asset is written to.	
+ContextDatabaseChooserWrapperAsset	RandomValueAsset	The random source used when the pick is random - the same asset RandomChooserPolicyAsset draws from.	
+ContinuousContactAsset		A contact described as a grid over in and out angles, move angles and speeds, cut into quads. 203 in the game's data. How the grid is searched is not known.	
+ContinuousContactAsset	InAngles	The in-angle axis of the grid.	
+ContinuousContactAsset	OutAngles	The out-angle axis.	
+ContinuousContactAsset	MoveAngles	The move-angle axis.	
+ContinuousContactAsset	Speeds	The speed axis.	
+ContinuousContactAsset	Quads	The quads the grid is cut into.	
+ContinuousContactAsset	QuadMap	Which quad each grid cell belongs to.	
+ContinuousContactAsset	OffsetPos	The game reads this, but what it changes is not known.	unknown
+ContinuousContactAsset	OffsetTouchT	The game reads this, but what it changes is not known.	unknown
+BlendSpace		A blend space laid out as a Voronoi tessellation rather than a grid: the authored items are positions with a blend each, and the diagram around them is derived. The editor recomputes the whole derived part from the items on save. 69 in the game's data.	derived
+BlendSpace	VoronoiDiagram	The diagram: the authored items plus the triangulation, hull and lookup grid derived from them.	
+BlendSpace	BlendMode	How the blends at the surrounding items are combined.	unknown
+BlendSpace	ClampMode	What happens to a query outside the hull.	unknown
+BlendSpace	SnapTolerance	How close a query must be to an item marked Snap for it to be taken exactly.	
+BlendSpace	ValueType	Which kind of value the blend space's two axes carry.	unknown
+VoronoiDiagram		The tessellation of a blend space: the authored items, then the Delaunay triangulation, the hull and the lookup grid the game reads as stored. Everything but Items is derived and the editor recomputes it: PosMin/PosMax are the items' bounding box, the triangles are clockwise with y up, the edges are the hull clockwise, PosCentroid is the area-weighted mean of the triangle centroids, and GridItems[row * NumColumns + col] holds the triangles touching that cell.	derived
+VoronoiDiagram	Items	The authored sites: a position and the blend that plays there.	
+VoronoiDiagram	Triangles	The Delaunay triangulation of the items, every triangle clockwise. Collinear items give one degenerate triangle per neighbouring pair.	
+VoronoiDiagram	Edges	The hull, clockwise.	
+VoronoiDiagram	PosMin	The low corner of the items' bounding box.	
+VoronoiDiagram	PosMax	The high corner.	
+VoronoiDiagram	PosCentroid	The area-weighted mean of the triangle centroids.	
+VoronoiDiagram	NumColumns	The lookup grid's width.	
+VoronoiDiagram	NumRows	Its height.	
+VoronoiDiagram	GridStepX	The cell width.	
+VoronoiDiagram	GridStepY	The cell height.	
+VoronoiDiagram	GridItems	One cell per row-major position: the triangles touching it, so a query only tests those.	
+BlendMaskAsset		A per-joint-channel weight mask, naming its slots through a LayoutAsset. 71 in the game's data - what a LayersControllerAsset layer's blend mask points at.	
+BlendMaskAsset	Values	One weight per slot.	
+BlendMaskAsset	DofSetKey	The LayoutAsset whose slots the values line up with.	
+AccelBlendAsset		A blend with one option: whether the launch move angle is kept across it. 56 in the game's data.	unknown
+AccelBlendAsset	PreserveLaunchMoveAngle	The game reads this, but what it changes is not known.	unknown
+PredictableBlendAsset		A blend with no parameters at all, like DiffBlendAsset. 29 in the game's data.	unknown
+PointerAsset		A named link that the game fills in while it runs. It has no settings - everything about it comes from the game. 64 in the game's data.	
+ChannelToDofAsset		Maps a clip's channels onto joint channels by id. 65 in the game's data.	
+ChannelToDofAsset	DofIds	The joint channels, in clip channel order. The game never loads this field, so where it gets the mapping is not known.	noeffect
+RelativeIkTag		A tag that drives one effector towards a joint of another animatable over its window - the per-tag counterpart of RelativeIkEntry. 65 in the game's data.	unknown
+RelativeIkTag	IKJointEffectorID	The effector driven.	
+RelativeIkTag	MirroredIKJointEffectorID	The effector used on the mirrored side.	
+RelativeIkTag	RelativeJointTemplateID	The joint on the target the drive aims at.	
+RelativeIkTag	MirroredRelativeJointTemplateID	Its mirrored counterpart.	
+RelativeIkTag	TargetOffsetJointTemplateID	The joint the target offset is measured from.	
+RelativeIkTag	SourceOffsetJointTemplateID	The joint the source offset is measured from.	
+RelativeIkTag	MirroredTargetOffsetJointTemplateID	Its mirrored counterpart.	
+RelativeIkTag	MirroredSourceOffsetJointTemplateID	Its mirrored counterpart.	
+RelativeIkTag	MirrorJoints	A bool game state that switches to the mirrored joints.	
+RelativeIkTag	RelativeJointAnimatableID	Which other animatable the joint belongs to, from an integer game state.	
+RelativeIkTag	OffsetFromRelativeJoint	The offset from that joint, from a vector game state.	
+RelativeIkTag	IKOffsetType	Which kind of offset is used.	unknown
+RelativeIkTag	HackJointOffset	The game reads this, but what it changes is not known.	unknown
+RelativeIkTag	BlendWeightGS	The drive's weight, from a float game state.	
+RelativeIkTag	BlendIn	The ramp in.	
+RelativeIkTag	BlendOut	The ramp out.	
+PhaseTag		Marks the stride phase at a point in a clip, and which way it is going. 55 in the game's data. What the game does with it is not known.	unknown
+PhaseTag	Phase	The phase.	
+PhaseTag	Direction	Which way it is going.	
+TackleBallOutModifierTag		A tag that bounds how fast the ball leaves a tackle.	unknown
+TackleBallOutModifierTag	BallOutSpeedMin	The slowest.	
+TackleBallOutModifierTag	BallOutSpeedMax	The fastest.	
+SlidePassTag		A marker tag with no fields. 29 in the game's data.	unknown
+StaleBlockTag		A marker tag with no fields. 21 in the game's data.	unknown
+TagMonitorFeatureAsset		The feature that makes a character act on its animations' tags. It has no settings. 21 in the game's data.	
+IntegerElementAsset		An integer element of a context bundle; no fields of its own. 23 in the game's data.	
+BooleanElementAsset		A boolean element of a context bundle; no fields of its own. 21 in the game's data.	
+ContextBundleAsset		A bundle of context elements and the drivers that go with them, offered by an InteractionFeatureAsset. 52 in the game's data.	
+ContextBundleAsset	ElementAssets	The elements.	
+ContextBundleAsset	PreDriverAssets	Drivers run before the main ones.	
+ContextBundleAsset	DriverAssets	The scene drivers.	
+DataInterfaceAsset		A named interface a context database column or a game state is reached through: the members it declares and the assets they map to. 54 in the game's data.	
+DataInterfaceAsset	MemberAssetReferences	The assets the members map to. The editor checks that the list is long enough for the highest index MemberUniqueIds pairs a member with.	
+DataInterfaceAsset	MemberUniqueIds	The ids of the interface's members.	
+DataInterfaceAsset	GuidHash	The interface's id hash.	noeffect
+AnimatableAsset		An animatable: the feature collection that says what it is made of, and its listener. 21 in the game's data.	
+AnimatableAsset	FeatureCollection	The features, as a FeatureCollectionAsset.	
+AnimatableAsset	Listener	What is told about the animatable's events.	unknown
+DefaultDofInt		A rig's default value for one integer joint channel. 22 in the game's data.	
+DefaultDofInt	DofId	The joint channel.	
+DefaultDofInt	Value	Its default.	
+JointMappingData		One joint template's mapping: the template and the rig joint indices it names. 25 in the game's data.	
+JointMappingData	JointTemplate	The template.	
+JointMappingData	JointIndices	The rig joints it names, in template order.	
+TrajectoryState		An actor's recorded root path: four parallel arrays of samples - x, y, z and the facing angle - taken every RecordDeltaT ticks from TrajStartTick to TrajEndTick. The four arrays are the same length in every trajectory (the editor checks that on save); the count matches (TrajEndTick - TrajStartTick) / RecordDeltaT + 1 in 4,395 of the 4,563 and is one fewer in the rest.	
+TrajectoryState	TrajX	The x of each sample.	
+TrajectoryState	TrajY	The y of each sample.	
+TrajectoryState	TrajZ	The z of each sample.	
+TrajectoryState	TrajAngles	The facing angle at each sample.	
+TrajectoryState	TrajStartTick	The tick the first sample is taken at; 0 in every trajectory.	
+TrajectoryState	TrajEndTick	The tick of the last sample. Values in the game's data: run from 2 to 3,000.	
+TrajectoryState	RecordDeltaT	The ticks between samples: 1 in 2,940 of the the game's trajectories, 4 in 1,049 and 2 in 574.	
+TrajectoryState	TrajRecordDeltaT	0 in every trajectory in the game's data.	noeffect
+RigamateSetDrivenKey		A Rigamate node that maps a driver register onto a driven one through a curve given as four domain and four range points, with a power. 271 in the game's data.	unknown
+RigamateSetDrivenKey	Position	The register the node is at.	
+RigamateSetDrivenKey	Driver	The register read.	
+RigamateSetDrivenKey	Driven	The register written.	
+RigamateSetDrivenKey	DomainA	The first domain point.	
+RigamateSetDrivenKey	DomainMidA	The second.	
+RigamateSetDrivenKey	DomainMidB	The third.	
+RigamateSetDrivenKey	DomainMidC	The fourth.	
+RigamateSetDrivenKey	DomainB	The last domain point.	
+RigamateSetDrivenKey	RangeA	The first range point, matching DomainA.	
+RigamateSetDrivenKey	RangeMidA	The second.	
+RigamateSetDrivenKey	RangeMidB	The third.	
+RigamateSetDrivenKey	RangeMidC	The fourth.	
+RigamateSetDrivenKey	RangeB	The last range point, matching DomainB.	
+RigamateSetDrivenKey	Power	The exponent applied to the curve.	unknown
+RigamateSetDrivenKey	Scalar	Whether the driver and driven are scalars.	
+RigamateSetDrivenKey	Sqt	Whether they are whole scale-rotation-translation values.	
+RigamateLoad		A Rigamate node that loads a value from one register into another, scaled. 59 in the game's data.	
+RigamateLoad	Position	The register the node is at.	
+RigamateLoad	Source	The register read.	
+RigamateLoad	Destination	The register written.	
+RigamateLoad	ConversionFactor	The factor applied on the way.	
+BodyTypeData		One body type of the player-proportions table: the type, gender and height it stands for, and a size adjustment for each part of the body - legs, hips, the four spine segments, shoulders, arms, forearms, neck and head, plus head, hand and foot scale. 83 in the game's data. What applies the adjustments is not known.	
+BodyTypeData	_BodyType	The body type this row is for.	
+BodyTypeData	_SubType	Its sub-type.	
+BodyTypeData	_Gender	The gender it is for.	
+BodyTypeData	_HeightInCm	The height the row stands for, in centimetres.	
+BodyTypeData	HeightScale	The overall height scale.	
+BodyTypeData	LegLengthAdj	The leg-length adjustment.	
+BodyTypeData	HipWidthAdj	The hip-width adjustment.	
+BodyTypeData	HipHeightAdj	The hip-height adjustment.	
+BodyTypeData	SpineLengthAdj	The spine-length adjustment.	
+BodyTypeData	Spine1LengthAdj	The first spine segment's adjustment.	
+BodyTypeData	Spine2LengthAdj	The second segment's.	
+BodyTypeData	Spine3LengthAdj	The third segment's.	
+BodyTypeData	Shoulder1WidthAdj	The first shoulder's width adjustment.	
+BodyTypeData	Shoulder1HeightAdj	Its height adjustment.	
+BodyTypeData	Shoulder2WidthAdj	The second shoulder's width adjustment.	
+BodyTypeData	ArmLengthAdj	The upper-arm adjustment.	
+BodyTypeData	ForearmLengthAdj	The forearm adjustment.	
+BodyTypeData	NeckLengthAdj	The neck adjustment.	
+BodyTypeData	Neck1LengthAdj	The second neck segment's adjustment.	
+BodyTypeData	HeadLengthAdj	The head-length adjustment.	
+BodyTypeData	HeadScale	The head scale.	
+BodyTypeData	HandScale	The hand scale.	
+BodyTypeData	FootScale	The foot scale.	
+RigOpListBinding		One rig operation: its type, the asset that holds it, its parameters, and what switches it on. 68 in the game's data. What runs the operations is not known.	
+RigOpListBinding	DataRigOpType	The operation's type, as a string.	
+RigOpListBinding	DataRigOpKey	The asset that holds the operation.	
+RigOpListBinding	DataParam	The parameters bound to it.	
+RigOpListBinding	DataEnableKey	The key that switches the operation on.	
+RigOpListBindingParam		One parameter of a rig operation: its name, the name it has inside the operation, and the keys that supply its value. 61 in the game's data.	
+RigOpListBindingParam	DataName	The parameter's name in the binding.	
+RigOpListBindingParam	DataParameterName	Its name inside the operation.	
+RigOpListBindingParam	DataValueKey	The asset that supplies the value.	
+RigOpListBindingParam	DataDSLKey	A second key the binding carries.	unknown
+RigOpListBindingParam	DataDSKey	A third key the binding carries.	unknown
+TackleGroupAsset		A group of tackles the game chooses between. 111 in the game's data.	
+TackleGroupAsset	TackleItems	The tackles in the group.	
+Vector3Asset		A named three-part value (such as a position) the game sets and other assets read. 101 in the game's data.	
+Vector3Asset	Default	The value it starts at. The game never loads this field, so changing it has no effect in game.	noeffect
+IntegerAsset		A named whole-number value the game sets and other assets read. 96 in the game's data.	
+IntegerAsset	Default	The value it starts at. The game never loads this field, so changing it has no effect in game.	noeffect
+AnimatableIdAsset		A named handle for one animatable - what TargetAnimatableId, TheirAnimId and TargetAnimId point at. 79 in the game's data, with no fields at all: the id is filled in by the game.	
+AvoidTargetTag		A marker tag with no fields; the game has to look for it by class. 95 in the game's data.	unknown
+BezierBlendAsset		A blend whose shape is a curve, stored as samples. 87 in the game's data. How the curve shapes the blend is not known.	
+BezierBlendAsset	Samples	The curve's samples, in order.	
+BlendMaskListAsset		A set of blend masks named through a layout hierarchy, with the DOF sets and values to fall back on. 72 in the game's data.	
+BlendMaskListAsset	DofSetListKey	The LayoutHierarchyAsset the masks name their slots through.	
+BlendMaskListAsset	MaskKeys	The masks.	
+BlendMaskListAsset	DefaultDofSetKeys	The DOF sets used where a mask says nothing.	
+BlendMaskListAsset	DefaultValues	The weights used for those sets.	
+AchievePoseTag		A tag that says how long the upper and lower body have to reach the clip's pose. 72 in the game's data.	unknown
+AchievePoseTag	UpperBodyT	The upper body's time.	
+AchievePoseTag	LowerBodyT	The lower body's.	
+TrackSelectionWrapperAsset		Wraps a controller so a sequence picks one actor's track by an enumeration: the wrapper names the enumeration and the value it stands for. 74 in the game's data - the same idea as SequenceContainerAsset's TrackSelectionGameStateEnum, which keeps only the actor whose TrackSelectionEnumValue matches.	
+TrackSelectionWrapperAsset	SubjectController	The controller that is played.	
+TrackSelectionWrapperAsset	TrackSelectionGameStateEnumeration	The enumeration read from the game.	
+TrackSelectionWrapperAsset	TrackSelectionEnumerationValue	The value this wrapper stands for.	
+ComputeAngleToTargetProcessorAsset		A query processor that works out where a target is relative to the asker and writes the result into game states: the angle, the vector and the distance. 50 in the game's data.	
+ComputeAngleToTargetProcessorAsset	EnableFlag	The bool game state that switches it on.	
+ComputeAngleToTargetProcessorAsset	TargetId	Which animatable is the target.	
+ComputeAngleToTargetProcessorAsset	AngleOffset	A fixed offset added to the angle.	
+ComputeAngleToTargetProcessorAsset	AngleOffsetGameState	The offset read from a float game state instead.	
+ComputeAngleToTargetProcessorAsset	AngleToTarget	The float game state the angle is written to.	
+ComputeAngleToTargetProcessorAsset	VecToTarget	The vector game state the direction is written to.	
+ComputeAngleToTargetProcessorAsset	VecToTargetSpace	Which space that vector is in.	unknown
+ComputeAngleToTargetProcessorAsset	DistanceToTarget	The float game state the distance is written to.	
+ComputeAngleToTargetProcessorAsset	AngleMode	How the angle is measured.	unknown
+ComputeAngleToTargetProcessorAsset	NormalizeAngle	Whether the angle is wrapped into a single turn.	
+SyncPointBlendSpaceControllerAsset		A blend space steered by two game values, with a master animation whose sync points the blended animations stay locked to. The two values change at a limited rate, stay inside a region and can wrap around. 60 in the game's data.	
+SyncPointBlendSpaceControllerAsset	MasterControllerAsset	The controller whose sync points the others follow.	
+SyncPointBlendSpaceControllerAsset	MasterControllerInitParams	Its start settings.	
+SyncPointBlendSpaceControllerAsset	MasterLength	The master's length.	
+SyncPointBlendSpaceControllerAsset	SubjectControllerAsset	The controller that is blended.	
+SyncPointBlendSpaceControllerAsset	SubjectControllerInitParams	Its start settings.	
+SyncPointBlendSpaceControllerAsset	SignalAssetX	The float game state that drives the first axis.	
+SyncPointBlendSpaceControllerAsset	SignalAssetY	The one that drives the second.	
+SyncPointBlendSpaceControllerAsset	CurrentXRef	The float game state the rate-limited first axis is written to.	
+SyncPointBlendSpaceControllerAsset	CurrentYRef	The same for the second axis.	
+SyncPointBlendSpaceControllerAsset	SignalXMaxDec	The most the first axis may fall per update.	
+SyncPointBlendSpaceControllerAsset	SignalXMaxInc	The most it may rise.	
+SyncPointBlendSpaceControllerAsset	SignalYMaxDec	The most the second axis may fall.	
+SyncPointBlendSpaceControllerAsset	SignalYMaxInc	The most it may rise.	
+SyncPointBlendSpaceControllerAsset	RegionXMin	The low end of the first axis.	
+SyncPointBlendSpaceControllerAsset	RegionXMax	Its high end.	
+SyncPointBlendSpaceControllerAsset	RegionYMin	The low end of the second axis.	
+SyncPointBlendSpaceControllerAsset	RegionYMax	Its high end.	
+SyncPointBlendSpaceControllerAsset	IsWrapX	Whether the first axis wraps at its ends.	
+SyncPointBlendSpaceControllerAsset	IsWrapY	Whether the second does.	
+SyncPointBlendSpaceControllerAsset	FreezeInputsOnBlendOut	Whether the two signals stop moving while the controller blends out.	
+SyncPointBlendSpaceControllerAsset	ForceSyncPointsToFullFrames	Whether sync points are rounded to whole frames.	
+SyncPointBlendSpaceControllerAsset	NumCyclesToPlay	How many cycles are played.	
+SyncPointBlendSpaceControllerAsset	SyncPointCount	How many sync points there are.	
+SyncPointBlendSpaceControllerAsset	SyncPointOutputs	One float game state per sync point, written as it is passed.	
+GKBridgeSequenceControllerAsset		The goalkeeper's save: the save animation plus the map of where the ball can be reached and how it is deflected, the rules for switching between save sequences, and the decision trees that say whether a touch is a save and how much effort it takes. 131 in the game's data. How the save is picked is not known.	
+GKBridgeSequenceControllerAsset	BridgeController	The controller that plays the save.	
+GKBridgeSequenceControllerAsset	TargetContactGroup	The contact group the save reaches for.	
+GKBridgeSequenceControllerAsset	BlendBridgeTime	How long the bridge blends for.	
+GKBridgeSequenceControllerAsset	SequenceIndex	Which sequence of the save is current.	
+GKBridgeSequenceControllerAsset	SelectedSequence	One on/off value per sequence: whether it is selected.	
+GKBridgeSequenceControllerAsset	SwitchSequenceIndex	The sequence to switch to.	
+GKBridgeSequenceControllerAsset	SwitchSequenceTime	When the switch happens.	
+GKBridgeSequenceControllerAsset	MaxSwitchableTime	The latest a switch is still allowed.	
+GKBridgeSequenceControllerAsset	DeltaStepTime	The step time the search advances by.	
+GKBridgeSequenceControllerAsset	MomentumWeight	How much the keeper's momentum counts.	
+GKBridgeSequenceControllerAsset	ModEffectorsByHandsWeight	How much the hands move the effectors.	
+GKBridgeSequenceControllerAsset	ModEffectorsByMoment	A PointerAsset for the moment-based effector change.	
+GKBridgeSequenceControllerAsset	Mirror	Whether the save is mirrored.	
+GKBridgeSequenceControllerAsset	ControlSwitch	Which animatable controls the switch, an AnimatableIdAsset.	
+GKBridgeSequenceControllerAsset	FootPlant	The game reads this, but what it changes is not known.	unknown
+GKBridgeSequenceControllerAsset	BlendWeightOffset	An offset added to the blend weight.	
+GKBridgeSequenceControllerAsset	BlendTimeOffset	An offset added to the blend time.	
+GKBridgeSequenceControllerAsset	SamplingX	How finely the map is sampled along x.	
+GKBridgeSequenceControllerAsset	SamplingY	The same along y.	
+GKBridgeSequenceControllerAsset	OnlyAcceptable	Whether only the acceptable part of a cage counts.	
+GKBridgeSequenceControllerAsset	MaxPersonalAttributeScale	The highest the keeper's attributes may scale the reach.	
+GKBridgeSequenceControllerAsset	MinPersonalAttributeScale	The lowest.	
+GKBridgeSequenceControllerAsset	PersonalAttributeScaleXZ	How the attribute scale applies in the ground plane.	
+GKBridgeSequenceControllerAsset	PersonalAttributeScaleY	How it applies in height.	
+GKBridgeSequenceControllerAsset	DeflectSurfaceNormal	The surface the ball is deflected off, four numbers.	
+GKBridgeSequenceControllerAsset	UseDeflect	Whether the deflection is used.	
+GKBridgeSequenceControllerAsset	QueryMapAssetList	The map entries the save is chosen from.	
+GKBridgeSequenceControllerAsset	BlendMapAssetList	The matching blend map.	
+GKBridgeSequenceControllerAsset	TotalBoundaryCenterPosAndRadius	The sphere that bounds every entry of the map, four numbers.	
+GKBridgeSequenceControllerAsset	TouchTag	The touch tags of the save.	
+GKBridgeSequenceControllerAsset	CoverageMapDecisionTreeSave	The decision tree that says whether a touch is a save.	
+GKBridgeSequenceControllerAsset	CoverageMapDecisionTreeEffort	The tree that says how much effort it takes.	
+GKBridgeSequenceControllerAsset	DisplayAllCages	An authoring flag: draw every cage in the editor.	
+GKBridgeSequenceControllerAsset	Shading	An authoring flag.	unknown
+GKBridgeSequenceControllerAsset	Diagonostics	A string (spelled as in the game's data): the diagnostics the authoring tool left behind.	
+RigAsset		A rig: the skeleton it moves, the features it carries, the joint channels it exposes and their default values. 18 in the game's data. The editor uses the skeleton and the defaults to put clips on the player.	
+RigAsset	Skeleton	The skeleton.	
+RigAsset	FeatureCollection	The rig's features.	
+RigAsset	DofIds	Every joint channel the rig exposes, by id.	
+RigAsset	DofSetIdIndices	Where each DOF set starts in DofIds.	
+RigAsset	DofSetLists	The DOF-set lists the rig offers.	unknown
+RigAsset	RigDofSets	The rig's own DOF sets.	unknown
+RigAsset	FeatureDofSets	One DOF set per feature.	unknown
+RigAsset	DeltaTrajDofSet	The DOF set that carries the trajectory delta.	
+RigAsset	DefaultFloatValues	The default value of each float DOF.	
+RigAsset	DefaultIntValues	The default value of each integer DOF.	
+RigAsset	DefaultVector3Values	The default value of each three-component DOF.	
+RigAsset	DefaultVector4Values	The default value of each four-component DOF.	
+SkeletonAsset		A skeleton: its joints in order, each after its parent, and which joint carries the root motion. 17 in the game's data. The editor uses it to put clips on the player.	
+SkeletonAsset	Joints	The joints, each with its name, parent index and kind. The first is "Reference" with parent -1.	
+SkeletonAsset	TrajJointIndex	Which joint is the trajectory - the one a clip's root motion is on.	
+RigOpListAsset		A list of rig operations run over a rig: each binding names an operation type, the asset that holds it and its parameters. 16 in the game's data.	
+RigOpListAsset	DataRigOps	The rig operations.	
+RigamateAsset		A Rigamate graph: a small program that reads and writes the rig's joints and channels, stored as one list per kind of step - loads, maths, conditions, driven keys, aims, twists, orbits, filters, physics constraints, extra joints, and constants. 2 in the game's data, with about 7,000 steps between them. How the game runs it is not known.	
+JointMappingFeature		The feature that gives an animatable its joint-map templates, each mapping template entries onto rig joint indices.	
+JointMappingFeature	JointMappings	The templates, each a BaseJointMapTemplateAsset.	
+EffectorLayoutAsset		A layout of effectors with no fields of its own. 16 in the game's data.	unknown
+LevelOfDetailFeatureAsset		The feature that drops an animatable's detail with camera distance: it reads the distance from a FloatAsset. 16 in the game's data.	unknown
+LevelOfDetailFeatureAsset	CameraDistance	The float game state the distance is read from.	
+AnimatableIdMapFeatureAsset		The feature that gives an animatable its id: one AnimatableIdAsset. 15 in the game's data.	
+AnimatableIdMapFeatureAsset	AnimIdAsset	The id handle.	
+EffectorFeatureAsset		The feature that gives a character its IK effectors. How the effectors are used is not known.	unknown

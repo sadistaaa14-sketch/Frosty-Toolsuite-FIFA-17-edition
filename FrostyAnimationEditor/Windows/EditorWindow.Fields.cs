@@ -17,11 +17,105 @@ namespace FrostyAnimationEditor.Windows
     {
         private void RenderFields()
         {
+            List<object> owners = View.Arr("tag_owners");
+            if (owners != null && owners.Count > 0)
+            {
+                WrapPanel on = Ui.Flow(Ui.T("on the timeline of ", Ui.Muted, 11));
+                foreach (JObject o in owners.Cast<JObject>())
+                {
+                    string ok = o.Str("key");
+                    on.Children.Add(Ui.Pad(Ui.Link(o.Str("name"), () => { Go(ok); SetTab("tags"); }, null, o.Str("type")), 0, 0, 10, 0));
+                }
+                body.Children.Add(Ui.Pad(on, 0, 0, 0, 6));
+            }
+            RenderPickedBy();
             StackPanel box = new StackPanel();
             JObject tree = View.Obj("tree");
             foreach (object c in tree.Arr("c") ?? new List<object>()) box.Children.Add(FieldRow((JObject)c, 0, false));
             body.Children.Add(box);
-            body.Children.Add(Ui.Pad(Ui.Wrap("Click a value to edit it (Enter applies, Esc cancels); ▸ opens structs and lists. Keys link to the object they name.", Ui.Muted, 11), 0, 10, 0, 0));
+            body.Children.Add(Ui.Pad(Ui.Wrap("Click a value to edit it (Enter applies, Esc cancels); ▸ opens structs and lists. Keys link to the object they name. " +
+                                             "Underlined names: hover for what the game does with the field.", Ui.Muted, 11), 0, 10, 0, 0));
+            RenderAbout();
+        }
+
+        /// <summary>the context database rows that select this object, with the conditions that narrow them</summary>
+        private void RenderPickedBy()
+        {
+            if (!M.Db.RefIndexReady)
+            {
+                // the first lookup has to index every reference in the file; ask before spending the time
+                string key = ObjKey;
+                body.Children.Add(Ui.Pad(Ui.Flow(Ui.B("Picked by…", () =>
+                {
+                    try { Busy("indexing references", p => { p("indexing references", 0.1); M.Db.BuildRefIndex((a, b) => p("indexing references " + a + " / " + b, b > 0 ? (double)a / b : 0)); return 0; }); }
+                    catch (Exception e) { Msg(e.Message, true); return; }
+                    SetTab("fields");
+                }, "find the context database rows that select this object (it indexes the file's references once)")), 0, 0, 0, 6));
+                return;
+            }
+            List<object> rows;
+            try { rows = M.PickedBy(ObjKey, 12); }
+            catch (Exception e) when (IsUserError(e)) { return; }
+            if (rows.Count == 0) return;
+            body.Children.Add(Ui.H3("Picked by"));
+            foreach (JObject r in rows.Cast<JObject>())
+            {
+                string dk = r.Obj("database").Str("key");
+                List<JObject> cells = r.Arr("cells").Cast<JObject>().ToList();
+                string cond = cells.Count == 0 ? "no conditions (it matches anything)"
+                    : string.Join(" · ", cells.Select(c => c.Str("column") + " " + c.Str("text") + (c.Str("unit").Length > 0 ? " " + c.Str("unit") : "")));
+                StackPanel line = Ui.H(Ui.Link(r.Obj("database").Str("name"), () => { Go(dk); SetTab("cdb"); }, null, "open the database"),
+                                       Ui.Pad(Ui.T("row " + r.Long("row") + (r.Bool("auxiliary") ? " (auxiliary)" : ""), Ui.Muted, 11), 8, 0, 0, 0));
+                body.Children.Add(line);
+                body.Children.Add(Ui.Pad(Ui.Wrap(cond, Ui.Muted, 11), 14, 0, 0, 2));
+                if (r.Arr("with").Count > 0)
+                {
+                    WrapPanel w = Ui.Flow(Ui.T("together with ", Ui.Muted, 11));
+                    foreach (JObject o in r.Arr("with").Cast<JObject>())
+                    {
+                        string ok = o.Str("key");
+                        w.Children.Add(Ui.Pad(Ui.Link(o.Str("name"), () => Go(ok), null, o.Str("type")), 0, 0, 8, 0));
+                    }
+                    body.Children.Add(Ui.Pad(w, 14, 0, 0, 2));
+                }
+            }
+            body.Children.Add(Ui.Pad(Ui.Wrap("The game looks the row up in the database and plays what the row holds, so these are the conditions under which this object is used " +
+                                             "(columns that match anything are left out).", Ui.Muted, 11), 0, 2, 0, 6));
+        }
+
+        /// <summary>what the game does with this object's types (field_semantics.tsv)</summary>
+        private void RenderAbout()
+        {
+            List<object> about = View.Arr("about");
+            if (about == null || about.Count == 0) return;
+            body.Children.Add(Ui.H3("In the game"));
+            foreach (JObject t in about.Cast<JObject>())
+            {
+                List<JObject> es = t.Arr("entries").Cast<JObject>().ToList();
+                JObject self = es.FirstOrDefault(e => e.Str("field").Length == 0);
+                body.Children.Add(Ui.Pad(Ui.T(t.Str("type"), null, 12, true), 0, 6, 0, 2));
+                if (self != null)
+                {
+                    if (!string.IsNullOrEmpty(self.Str("meaning")))
+                    {
+                        body.Children.Add(Ui.Wrap(self.Str("meaning"), self.Bool("unidentified") ? Ui.Warn : null, 12));
+                    }
+                }
+                List<object[]> rows = new List<object[]>();
+                foreach (JObject e in es.Where(e => e.Str("field").Length > 0))
+                {
+                    StackPanel cell = new StackPanel();
+                    if (!string.IsNullOrEmpty(e.Str("meaning")))
+                    {
+                        cell.Children.Add(Ui.Wrap(e.Str("meaning"), e.Bool("unidentified") ? Ui.Warn : null, 12));
+                    }
+                    else cell.Children.Add(Ui.T("not described yet", Ui.Muted, 11));
+                    if (!string.IsNullOrEmpty(e.Str("status")) && !e.Bool("unidentified")) cell.Children.Add(Ui.T(e.Str("status"), Ui.Muted, 11));
+                    rows.Add(new object[] { Ui.T(e.Str("field"), null, 12, false, true), cell });
+                }
+                if (rows.Count > 0) body.Children.Add(Ui.Table(new[] { "field", "in the game" }, rows, new[] { new GridLength(190), new GridLength(1, GridUnitType.Star) }));
+            }
+            body.Children.Add(Ui.Wrap("Orange text: the game reads the field, but what it changes is not known yet.", Ui.Muted, 11));
         }
 
         private static bool Openable(JObject n)
@@ -70,8 +164,8 @@ namespace FrostyAnimationEditor.Windows
                         {
                             bool ok = r.Str("state") == "ok";
                             string target = r.Str("key");
-                            TextBlock l = ok ? Ui.Link(r.Str("type") + " " + Ui.Quote(r.Str("name")), () => Go(target), null, r.Str("type"))
-                                             : Ui.T(r.Str("type") + " " + Ui.Quote(r.Str("name")), r.Str("state") == "imported" ? (Brush)Ui.Warn : Ui.Bad);
+                            TextBlock l = ok ? Ui.Link(r.Str("type") + " " + Ui.Quote(Ui.Label(r)), () => Go(target), null, r.Str("type") + (r.Str("alias") != null ? " " + r.Str("name") : ""))
+                                             : Ui.T(r.Str("type") + " " + Ui.Quote(Ui.Label(r)), r.Str("state") == "imported" ? (Brush)Ui.Warn : Ui.Bad);
                             l.Margin = new Thickness(8, 0, 0, 0);
                             p.Children.Add(l);
                         }
@@ -175,7 +269,13 @@ namespace FrostyAnimationEditor.Windows
             ex.HorizontalAlignment = HorizontalAlignment.Right;
             ex.Margin = new Thickness(0, 0, 4, 0);
             TextBlock name = Ui.Trim(Ui.T(n.Str("n")));
-            name.ToolTip = path;
+            string meaning = n.Str("d"), status = n.Str("ds");
+            if (meaning != null)
+            {
+                name.ToolTip = Ui.Tip(path + "\n\n" + meaning + (status != null && status != "Effect not known" ? "\n\n" + status + "." : ""));
+                Ui.Dotted(name);
+            }
+            else name.ToolTip = path;
             Border val = new Border { Child = FmtVal(n), Padding = new Thickness(0, 1, 6, 1), VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent };
             bool editable = Editable(n);
             if (editable) val.Cursor = Cursors.IBeam;

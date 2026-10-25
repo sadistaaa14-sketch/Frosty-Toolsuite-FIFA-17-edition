@@ -48,6 +48,7 @@
     <Reference Include="WindowsBase" />
     <Reference Include="System.Numerics" />
     <Reference Include="System.IO.Compression" />
+    <Reference Include="Microsoft.CSharp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -60,10 +61,14 @@
     <ProjectReference Include="..\FrostySdk\FrostySdk.csproj">
       <Private>false</Private>
     </ProjectReference>
+    <ProjectReference Include="..\Plugins\MeshSetPlugin\MeshSetPlugin.csproj">
+      <Private>false</Private>
+    </ProjectReference>
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Core\Data\*.json" LogicalName="FrostyAnimationEditor.Data.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Core\Data\field_semantics.tsv;Core\Data\context_fields.tsv;Core\Data\context_interfaces.tsv" LogicalName="FrostyAnimationEditor.Data.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Resources\io_fifa17_antanim.py" LogicalName="FrostyAnimationEditor.Resources.io_fifa17_antanim.py" />
   </ItemGroup>
 

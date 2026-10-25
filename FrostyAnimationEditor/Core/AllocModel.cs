@@ -47,11 +47,9 @@ namespace FrostyAnimationEditor.Core
 
     /// <summary>
     /// The AntLinearResourceAllocator cost of every object (what header H8 has to cover).
-    /// FIFA17.exe sizes the linear allocator from H8 (FUN_1461a2d50; version-3 files get +0xC0080 +
-    /// (H8+0xC0000)/0xA00 of slack) and every class builder and field loader allocates from it with
-    /// FUN_14619fda0 (bump: align, then add; never freed).  For an object this gives the exact ordered
-    /// list of (size, align) requests the game makes while loading it (verified against the game's own
-    /// loader run in an emulator for all 458,349 objects of the shipped file):
+    /// The game sizes its loading memory from H8 (version-3 files get +0xC0080 + (H8+0xC0000)/0xA00 extra)
+    /// and every object takes its share while it loads (align, then add; never freed).  For an object this gives the exact ordered
+    /// list of (size, align) requests the game makes while loading it (checked on all 458,349 objects of the game's file):
     ///   * alloc_table.json - classes with a fixed allocation shape (constants, or sizes linear in
     ///     list/string lengths); "opt" slots are skipped when their size is 0;
     ///   * Custom below    - classes whose allocations depend on the content's structure;
@@ -294,13 +292,13 @@ namespace FrostyAnimationEditor.Core
         // ---------------------------------------------------------------------------- post-load
         private static void PostLha(GdObj o, Rec A, Func<ulong, GdObj> db)
         {
-            // FUN_145da1430 -> FUN_145da0750: one 16-byte (key, index) map entry per LayoutAssets element
+            // one 16-byte (key, index) map entry per LayoutAssets element
             A.Opt(16 * Len(o, "LayoutAssets"), 8);
         }
 
         private static void PostLoco(GdObj o, Rec A, Func<ulong, GdObj> db)
         {
-            // FUN_146093cc0 -> FUN_146073020: a 64-byte BumbleBerryControllerAsset, then, when
+            // a 64-byte BumbleBerryControllerAsset, then, when
             // PriorityDatabase resolves, 8 bytes per entry of its ContextDB (requested even for 0 entries)
             A.Add(64, 8);
             ulong k = Num.ToKey(G(o, "PriorityDatabase"));
@@ -313,7 +311,7 @@ namespace FrostyAnimationEditor.Core
         }
 
         // ---------------------------------------------------------------------------- data interfaces
-        /// <summary>the 53 game-side data interfaces (registry at 0x14485E730): guid -> {name, size, members}</summary>
+        /// <summary>the 53 game-side data interfaces: guid -> {name, size, members}</summary>
         public static JObject DataInterfaces { get { Init(); return dataIfs; } }
 
         public static JObject DataInterface(GdObj o)
@@ -326,7 +324,7 @@ namespace FrostyAnimationEditor.Core
         // ---------------------------------------------------------------------------- misc helpers
         private static float F32(double x) { return (float)x; }
 
-        /// <summary>FUN_145f60d90: floor((TrajEndTick - TrajStartTick) / RecordDeltaT) + 1 in float32, as int16</summary>
+        /// <summary>floor((TrajEndTick - TrajStartTick) / RecordDeltaT) + 1 in float32, as int16</summary>
         public static long TrajSamples(GdStruct ts)
         {
             long a = Num.ToLong(ts["TrajStartTick"]), b = Num.ToLong(ts["TrajEndTick"]);
@@ -339,7 +337,7 @@ namespace FrostyAnimationEditor.Core
             return n >= 0x8000 ? n - 0x10000 : n;
         }
 
-        /// <summary>FUN_146b8d9b0: align16((slots + 1) * 32 + strlen(name) + 2 + sum(strlen(slot) + 1))</summary>
+        /// <summary>align16((slots + 1) * 32 + strlen(name) + 2 + sum(strlen(slot) + 1))</summary>
         public static long LayoutSize(object name, IList slotNames)
         {
             long n = slotNames.Count;
@@ -349,7 +347,7 @@ namespace FrostyAnimationEditor.Core
             return AlignUp(size, 16);
         }
 
-        /// <summary>FUN_145da1030: ~CRC32(MSB-first) of the name seeded with 0x811C9DC5</summary>
+        /// <summary>~CRC32(MSB-first) of the name seeded with 0x811C9DC5</summary>
         public static uint RigopHash(object name)
         {
             byte[] b;
@@ -391,7 +389,7 @@ namespace FrostyAnimationEditor.Core
             public CdbField(long t, long f, long v, long g) { Type = t; Flag = f; Value = v; Guid = g; }
         }
 
-        /// <summary>the runtime field records FUN_145f86b30 builds from FieldDescriptionAssets</summary>
+        /// <summary>the runtime field records the game builds from FieldDescriptionAssets</summary>
         public static List<CdbField> CdbFields(GdStruct cdb)
         {
             Init();
@@ -424,7 +422,7 @@ namespace FrostyAnimationEditor.Core
 
         private static long CDiv8(long x) { return x / 8; }     // C truncation toward zero
 
-        /// <summary>FUN_145f8d830 over the fields sorted by FUN_145f83a10 (metadata flag first)</summary>
+        /// <summary>the size of a context database, its fields sorted with the metadata ones first</summary>
         public static long CdbSize(GdStruct cdb)
         {
             List<CdbField> fl = CdbFields(cdb);
@@ -476,9 +474,9 @@ namespace FrostyAnimationEditor.Core
 
         private static void CdbTail(GdStruct cdb, Rec A)
         {
-            A.Opt(8 * LenOf(cdb["EntryAssets"]), 8);                          // FUN_145f851c0
+            A.Opt(8 * LenOf(cdb["EntryAssets"]), 8);
             long k = GameStateFields(cdb);
-            if (k > 0) A.Add(0x18 * k, 16);                                   // FUN_145f8ea50 -> FUN_145f85250
+            if (k > 0) A.Add(0x18 * k, 16);                                   //
         }
 
         // ---------------------------------------------------------------------------- custom models
@@ -489,7 +487,7 @@ namespace FrostyAnimationEditor.Core
 
         private static void AStr(object s, Rec A)
         {
-            // FUN_145daa600: an AssetString copy of len+1 bytes, nothing for a null or empty string
+            // an AssetString copy of len+1 bytes, nothing for a null or empty string
             string str = s as string;
             if (str != null && str.Length != 0) A.Add(Encoding.UTF8.GetByteCount(str) + 1, 1);
         }

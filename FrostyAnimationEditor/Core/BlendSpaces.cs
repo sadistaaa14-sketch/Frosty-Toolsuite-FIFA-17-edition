@@ -19,7 +19,7 @@ namespace FrostyAnimationEditor.Core
     ///                     Length, TriangleIndex, IsDegenerate
     ///   PosCentroid       area-weighted mean of the triangle centroids
     ///   NumColumns, NumRows, GridStepX/Y, GridItems[row*NumColumns+col] = triangles touching that cell
-    /// The runtime (loader FUN_145f4fc20) reads these tables as stored; the game holds no builder, so how EA's
+    /// The runtime reads these tables as stored; the game holds no builder, so how EA's
     /// tool orders the triangles and picks the grid size is not recoverable - Compare checks the geometry as sets.
     /// </summary>
     public static class BlendSpaces

@@ -6,25 +6,24 @@ using System.Linq;
 namespace FrostyAnimationEditor.Core
 {
     /// <summary>
-    /// Curves stored as bytes or sample lists, evaluated bit for bit the way FIFA17.exe does (verified in the
-    /// emulator: DofWeightCurves scalar + SIMD paths, FloatGameStateTag classes and modes).
+    /// Curves stored as bytes or sample lists, evaluated bit for bit the way the game does
+    /// (DofWeightCurves scalar + SIMD paths, FloatGameStateTag classes and modes).
     ///
-    /// DofWeightCurvesAsset (FUN_145cd6d90 loads it, FUN_145cd7960 builds the per-DOF table, FUN_145cd9c90 /
-    /// FUN_145cd81f0 evaluate it): every curve is 4 bytes [start, length, in, out]; T = 255 t.  length 0: weight 1
+    /// DofWeightCurvesAsset (the game builds a per-DOF table from it and evaluates it): every curve is 4 bytes [start, length, in, out]; T = 255 t.  length 0: weight 1
     /// when T &gt; start (or T is NaN), else 0.  Otherwise u = clamp((T - start) / length, 0, 1), a = in*6/255 - 1.5,
     /// b = out*6/255 - 1.5 (a DOF whose inherited-mask byte is set uses a = 1, b = 2) and
     /// weight = ((a - b) + 1) u^3 + (b - 2a) u^2 + a u.  The game evaluates DOFs in groups of four with SIMD code and
     /// the remaining count % 4 with scalar code; the two differ in the order of operations.
     ///
-    /// FloatGameStateTag (FUN_145d1e090 picks the class from SplineStorageFlags, FUN_145d1d0c0 loads it):
+    /// FloatGameStateTag (the game picks the curve kind from SplineStorageFlags):
     ///   0x10 Spline samples (linear), 0x40 SplineRaw bytes (value/255, linear), 0x20|n cubic Bezier y(x) after n
-    ///   steps u += (t - x(u))/2.  Mode (FUN_145d1eb20): 0 nothing, 1 v f, 2 v f cur, 3 (1-f) cur + v f, 4 v f + cur,
+    ///   steps u += (t - x(u))/2.  Mode: 0 nothing, 1 v f, 2 v f cur, 3 (1-f) cur + v f, 4 v f + cur,
     ///   5 cur - v f, 6 v f at t + cur, 7 v f + cur; other values write 0.
     /// </summary>
     public static class Curves
     {
         public static float BitsF(uint u) { return BE.BitsFloat(u); }
-        public static readonly float K6 = BitsF(0x3CC0C0C1);          // 6/255 as stored in the exe
+        public static readonly float K6 = BitsF(0x3CC0C0C1);          // 6/255 as the game stores it
         public static readonly float INV255 = (float)0.003921568859368563;
         public static readonly float TOL = BitsF(0x3A83126F);         // 0.001
         private const float ZERO = 0f, ONE = 1f, TWO = 2f, MTWO = -2f, MHALF3 = -1.5f;
@@ -89,7 +88,7 @@ namespace FrostyAnimationEditor.Core
 
         private static float Slope(int b) { return (float)((float)b * K6) + MHALF3; }
 
-        /// <summary>FUN_145cd9c90 for one DOF: weight at normalised time t of curve bytes b with mask byte mask;
+        /// <summary>one DOF: weight at normalised time t of curve bytes b with mask byte mask;
         /// simd selects the order of operations used for DOFs in a group of four</summary>
         public static float Weight(byte[] b, float t, int mask = 0, bool simd = false)
         {
@@ -112,7 +111,7 @@ namespace FrostyAnimationEditor.Core
             return CubicScalar(u2, a2, b2);
         }
 
-        /// <summary>FUN_145cd81f0 for one DOF (TimeScaleBlend with WeightCurvesOut): parameters interpolated from
+        /// <summary>one DOF (TimeScaleBlend with WeightCurvesOut): parameters interpolated from
         /// bIn to bOut by blend; mask is bIn's table byte</summary>
         public static float WeightBlend(byte[] bIn, byte[] bOut, float t, float blend, int mask = 0, bool simd = false)
         {
@@ -142,7 +141,7 @@ namespace FrostyAnimationEditor.Core
             return CubicScalar(u2, a2, b2);
         }
 
-        /// <summary>FUN_145cd9c90 over a whole per-DOF table (complete groups of four use the SIMD order)</summary>
+        /// <summary>a whole per-DOF table (complete groups of four use the SIMD order)</summary>
         public static List<float> TableWeights(IList<byte[]> curves, IList<int> masks, float t)
         {
             int n = curves.Count, g = 4 * (n / 4);
@@ -312,7 +311,7 @@ namespace FrostyAnimationEditor.Core
             { 0, "apply the tag once more at the leave time" }, { 1, "reset to the game state's default" }, { 2, "restore the value saved at entry" },
         };
 
-        /// <summary>FUN_145d1eb20: the value the tag writes at t given current; null when the curve depends on
+        /// <summary>the value the tag writes at t given current; null when the curve depends on
         /// memory outside the samples</summary>
         public static float? TagApply(GdStruct o, float t, float current)
         {
@@ -335,7 +334,7 @@ namespace FrostyAnimationEditor.Core
             return cur - (float)(f * v);
         }
 
-        /// <summary>FUN_145d1e980 (Mode 6 at entry): the time at which the curve reaches value</summary>
+        /// <summary>(Mode 6 at entry): the time at which the curve reaches value</summary>
         public static float? TagInvert(GdStruct o, float value)
         {
             float v = value;
@@ -376,8 +375,8 @@ namespace FrostyAnimationEditor.Core
             return null;
         }
 
-        /// <summary>the game-state value through one stay in the tagged state: enter (FUN_145d20000), one update
-        /// per time (FUN_145d20e30), leave at leaveT (FUN_145d20760); -> (values after each update, value after leaving)</summary>
+        /// <summary>the game-state value through one stay in the tagged state: enter, one update
+        /// per time, leave at leaveT; -> (values after each update, value after leaving)</summary>
         public static List<float?> TagRun(GdStruct o, IList<float> times, float value, out float? end, float dflt = 0f, int? resetOnLeave = null, float? leaveT = null)
         {
             long mode = o.GetInt("Mode");

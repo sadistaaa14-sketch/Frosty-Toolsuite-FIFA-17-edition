@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 
 namespace FrostyAnimationEditor.Core
 {
-    /// <summary>Kernel disassembler and assembler (the text round-trips to the same blob and bindings).</summary>
+    /// <summary>Kernel to text and back (the text round-trips to the same blob and bindings).</summary>
     public static class KernelText
     {
         private const uint NONE = Kernel.NONE;
@@ -262,7 +262,7 @@ namespace FrostyAnimationEditor.Core
 
             List<string> o_ = new List<string>();
             Action<string> w = o_.Add;
-            w("; FIFA 17 expression kernel (ExpressionAsset.ExpressionKernel) - antstate disassembly");
+            w("; FIFA 17 expression kernel (ExpressionAsset.ExpressionKernel) as text");
             if (!string.IsNullOrEmpty(title)) w("; " + title);
             w("; operands: c:OFF constants, s:OFF state registers, t:OFF temporaries, - none;");
             w("; calls: OUTPUTS = native INPUTS [| STATE]; '-> L' gives a non-sequential next instruction");

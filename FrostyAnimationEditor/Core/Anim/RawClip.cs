@@ -6,16 +6,16 @@ namespace FrostyAnimationEditor.Core.Anim
 {
     /// <summary>
     /// RawAnimationAsset ("RAW ") and FrameAnimationAsset ("FRAM") - ports of the runtime.
-    /// RAW (loader FUN_145d26dc0, sampler FUN_145d2b310/FUN_145d2b570): Data = NumKeys rows of
+    /// RAW: Data = NumKeys rows of
     /// align4(4*QuatCount + 4*Vec3Count + FloatCount) floats [quats x4][vec3 x4][floats][pad]; ConstData
     /// [ConstQuat x4][ConstVec3 x4][ConstFloat]; MappingIndices stored channel -> rig channel; ChannelIndices
-    /// the inverse; KeyTimes i16 frame of every key; seek FUN_145d2d160 (Cycle = loop); quats blended
+    /// the inverse; KeyTimes i16 frame of every key; seek over KeyTimes (Cycle = loop); quats blended
     /// shortest-arc + normalised, vec/float lerp.
-    /// FRAM (loader FUN_145d26cd0): one static pose [QuatCount x4][Vec3Count x4][FloatCount].
+    /// FRAM: one static pose [QuatCount x4][Vec3Count x4][FloatCount].
     /// </summary>
     public static class KeyTime
     {
-        /// <summary>FUN_145d2d160 / FUN_145d3bdf0: frame -> (keyA, keyB, alpha) over a key-time table</summary>
+        /// <summary>frame -> (keyA, keyB, alpha) over a key-time table</summary>
         public static void Seek(IList<long> kt, double t, bool cycle, long endFrame, out int a, out int b, out double al)
         {
             int n = kt.Count;

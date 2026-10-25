@@ -1,0 +1,173 @@
+<ctrl:FrostyDockableWindow x:Class="DuplicationPlugin.Windows.ImportStadiumWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ctrl="clr-namespace:Frosty.Controls;assembly=FrostyControls"
+        mc:Ignorable="d"
+        Title="Import PES Stadium" Height="888" Width="820" ResizeMode="CanResize" MinHeight="600" MinWidth="700"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/FrostyControls;component/Themes/Generic.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Background="{StaticResource WindowBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition/>
+            <RowDefinition Height="38"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Background="{StaticResource ListBackground}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- package -->
+            <DockPanel Grid.Row="0" Margin="5,5,5,0" LastChildFill="True">
+                <Label Content="Package" FontFamily="Global User Interface" Width="110"/>
+                <Button x:Name="browseButton" DockPanel.Dock="Right" Content="Browse..." Width="80" Margin="4,0,0,0" Click="BrowseButton_Click"/>
+                <TextBox x:Name="packageTextBox" Padding="4" FontFamily="Global User Interface" BorderThickness="1"
+                         ToolTip="stadium.json of a package written by the PES to FIFA 17 stadium converter" LostFocus="PackageTextBox_LostFocus"/>
+            </DockPanel>
+            <TextBlock x:Name="packageInfoText" Grid.Row="1" Margin="120,2,5,0" Foreground="{StaticResource FontColor}" FontFamily="Global User Interface"
+                       TextWrapping="Wrap" Text="Choose a stadium.json."/>
+
+            <!-- target -->
+            <DockPanel Grid.Row="2" Margin="5,6,5,0" LastChildFill="True">
+                <Label Content="Target stadium" FontFamily="Global User Interface" Width="110"/>
+                <ComboBox x:Name="stadiumComboBox" FontFamily="Global User Interface" SelectionChanged="StadiumComboBox_SelectionChanged"
+                          ToolTip="content/worlds/stadiums/&lt;folder&gt;; its component meshes (content/worlds/components/stadiums/&lt;name&gt;) receive the geometry"/>
+            </DockPanel>
+
+            <!-- slots -->
+            <Grid Grid.Row="3" Margin="5,6,5,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Foreground="{StaticResource FontColor}" FontFamily="Global User Interface" Margin="0,0,0,2"
+                           Text="Package meshes and the stadium mesh each one replaces (the mesh keeps its name, blueprint and bundles; its geometry and materials are replaced):"
+                           TextWrapping="Wrap"/>
+                <ListView x:Name="slotListView" Grid.Row="1" FontFamily="Global User Interface" BorderThickness="1"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Focusable" Value="False"/>
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="260"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding SlotName}" VerticalAlignment="Center" FontWeight="Bold"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Info}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="4,0"/>
+                                <ComboBox Grid.Column="2" ItemsSource="{Binding Targets}" SelectedItem="{Binding SelectedTarget, Mode=TwoWay}" VerticalAlignment="Center"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+
+            <!-- options -->
+            <StackPanel Grid.Row="4" Margin="5,6,5,5">
+                <CheckBox x:Name="importTexturesCheckBox" IsChecked="True" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          Content="Import the package textures as new texture assets (colour, normal, coefficient) and wire them into the materials"/>
+                <DockPanel Margin="20,2,0,0" LastChildFill="True">
+                    <Label Content="Texture folder" FontFamily="Global User Interface" Width="110"/>
+                    <TextBox x:Name="textureFolderTextBox" Padding="4" FontFamily="Global User Interface" BorderThickness="1"
+                             ToolTip="Asset folder of the imported textures"/>
+                </DockPanel>
+                <CheckBox x:Name="dynamicLightingCheckBox" IsChecked="True" Margin="0,4,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          Content="Dynamic lighting (EnlightenType_Dynamic): the imported geometry has no baked lightmap"/>
+                <CheckBox x:Name="crowdCheckBox" IsChecked="True" Margin="0,4,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          Content="Crowd: rewrite the stadium's crowd point cloud with the package's spectator positions"/>
+                <CheckBox x:Name="physicsCheckBox" IsChecked="True" Margin="0,2,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          Content="Collision: replace the stadium's ball-collision data with the package's"/>
+                <CheckBox x:Name="keepBenchesCheckBox" IsChecked="False" Margin="0,2,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          ToolTip="Off: the PES dugouts are imported, the FIFA playerbenches mesh is emptied and the stadium's bench areas (the stadium_&lt;id&gt; broadcasting record: manager areas, warm-up strips) are moved in front of the PES dugouts; the matching DB tech-zone values are printed in the log. On: the package's dugout furniture is not imported and the PES geometry inside the FIFA bench box is removed."
+                          Content="Keep the FIFA benches instead of the PES dugouts"/>
+                <CheckBox x:Name="carveTunnelCheckBox" IsChecked="True" Margin="0,2,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          ToolTip="The PES stand is cut along the box of the FIFA tunnel (the non-bench sections of playerbenches_mesh) so the tunnel is an opening in the stand instead of a box poking through the terrace; the crowd and the collision data leave the box out too."
+                          Content="Carve the FIFA tunnel into the PES stand"/>
+                <CheckBox x:Name="refitCheckBox" IsChecked="True" Margin="0,2,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          ToolTip="Every stewards / police / photographer / ball boy / camera crew / manager placement, sideline prop and weather prop of the base stadium is tested against the imported geometry: the ones standing inside or under the PES stands are moved towards the pitch (never closer than 2.5 m to the lines) onto open, level ground; the ones with no room within 10 m are moved out of sight. The log lists every move."
+                          Content="Move the base stadium's pitch-side characters and props out of the PES stands"/>
+                <CheckBox x:Name="sinkCrestsCheckBox" IsChecked="True" Margin="0,2,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          ToolTip="The crest boards hang on the base stadium's stand-front walls, which the package replaces."
+                          Content="Move the base stadium's crest boards out of sight"/>
+                <CheckBox x:Name="flaresCheckBox" IsChecked="True" Margin="0,2,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          ToolTip="The lens flares and fog cones of the base stadium sit at the lamps of its roof. They are moved onto the lamp heads the package found in the PES geometry (lamp-named materials), at most one per lamp group, aimed at the pitch; the surplus, or all of them when the package has no lamps, are moved out of sight."
+                          Content="Move the base stadium's lens flares onto the PES lamps"/>
+                <CheckBox x:Name="groundPlaneCheckBox" IsChecked="True" Margin="0,2,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          ToolTip="A FIFA stadium has no terrain: outside the stands only the facade's plaza plate (generic_158: at y -7.6) and the painted city wall 160-190 m out exist. A package without an exterior layer brings its trees, buildings and cars at y 0 with nothing under them. On: a flat ground plane at y -0.05 over the backdrop's footprint is written into exterior_facade_mesh (its own concrete material), the backdrop wall stays as the horizon. Not used when the package fills the exterior itself."
+                          Content="Exterior ground plane under the PES surroundings (packages without an exterior layer)"/>
+                <TextBlock Margin="0,4,0,0" Foreground="{StaticResource FontColor}" FontFamily="Global User Interface" Text="Base stadium parts the package replaces (emptied or moved out of sight):"/>
+                <WrapPanel Margin="12,2,0,0">
+                    <CheckBox x:Name="clearRailingsCheckBox" IsChecked="True" Margin="0,0,14,2" Padding="4,0,0,0" FontFamily="Global User Interface" Foreground="{StaticResource FontColor}" Content="railings" ToolTip="railings_mesh: pitch-side barriers and tier-front rails of the base stadium (+ their plastic collision)"/>
+                    <CheckBox x:Name="clearNettingCheckBox" IsChecked="True" Margin="0,0,14,2" Padding="4,0,0,0" FontFamily="Global User Interface" Foreground="{StaticResource FontColor}" Content="crowd nets" ToolTip="crowdnetting_*_mesh: nets behind the goals"/>
+                    <CheckBox x:Name="clearCitySkirtCheckBox" IsChecked="False" Margin="0,0,14,2" Padding="4,0,0,0" FontFamily="Global User Interface" Foreground="{StaticResource FontColor}" Content="backdrop (city skirt)" ToolTip="exterior_cityskirt_mesh and the background panels: the painted city wall 160-190 m out. Off: kept as the horizon behind the PES stadium (emptied anyway when the package's own exterior reaches out to it, e.g. Guadalajara's 3 km landscape). On: always emptied."/>
+                    <CheckBox x:Name="clearScoreboardCheckBox" IsChecked="True" Margin="0,0,14,2" Padding="4,0,0,0" FontFamily="Global User Interface" Foreground="{StaticResource FontColor}" Content="scoreboard" ToolTip="scoreclock_mesh: the base stadium's jumbotrons (they hang inside the PES stands)"/>
+                    <CheckBox x:Name="clearAdboardsCheckBox" IsChecked="True" Margin="0,0,14,2" Padding="4,0,0,0" FontFamily="Global User Interface" Foreground="{StaticResource FontColor}" Content="static adboards" ToolTip="adboards_mesh plinth and the adboards sublevel's printed boards around the base apron (the LED boards are placed by the game)"/>
+                    <CheckBox x:Name="sinkBannersCheckBox" IsChecked="True" Margin="0,0,14,2" Padding="4,0,0,0" FontFamily="Global User Interface" Foreground="{StaticResource FontColor}" Content="banners" ToolTip="banners sublevel: fan banners hung on the base stadium's stand fronts"/>
+                    <CheckBox x:Name="sinkLightsCheckBox" IsChecked="True" Margin="0,0,14,2" Padding="4,0,0,0" FontFamily="Global User Interface" Foreground="{StaticResource FontColor}" Content="light fixtures" ToolTip="light fixture props on the base stadium's roof (the light sources stay)"/>
+                    <CheckBox x:Name="clearOthersCheckBox" IsChecked="True" Margin="0,0,14,2" Padding="4,0,0,0" FontFamily="Global User Interface" Foreground="{StaticResource FontColor}" Content="every other component mesh" ToolTip="Every other mesh of the base stadium's component folder (per-piece railings, extra roof and stand pieces, snow cover, tournament dressing ...) is emptied too; the pitch, the benches and the entrance tunnel stay."/>
+                </WrapPanel>
+                <Grid Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Label Grid.Row="0" Grid.Column="0" Content="Opaque preset" FontFamily="Global User Interface"/>
+                    <TextBox Grid.Row="0" Grid.Column="1" x:Name="opaquePresetTextBox" Padding="3" FontFamily="Global User Interface" BorderThickness="1" Margin="0,0,6,2"
+                             ToolTip="SurfaceShaderPreset for opaque materials (worlds_default_preset based)"/>
+                    <Label Grid.Row="0" Grid.Column="2" Content="Alpha test preset" FontFamily="Global User Interface"/>
+                    <TextBox Grid.Row="0" Grid.Column="3" x:Name="alphaPresetTextBox" Padding="3" FontFamily="Global User Interface" BorderThickness="1" Margin="0,0,0,2"
+                             ToolTip="SurfaceShaderPreset for cut-out materials (fences, railings; worlds_alphatest_preset based)"/>
+                    <Label Grid.Row="1" Grid.Column="0" Content="Glass preset" FontFamily="Global User Interface"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" x:Name="glassPresetTextBox" Padding="3" FontFamily="Global User Interface" BorderThickness="1" Margin="0,0,6,0"
+                             ToolTip="SurfaceShaderPreset for glass materials"/>
+                    <Label Grid.Row="1" Grid.Column="2" Content="Emissive preset" FontFamily="Global User Interface"/>
+                    <TextBox Grid.Row="1" Grid.Column="3" x:Name="emissivePresetTextBox" Padding="3" FontFamily="Global User Interface" BorderThickness="1"
+                             ToolTip="SurfaceShaderPreset for self-lit materials (screens, lamps); empty = the opaque preset"/>
+                </Grid>
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1">
+            <Grid Margin="8">
+                <Button x:Name="cancelButton" Content="Cancel" HorizontalAlignment="Left" Width="75" Click="CancelButton_Click"/>
+                <Button x:Name="importButton" Content="Import" HorizontalAlignment="Right" Width="100" Click="ImportButton_Click"/>
+            </Grid>
+        </Border>
+    </Grid>
+</ctrl:FrostyDockableWindow>

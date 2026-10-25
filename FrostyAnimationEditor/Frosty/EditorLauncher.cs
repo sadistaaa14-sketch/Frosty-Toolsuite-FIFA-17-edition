@@ -79,17 +79,15 @@ namespace FrostyAnimationEditor.Plugin
                 FrostyMessageBox.Show("Load the game (open or create a project) first.", "Animation Editor");
                 return;
             }
-            List<EbxAssetEntry> found;
-            try { found = FrostyAntState.Find(); }
-            catch (Exception e) { FrostyMessageBox.Show("Could not list the AntStateAsset assets: " + e.Message, "Animation Editor"); return; }
-            if (found.Count == 0)
+            // the game's animation bank: the only AntStateAsset with content
+            EbxAssetEntry pick;
+            try { pick = FrostyAntState.FindMain(); }
+            catch (Exception e) { FrostyMessageBox.Show("Could not look up " + FrostyAntState.MainAsset + ": " + e.Message, "Animation Editor"); return; }
+            if (pick == null)
             {
-                FrostyMessageBox.Show("This game has no AntStateAsset. The Animation Editor edits FIFA 17's fifagame_win32_antstate.", "Animation Editor");
+                FrostyMessageBox.Show("This game has no " + FrostyAntState.MainAsset + ". The Animation Editor edits FIFA 17's fifagame_win32_antstate.", "Animation Editor");
                 return;
             }
-            EbxAssetEntry pick = found.Count == 1 ? found[0] : Dialog.Pick(Application.Current.MainWindow, "Animation Editor",
-                "This game has several AntStateAsset assets. Which one?", found, e => e.Name + (e.IsModified ? "  (modified)" : ""));
-            if (pick == null) return;
             LoadedSource src;
             try { src = Load(Application.Current.MainWindow, pick); }
             catch (Exception e)
@@ -106,6 +104,7 @@ namespace FrostyAnimationEditor.Plugin
             window = new EditorWindow(src);
             window.Closed += (s, e) =>
             {
+                PlayerWindow.CloseAll();
                 window = null;
                 GC.Collect();
             };
@@ -167,7 +166,9 @@ namespace FrostyAnimationEditor.Plugin
                 note = "cache built in " + (sw.ElapsedMilliseconds / 1000.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " s";
             }
             EditorCache.Log("Animation Editor: " + cacheName + ", " + db.N0 + " objects, " + note);
-            return new LoadedSource { Model = new EditorModel(new Session(db), cacheName), CacheNote = note };
+            EditorModel model = new EditorModel(new Session(db), cacheName);
+            model.SkeletonSource = () => PlayerAssets.Available ? PlayerAssets.LoadSkeleton() : null;
+            return new LoadedSource { Model = model, CacheNote = note };
         }
 
         /// <summary>writes the cache for a container this session produced (so the next session starts without the first-run build)</summary>

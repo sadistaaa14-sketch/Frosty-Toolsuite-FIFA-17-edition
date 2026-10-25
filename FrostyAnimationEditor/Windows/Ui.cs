@@ -67,6 +67,21 @@ namespace FrostyAnimationEditor.Windows
             return t;
         }
 
+        /// <summary>a tooltip body that wraps long text</summary>
+        public static TextBlock Tip(string text)
+        {
+            return new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, MaxWidth = 460 };
+        }
+
+        /// <summary>a dotted underline: the text has a tooltip worth reading</summary>
+        public static TextBlock Dotted(TextBlock t)
+        {
+            Pen p = new Pen(Muted, 1) { DashStyle = DashStyles.Dot };
+            p.Freeze();
+            t.TextDecorations = new TextDecorationCollection { new TextDecoration(TextDecorationLocation.Underline, p, 1, TextDecorationUnit.FontRecommended, TextDecorationUnit.FontRecommended) };
+            return t;
+        }
+
         public static TextBlock Trim(TextBlock t)
         {
             t.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -328,6 +343,14 @@ namespace FrostyAnimationEditor.Windows
         public static string Thousands(long v) { return v.ToString("#,0", CultureInfo.InvariantCulture); }
 
         public static string Quote(string s) { return PyFormat.JsonStr(s ?? ""); }
+
+        /// <summary>display name of an object: a clip's readable name (its controller's name) when it has one, else its name</summary>
+        public static string Label(JObject o)
+        {
+            if (o == null) return "";
+            string a = o.Str("alias");
+            return !string.IsNullOrEmpty(a) ? a : o.Str("name") ?? "";
+        }
 
         public static string Plural(long n, string one, string many = null) { return n + " " + (n == 1 ? one : (many ?? one + "s")); }
 

@@ -80,6 +80,7 @@ namespace FrostyAnimationEditor.Core
         public int Index;
         public byte[] RecBytes;
         public TypeDesc Type;          // resolved descriptor of the field's type (element type for lists)
+        public TypeDesc Owner;         // the type that declares the field
 
         public bool IsList { get { return (Attr & 1) != 0; } }
         public bool IsImplicit { get { return Name == "__name" || Name == "__base" || Name == "__key"; } }
@@ -230,6 +231,7 @@ namespace FrostyAnimationEditor.Core
                     f.Index = k;
                     f.RecBytes = new byte[32];
                     Buffer.BlockCopy(m, (int)r, f.RecBytes, 0, 32);
+                    f.Owner = t;
                     t.Fields.Add(f);
                 }
                 for (int k = 0; k < t.Fields.Count; k++)
@@ -264,8 +266,7 @@ namespace FrostyAnimationEditor.Core
         public byte[] ToBytes() { return Raw; }
 
         // -------------------------------------------------------------------------------------
-        // CRC-32 type id: FUN_145e1d560 = CRC-32 MSB-first, poly 0x04C11DB7, init 0; FUN_146b8d840
-        // feeds it every field record's (+0x00 u32, +0x0C u32, +0x10 u16, +0x12 u16, +0x08 u32,
+        // CRC-32 type id: CRC-32 MSB-first, poly 0x04C11DB7, init 0, fed with every field record's (+0x00 u32, +0x0C u32, +0x10 u16, +0x12 u16, +0x08 u32,
         // +0x16 u16) little-endian, then the name block, then u32 pad0, u32 lastFieldIndex, u32 align.
         // -------------------------------------------------------------------------------------
         private static readonly uint[] CrcTab = BuildCrcTable();

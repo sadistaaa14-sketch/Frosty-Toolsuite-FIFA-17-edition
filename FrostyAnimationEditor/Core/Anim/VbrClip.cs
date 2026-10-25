@@ -5,14 +5,13 @@ using System.Collections.Generic;
 namespace FrostyAnimationEditor.Core.Anim
 {
     /// <summary>
-    /// VbrAnimationAsset ("VBR " codec) - port of the FIFA 17 runtime sampler:
-    ///   FUN_145d27110 loader (byte-reverses every block body [o+3, o+size-1]),
-    ///   FUN_145d2cf90 seek (Flags bit0 loop, bit1 one key per frame, key-time RLE at the start of Data),
-    ///   FUN_145d25730 block unpacker (per animated scalar a u32 of 8 nibble widths; per coefficient with
+    /// VbrAnimationAsset ("VBR " codec), decoded the way the game decodes it:
+    ///   every block body [o+3, o+size-1] is stored byte-reversed;
+    ///   seek: Flags bit0 loop, bit1 one key per frame, key-time RLE at the start of Data;
+    ///   blocks: (per animated scalar a u32 of 8 nibble widths; per coefficient with
     ///   width != 0 one flag bit; per set flag one sign bit (1 = +); then magnitudes, LSB-first; scalar s
     ///   goes to lane s (quats), s + (s-4Q)/3 (vectors, 4 lanes each), s + V (floats)),
-    ///   FUN_145d31300 dequantise + 8-point IDCT + range map per 4-lane group,
-    ///   FUN_145d25660/FUN_145d25430 offset ramps, FUN_145d2f060 pose writer.
+    ///   then dequantise + 8-point IDCT + range map per 4-lane group, offset ramps, and the pose write.
     /// </summary>
     public sealed class VbrClip
     {
@@ -141,7 +140,7 @@ namespace FrostyAnimationEditor.Core.Anim
             return r;
         }
 
-        /// <summary>(quats [CQ][4], vecs [CV][3], floats [CF]) exactly as FUN_145d2f060 writes them</summary>
+        /// <summary>(quats [CQ][4], vecs [CV][3], floats [CF]) exactly as the game writes them</summary>
         public void Constants(out float[][] q, out float[][] v, out float[] f)
         {
             int nq = 4 * CQ, nv = 3 * CV;
@@ -175,7 +174,7 @@ namespace FrostyAnimationEditor.Core.Anim
             for (int j = 0; j < CF; j++) f[j] = val(nq + nv + j, fs, FloatMin);
         }
 
-        /// <summary>-> coefficients [8 coef, lanes] and the three row weights of block bi (FUN_145d25730)</summary>
+        /// <summary>-> coefficients [8 coef, lanes] and the three row weights of block bi</summary>
         public int[,] UnpackBlock(int bi, out int w0, out int w1, out int w2)
         {
             int st = BlockStarts[bi];
@@ -290,7 +289,7 @@ namespace FrostyAnimationEditor.Core.Anim
 
         private static int I8(int b) { return b > 127 ? b - 256 : b; }
 
-        /// <summary>FUN_145d25430 applied to every block of the clip (per block it touches keys 8b..8b+7)</summary>
+        /// <summary>an offset ramp applied to every block of the clip (per block it touches keys 8b..8b+7)</summary>
         private void ApplyRamp(float[,] keys, int lane0, float scale, int off, int size)
         {
             Func<int, int> tab = i => i < size ? Data[off + i] : 0;
@@ -403,7 +402,7 @@ namespace FrostyAnimationEditor.Core.Anim
             }
         }
 
-        /// <summary>FUN_145d2cf90: time (frames) -> (keyA, keyB, alpha)</summary>
+        /// <summary>time (frames) -> (keyA, keyB, alpha)</summary>
         public void Seek(double t, out int keyA, out int keyB, out double frac)
         {
             double f = PyFormat.Floor(t);

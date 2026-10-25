@@ -5,12 +5,11 @@ using System.Collections.Generic;
 namespace FrostyAnimationEditor.Core.Anim
 {
     /// <summary>
-    /// DctAnimationAsset ("DCT " codec) - port of the FIFA 17 runtime decoder:
-    ///   FUN_145d38860 field loader, FUN_145d3b6d0 block decode (block = key>>3; block 0 stores no coefficient 0),
-    ///   FUN_145d36a50 fields read MSB-first with nibble widths (0xF = CatchAllBitCount), FUN_145d36da0
-    ///   coefficient 0 += DeltaBase, FUN_145d36410 value = sum_k coef_k*(k*QuantizeMultSubblock*0.1 + 1)/
-    ///   QuantizeMultBlock*B[r][k] (B at 0x1442cf7d0: B[r][0] = 0.25, B[r][k] = cos((2r+1)k pi/16)/2), quats
-    ///   normalised; FUN_145d3bdf0 seek over KeyTimes (Cycle = loop); FUN_145d3c830 blend.
+    /// DctAnimationAsset ("DCT " codec), decoded the way the game decodes it:
+    ///   blocks of 8 keys (block = key>>3; block 0 stores no coefficient 0); fields read MSB-first with nibble
+    ///   widths (0xF = CatchAllBitCount); coefficient 0 += DeltaBase; value = sum_k coef_k*(k*QuantizeMultSubblock*0.1 + 1)/
+    ///   QuantizeMultBlock*B[r][k] (B[r][0] = 0.25, B[r][k] = cos((2r+1)k pi/16)/2); quats normalised;
+    ///   seek over KeyTimes (Cycle = loop), then blend.
     /// </summary>
     public sealed class DctClip
     {
@@ -92,7 +91,7 @@ namespace FrostyAnimationEditor.Core.Anim
                 o += n;
             }
             if (o != BitsWords.Count) throw new GdException("BitsPerSubblock length " + BitsWords.Count + " != sum of desc>>4 " + o);
-            // FUN_145d2e260 / FUN_145d2df00: sizes use raw nibbles when CatchAll < 16
+            // sizes use raw nibbles when CatchAll < 16
             bool real = CatchAllBitCount >= 16;
             BitsPerBlock = 0;
             BitsCoef0 = 0;
@@ -108,7 +107,7 @@ namespace FrostyAnimationEditor.Core.Anim
 
         public long BlockBitStart(int b) { return b == 0 ? 0 : BitsPerBlock * b - BitsCoef0; }
 
-        /// <summary>n (&lt;= 40) bits MSB-first starting at bit pos (FUN_145d3e240 big-endian mode)</summary>
+        /// <summary>n (&lt;= 40) bits MSB-first starting at bit pos (big-endian)</summary>
         private static ulong Read(byte[] data, long pos, int n)
         {
             if (n == 0) return 0;
@@ -125,7 +124,7 @@ namespace FrostyAnimationEditor.Core.Anim
             return (v >> (n - 1)) != 0 ? (long)v - (1L << n) : (long)v;
         }
 
-        /// <summary>-> integer coefficients [nch][8][4] for block b (FUN_145d36da0/FUN_145d36a50)</summary>
+        /// <summary>-> integer coefficients [nch][8][4] for block b</summary>
         public long[][][] DecodeBlock(int b)
         {
             long pos = BlockBitStart(b);
@@ -171,7 +170,7 @@ namespace FrostyAnimationEditor.Core.Anim
             return coef;
         }
 
-        /// <summary>float32 [NumKeys][nch][4] (FUN_145d36410 per key)</summary>
+        /// <summary>float32 [NumKeys][nch][4] (per key)</summary>
         public float[][][] DecodeAllKeys()
         {
             if (keys != null) return keys;
@@ -247,7 +246,7 @@ namespace FrostyAnimationEditor.Core.Anim
             return kt.Count > 0 ? (int)kt[kt.Count - 1] + 1 : 0;
         }
 
-        /// <summary>frame -> (keyA, keyB, alpha) like FUN_145d3bdf0</summary>
+        /// <summary>frame -> (keyA, keyB, alpha) like the game</summary>
         public void Seek(double t, out int a, out int b, out double al)
         {
             List<long> kt = KeyFrames();

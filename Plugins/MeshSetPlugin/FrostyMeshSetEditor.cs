@@ -1637,7 +1637,7 @@ namespace MeshSetPlugin
     }
     #endregion
 
-    public class FBXImporter
+    public partial class FBXImporter
     {
         public float Scale { get; set; } = 1.0f;
         public int XAxis { get; set; } = 0;
@@ -1899,6 +1899,15 @@ namespace MeshSetPlugin
                     catch (Exception ex)
                     {
                         logger.Log("[Composite Import] WARNING: Blueprint sync failed: {0}", ex.Message);
+                    }
+                    // the level's StaticModelGroup members carry the part count too (GeometryImport.cs)
+                    try
+                    {
+                        SyncStaticModelGroupMembers(entry, meshSet.PartCount);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Log("[Composite Import] WARNING: StaticModelGroup sync failed: {0}", ex.Message);
                     }
                 }
             }
@@ -2769,6 +2778,10 @@ namespace MeshSetPlugin
             List<FbxNode> sectionNodeMapping = new List<FbxNode>();
             List<FbxNode> unclaimedNodes = new List<FbxNode>();
             List<FbxNode> allNodes = new List<FbxNode>();
+            // the nodes that go into a dedicated depth/shadow section: that section has no texture coordinates, so
+            // the depth pre-pass draws it solid - the originals leave their alpha-tested (diffusealpha_*) materials
+            // out of it (fences, railings, nets), else everything behind those sheets disappears
+            List<FbxNode> depthNodes = new List<FbxNode>();
             sectionNodeMapping.AddRange(new FbxNode[meshSections.Count]);
 
             foreach (var node in sectionNodes)
@@ -2836,7 +2849,11 @@ namespace MeshSetPlugin
                 vertices.Dispose();
 
                 allNodes.Add(node);
+                if (!IsAlphaTestedSectionName(meshSections[i].Name))
+                    depthNodes.Add(node);
             }
+            if (depthNodes.Count == 0)
+                depthNodes = allNodes;
 
             // depth sections
             for (int i = 0; i < depthSections.Count; i++)
@@ -2848,7 +2865,7 @@ namespace MeshSetPlugin
                     MemoryStream vertices = new MemoryStream();
                     List<uint> indices = new List<uint>();
 
-                    ProcessSection(allNodes.ToArray(), meshLod, sectionIndex, vertices, indices, vertexBufferSize, ref totalIndices);
+                    ProcessSection(depthNodes.ToArray(), meshLod, sectionIndex, vertices, indices, vertexBufferSize, ref totalIndices);
 
                     sectionsVertices.Add(vertices.ToArray());
                     sectionsIndices.Add(indices);
@@ -2876,7 +2893,7 @@ namespace MeshSetPlugin
                     MemoryStream vertices = new MemoryStream();
                     List<uint> indices = new List<uint>();
 
-                    ProcessSection(allNodes.ToArray(), meshLod, sectionIndex, vertices, indices, vertexBufferSize, ref totalIndices);
+                    ProcessSection(depthNodes.ToArray(), meshLod, sectionIndex, vertices, indices, vertexBufferSize, ref totalIndices);
 
                     sectionsVertices.Add(vertices.ToArray());
                     sectionsIndices.Add(indices);
@@ -3071,6 +3088,12 @@ namespace MeshSetPlugin
 
             meshLod.ClearPartData();
             meshLod.SetParts(partTransforms, partAABBs, partIndices);
+        }
+
+        /// <summary>A section whose material is alpha tested (FIFA 17 stadium materials: diffusealpha_*): left out of a dedicated depth/shadow copy like the originals do.</summary>
+        private static bool IsAlphaTestedSectionName(string name)
+        {
+            return !string.IsNullOrEmpty(name) && name.StartsWith("diffusealpha", StringComparison.OrdinalIgnoreCase);
         }
 
         private void ProcessSection(FbxNode[] sectionNodes, MeshSetLod meshLod, int sectionIndex, MemoryStream verticesBuffer, List<uint> indicesBuffer, uint vertexOffset, ref uint startIndex)

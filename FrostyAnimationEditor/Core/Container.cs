@@ -5,9 +5,9 @@ using System.IO;
 namespace FrostyAnimationEditor.Core
 {
     /// <summary>
-    /// The fifagame_win32_antstate.res container (notes.md sections 3-10, proved by the exe):
+    /// The fifagame_win32_antstate.res container (file layout):
     ///   0x00  16 bytes before the container body (Frosty's res export writes the ResMeta there)
-    ///   0x10  u32 BE version = 3   (FUN_1461a3160 sniff)
+    ///   0x10  u32 BE version = 3   (what the game checks)
     ///   0x14  8 x u32 BE: H1 = 0x20+T*16+C*8+A*16+B*16 (bytes from 0x14 to GD.STRMb; Frosty's AssetBank
     ///         parser skips this many bytes after the version), H2 = version copy, H3..H6 = |T|,|C|,|A|,|B|,
     ///         H7 = reserve of the loader's pending-key waiter pool, H8 = AntLinearResourceAllocator size

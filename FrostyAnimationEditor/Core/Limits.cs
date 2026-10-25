@@ -14,10 +14,9 @@ namespace FrostyAnimationEditor.Core
     }
 
     /// <summary>
-    /// Engine limits: edits FIFA17.exe would refuse, crash on, or load into corrupted memory.  Count fields and
+    /// Engine limits: edits the game would refuse, crash on, or load into corrupted memory.  Count fields and
     /// the other redundant data are re-derived on save; the rules here cover what cannot be derived - fixed-size
-    /// arrays in the loaders, lists that must match other lists, required embedded objects.  Every rule names the
-    /// loader it comes from; the "not loadable" cases were reproduced by loading edited copies in the emulated loader.
+    /// arrays in the game, lists that must match other lists, required embedded objects.
     /// </summary>
     public static class Limits
     {
@@ -45,14 +44,43 @@ namespace FrostyAnimationEditor.Core
         {
             Register((o, db) =>
             {
+                // the game holds 8 x values and then 8 y values; a 9th point's x would land on the y values.
+                // All 8,598 in the game's file have 8 or fewer.
+                List<Tuple<string, string>> r = new List<Tuple<string, string>>();
+                long n = Len(o, "PointValues");
+                if (n > 8) r.Add(I("PointValues", n + " points; the game holds 8, so further points overwrite the y values"));
+                return r;
+            }, "PiecewiseLinearAsset");
+
+            Register((o, db) =>
+            {
+                // the game unpacks the StepAssetImpl into a fixed-size block: for each of these arrays it clears
+                // a fixed number of bytes and then writes one entry's worth per entry with no bound, so a longer list
+                // runs into whatever follows. Every one of the 3,472 shipped steps is at the limit.
+                List<Tuple<string, string>> r = new List<Tuple<string, string>>();
+                GdStruct im = o["AssetImpl"] as GdStruct;
+                if (im == null) return r;
+                long n = Len(im, "InterruptableT");
+                if (n > 2) r.Add(I("AssetImpl.InterruptableT", n + " ranges; the game holds 2, so further ranges overwrite PlantInfo"));
+                n = Len(im, "PlantInfo");
+                if (n > 4) r.Add(I("AssetImpl.PlantInfo", n + " plants; the game holds 4, so further plants overwrite DeltaSpeed and what follows it"));
+                n = Len(im, "StartLeanAngle");
+                if (n > 2) r.Add(I("AssetImpl.StartLeanAngle", n + " entries; the game holds 2, so further entries overwrite EndLeanAngle"));
+                n = Len(im, "EndLeanAngle");
+                if (n > 2) r.Add(I("AssetImpl.EndLeanAngle", n + " entries; the game holds 2, so further entries corrupt memory"));
+                return r;
+            }, "StepAssetAnt");
+
+            Register((o, db) =>
+            {
                 List<Tuple<string, string>> r = new List<Tuple<string, string>>();
                 GdStruct w = o["WarpAsset"] as GdStruct;
-                if (w == null) { r.Add(I("WarpAsset", "must be set: FUN_146069ff0 reads it unconditionally (the load fails)")); return r; }
+                if (w == null) { r.Add(I("WarpAsset", "must be set: the game always reads it (the load fails)")); return r; }
                 long n = Len(w, "Pose");
-                if (n > 200) r.Add(I("WarpAsset.Pose", n + " poses; FUN_146069ff0 copies them into a 200-entry stack buffer (more overruns the stack: the game stops with a security check failure)"));
-                if (Len(w, "Segments") > 3) r.Add(I("WarpAsset.Segments", Len(w, "Segments") + " segments; the runtime object holds 3 (0x38 bytes each from +0xA0, the 4th is overwritten at +0x17F, later ones overwrite other fields)"));
+                if (n > 200) r.Add(I("WarpAsset.Pose", n + " poses; the game holds 200 (more crashes the game)"));
+                if (Len(w, "Segments") > 3) r.Add(I("WarpAsset.Segments", Len(w, "Segments") + " segments; the game holds 3 (further segments corrupt the warp's other settings)"));
                 foreach (string f in new[] { "TouchRegions", "TouchTimes" })
-                    if (Len(w, f) > 3) r.Add(I("WarpAsset." + f, Len(w, f) + " entries; FUN_146069ff0 keeps 3 on the stack"));
+                    if (Len(w, f) > 3) r.Add(I("WarpAsset." + f, Len(w, f) + " entries; the game holds 3"));
                 if (w.GetBool("StoreLeanPose") && Len(w, "Lean") < n)
                     r.Add(I("WarpAsset.Lean", "StoreLeanPose is set: one Lean entry per Pose is read (" + Len(w, "Lean") + " < " + n + ")"));
                 return r;
@@ -60,11 +88,11 @@ namespace FrostyAnimationEditor.Core
 
             Register((o, db) =>
             {
-                // FUN_145fdd820: n = len(ControllerAssets); entry i reads element i of every parallel list
+                // n = len(ControllerAssets); entry i reads element i of every parallel list
                 List<Tuple<string, string>> r = new List<Tuple<string, string>>();
                 long n = Len(o, "ControllerAssets");
                 foreach (string f in new[] { "SignalAssets", "BlendMaskControllers", "UpdateModes", "UpdateRates", "BlendModes", "BranchInModes" })
-                    if (Len(o, f) < n) r.Add(I(f, "has " + Len(o, f) + " entries, ControllerAssets " + n + ": FUN_145fdd820 reads one per controller"));
+                    if (Len(o, f) < n) r.Add(I(f, "has " + Len(o, f) + " entries, ControllerAssets " + n + ": the game reads one per controller"));
                 long m = o.GetInt("MasterEntryIndex");
                 if (n != 0 && m >= n) r.Add(I("MasterEntryIndex", m + " is not an entry index (0.." + (n - 1) + ")"));
                 return r;
@@ -77,7 +105,7 @@ namespace FrostyAnimationEditor.Core
                 foreach (string f in new[] { "InAngles", "OutAngles", "MoveAngles", "Speeds" })
                 {
                     long k = Len(o, f);
-                    if (k > 16) r.Add(I(f, k + " values; FUN_146c7ce90 uses the first 16"));
+                    if (k > 16) r.Add(I(f, k + " values; the game uses the first 16"));
                     cells *= Math.Min(16, k);
                 }
                 long ql = AllocModel.LenOf(o["Quads"]);
@@ -86,7 +114,7 @@ namespace FrostyAnimationEditor.Core
                 if (nq != 0)
                 {
                     IList qm = o["QuadMap"] as IList ?? new object[0];
-                    if (qm.Count < cells) r.Add(I("QuadMap", qm.Count + " cells, the four axes make " + cells + " (FUN_146ca69e0 copies that many)"));
+                    if (qm.Count < cells) r.Add(I("QuadMap", qm.Count + " cells, the four axes make " + cells + " (the game reads that many)"));
                     List<int> bad = new List<int>();
                     for (int i = 0; i < qm.Count && i < cells; i++)
                     {
@@ -94,7 +122,7 @@ namespace FrostyAnimationEditor.Core
                         if ((x & 0xFFFFFFFF) != 0xFFFFFFFF && (x & 0xFFFFFF) >= nq) bad.Add(i);
                     }
                     if (bad.Count > 0) r.Add(I("QuadMap[" + bad[0] + "]", bad.Count + " cells name a quad past the " + nq + " quads"));
-                    // the lookup (Contacts, FUN_146cd8ff0) assumes ascending axes
+                    // the lookup (Contacts) assumes ascending axes
                     foreach (string msg in Contacts.Issues(o))
                         if (msg.Contains("ascending") || msg.Contains("empty"))
                             r.Add(I(msg.Split(new[] { ' ' }, 2)[0], msg));
@@ -106,7 +134,7 @@ namespace FrostyAnimationEditor.Core
             {
                 long words = (o.GetInt("RowCount") * o.GetInt("ColumnCount") + 31) >> 5;
                 if (Len(o, "Array") < words)
-                    return new List<Tuple<string, string>> { I("Array", Len(o, "Array") + " words, RowCount x ColumnCount needs " + words + " (FUN_145f9f3e0 copies them)") };
+                    return new List<Tuple<string, string>> { I("Array", Len(o, "Array") + " words, RowCount x ColumnCount needs " + words + "") };
                 return new List<Tuple<string, string>>();
             }, "CullingTableAsset");
 
@@ -114,7 +142,7 @@ namespace FrostyAnimationEditor.Core
             {
                 List<Tuple<string, string>> r = new List<Tuple<string, string>>();
                 IList mj = o["MappedJoints"] as IList ?? new object[0];
-                if (mj.Count > 26) r.Add(I("MappedJoints", mj.Count + " entries; FUN_145f33f40 writes them into a 26-entry vector (heap overrun)"));
+                if (mj.Count > 26) r.Add(I("MappedJoints", mj.Count + " entries; the game holds 26 (more corrupts memory)"));
                 long nt = o.GetInt("NumTotalJoints");
                 for (int i = 0; i < mj.Count; i++)
                 {
@@ -147,9 +175,9 @@ namespace FrostyAnimationEditor.Core
                 List<Tuple<string, string>> r = new List<Tuple<string, string>>();
                 long n = Len(o, "GameStateValueAssets");
                 foreach (string f in new[] { "GameStateAssetOffsets", "GameStateInterfaceTypes" })
-                    if (Len(o, f) < n) r.Add(I(f, Len(o, f) + " entries for " + n + " GameStateValueAssets (FUN_146b72490 reads one each)"));
+                    if (Len(o, f) < n) r.Add(I(f, Len(o, f) + " entries for " + n + " GameStateValueAssets (the game reads one each)"));
                 if (Len(o, "DofMapping") % 4 != 0)
-                    r.Add(I("DofMapping", Len(o, "DofMapping") + " entries; FUN_146b75e30 reads groups of 4 (group name, DOF name, handle register, default register)"));
+                    r.Add(I("DofMapping", Len(o, "DofMapping") + " entries; the game reads groups of 4 (group name, DOF name, handle slot, default slot)"));
                 byte[] blob = Kernel.BlobOf(o, "ExpressionKernel");
                 if (blob.Length > 0)
                 {
@@ -157,7 +185,7 @@ namespace FrostyAnimationEditor.Core
                     try { k = Kernel.Parse(blob); }
                     catch (KernelException e)
                     {
-                        r.Add(I("ExpressionKernel", "the kernel does not parse the way the game's linker walks it: " + e.Message));
+                        r.Add(I("ExpressionKernel", "the game cannot read this kernel: " + e.Message));
                         return r;
                     }
                     foreach (Tuple<string, string> c in Kernel.Check(k, KernelBindings.FromObj(o)))
@@ -167,24 +195,24 @@ namespace FrostyAnimationEditor.Core
             }, "ExpressionAsset");
 
             Register((o, db) => o["MemberValues"] == null
-                ? new List<Tuple<string, string>> { I("MemberValues", "must be set: FUN_145ca3e70 lays the values out from its type") }
+                ? new List<Tuple<string, string>> { I("MemberValues", "must be set: the game lays the values out from its type") }
                 : new List<Tuple<string, string>>(), "ConstCollectionAsset");
 
             Register((o, db) => Len(o, "RunCurveList") < 31
-                ? new List<Tuple<string, string>> { I("RunCurveList", Len(o, "RunCurveList") + " curves; FUN_146068aa0 reads 31 (missing ones are read from past the list and the load fails)") }
+                ? new List<Tuple<string, string>> { I("RunCurveList", Len(o, "RunCurveList") + " curves; the game needs 31 (with fewer the load fails)") }
                 : new List<Tuple<string, string>>(), "RunCurveAsset");
 
             Register((o, db) => o["MemberDefaults"] == null
-                ? new List<Tuple<string, string>> { I("MemberDefaults", "must be set: FUN_145d41750 lays the values out from its type") }
+                ? new List<Tuple<string, string>> { I("MemberDefaults", "must be set: the game lays the values out from its type") }
                 : new List<Tuple<string, string>>(), "StructAsset");
 
             Register((o, db) => o["ContextDB"] == null
-                ? new List<Tuple<string, string>> { I("ContextDB", "must be set: the PriorityDatabase builder (FUN_145f87cc0) reads it") }
+                ? new List<Tuple<string, string>> { I("ContextDB", "must be set: the game reads it to build the database") }
                 : new List<Tuple<string, string>>(), "PriorityDatabaseAsset");
 
             Register((o, db) =>
             {
-                // FUN_145f50210 -> FUN_145f701f0 reads TrajX/TrajY/TrajZ/TrajAngles for every sample of the tick range
+                // the game reads TrajX/TrajY/TrajZ/TrajAngles for every sample of the tick range
                 List<Tuple<string, string>> r = new List<Tuple<string, string>>();
                 GdStruct ts = o["TrajectoryState"] as GdStruct;
                 if (ts == null) return r;
@@ -200,10 +228,10 @@ namespace FrostyAnimationEditor.Core
 
             Register((o, db) =>
             {
-                // FUN_145d1e090 picks the class, FUN_145d1d0c0 loads it (Curves, FORMAT.md section 7)
+                // the curve kind comes from SplineStorageFlags (Curves)
                 long fl = o.GetInt("SplineStorageFlags");
                 if (fl != 0x10 && fl != 0x40 && (fl & 0x20) == 0)
-                    return new List<Tuple<string, string>> { I("SplineStorageFlags", "0x" + fl.ToString("X2") + ": FUN_145d1e090 builds nothing for it (only 0x10 values, 0x40 quantized bytes, or 0x20|type parametric)") };
+                    return new List<Tuple<string, string>> { I("SplineStorageFlags", "0x" + fl.ToString("X2") + ": the game builds no curve for it (only 0x10 values, 0x40 compressed values, or 0x20 plus a type for a formula curve)") };
                 return Curves.TagIssues(o).Select(m => I(m.Contains("Spline ") || m.Contains("Bezier") ? "Spline" : (m.Contains("SplineRaw") ? "SplineRaw" : "Mode"), m)).ToList();
             }, "FloatGameStateTag");
 

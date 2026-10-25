@@ -6,16 +6,14 @@ using System.Linq;
 namespace FrostyAnimationEditor.Core
 {
     /// <summary>
-    /// ContinuousContactAsset: the shape the game builds from it and the lookup it runs, as FIFA17.exe does
-    /// (verified in the emulator on all 203 assets).
-    /// Loader FUN_146c7ce90: nothing is built when Quads has fewer than 32 bytes; each axis keeps its first 16 values.
-    /// FUN_146ca69e0 / FUN_146c628e0 build a "ContinuousContactShape": InAngles / OutAngles / MoveAngles as 16 int8
+    /// ContinuousContactAsset: the shape the game builds from it and the lookup it runs (checked on all 203 assets).
+    /// Nothing is built when Quads has fewer than 32 bytes; each axis keeps its first 16 values.
+    /// The shape: InAngles / OutAngles / MoveAngles as 16 int8
     /// (round(127/pi a), padded with the last value; MoveAngles with 127), Speeds as 16 int8 (round(100 v)),
     /// round(x) = floorf(x + 0.5) clamped to [-128, 127] (NaN -> 127); QuadMap one u32 per cell (0xFFFFFFFF = no quad,
     /// else low 24 bits = quad index, top byte = signed time offset).
-    /// Lookup FUN_146cc5df0 + FUN_146cadf70 + FUN_146caeca0 (cell search FUN_146cd8ff0, corners FUN_146cb5260,
-    /// renormalisation FUN_146ca8d40: invalid when less than 0.4 of the weight falls on existing entries).
-    /// The meaning of a quad's 32 bytes (read by FUN_146c6c9b0 and its callers) is UNIDENTIFIED.
+    /// Lookup: cell search per axis, the cell's corners, then renormalisation (invalid when less than 0.4 of the
+    /// weight falls on existing entries). What a quad's 32 bytes mean is not known.
     /// </summary>
     public static class Contacts
     {
@@ -35,7 +33,7 @@ namespace FrostyAnimationEditor.Core
             return r;
         }
 
-        /// <summary>FUN_146c84520: an angle (radians) as the int8 the lookup compares</summary>
+        /// <summary>an angle (radians) as the int8 the lookup compares</summary>
         public static int QuantizeAngle(double x)
         {
             float v = (float)(KAngle * (float)x) + 0.5f;
@@ -45,7 +43,7 @@ namespace FrostyAnimationEditor.Core
             return (int)r;
         }
 
-        /// <summary>FUN_146c84640: a speed as the unsigned byte the lookup uses (compared as signed later)</summary>
+        /// <summary>a speed as the unsigned byte the lookup uses (compared as signed later)</summary>
         public static int QuantizeSpeed(double x)
         {
             float v = (float)(KSpeed * (float)x) + 0.5f;
@@ -55,7 +53,7 @@ namespace FrostyAnimationEditor.Core
             return (int)r;
         }
 
-        /// <summary>FUN_146c628e0: floorf(x * k + 0.5) clamped to [-128, 127] (NaN -> 127)</summary>
+        /// <summary>floorf(x * k + 0.5) clamped to [-128, 127] (NaN -> 127)</summary>
         public static int AxisByte(double x, float k)
         {
             float v = (float)((float)x * k) + 0.5f;
@@ -83,7 +81,7 @@ namespace FrostyAnimationEditor.Core
             return r;
         }
 
-        /// <summary>the shape FUN_146c628e0 builds (null when the game builds none)</summary>
+        /// <summary>the shape the game builds (null when the game builds none)</summary>
         public static Shape BuildShape(GdStruct o)
         {
             byte[] quads = o["Quads"] as byte[] ?? new byte[0];
@@ -113,7 +111,7 @@ namespace FrostyAnimationEditor.Core
             return s;
         }
 
-        /// <summary>FUN_146cd8ff0 for one axis: (segment index, fraction) for the int8 table a and query byte q</summary>
+        /// <summary>the cell search for one axis: (segment index, fraction) for the int8 table a and query byte q</summary>
         public static void CellAxis(int[] a0, int q0, out int i, out float f)
         {
             int[] a = a0.Select(v => S8(v)).ToArray();
@@ -137,7 +135,7 @@ namespace FrostyAnimationEditor.Core
 
         private static readonly int[][] Offsets = { new[] { 0, 0, 0 }, new[] { 0, 0, 1 }, new[] { 0, 1, 0 }, new[] { 0, 1, 1 }, new[] { 1, 0, 0 }, new[] { 1, 0, 1 }, new[] { 1, 1, 0 }, new[] { 1, 1, 1 } };
 
-        /// <summary>FUN_146cb5260: the QuadMap index of the 8 corners in A, B, C (D at the cell's index)</summary>
+        /// <summary>the QuadMap index of the 8 corners in A, B, C (D at the cell's index)</summary>
         public static long[] CornerCells(Shape s, int[] cell)
         {
             Func<long, long, long> w = (v, k) => v == k ? 0 : v;
@@ -153,7 +151,7 @@ namespace FrostyAnimationEditor.Core
 
         private static float C01(float x) { x = x > 0f ? x : 0f; return x < 1f ? x : 1f; }
 
-        /// <summary>FUN_146ca8d40: the fractions after missing entries are taken out, and the existing-entry weight total</summary>
+        /// <summary>the fractions after missing entries are taken out, and the existing-entry weight total</summary>
         public static void AdjustFractions(long[] entries, float fA, float fB, float fC, float fD,
                                            out float[] vd0, out float[] vd1, out float[] vc, out float[] vb, out float total)
         {
@@ -200,7 +198,7 @@ namespace FrostyAnimationEditor.Core
             total = T;
         }
 
-        /// <summary>FUN_146cadf70: the weight of each of the 16 entries from the adjusted fractions</summary>
+        /// <summary>the weight of each of the 16 entries from the adjusted fractions</summary>
         public static float[] EntryWeights(float[] vd0, float[] vd1, float[] vc, float[] vb)
         {
             float[] d = vd0.Concat(vd1).ToArray();

@@ -16,9 +16,9 @@ namespace FrostyAnimationEditor.Core
 
     /// <summary>
     /// Fields the file stores redundantly, and how the editor keeps them consistent.
-    /// Count fields: the class loaders size their runtime arrays from the count field and then read that many
-    /// elements of the list (ActorControllerAsset loader FUN_145f4c980 -> FUN_145f6f9a0(NumTracks), the
-    /// SequenceAnimTrack loader FUN_145f4c6b0 ...).  Every rule holds for every instance in the shipped file.
+    /// Count fields: the game sizes its lists from the count field and then reads that many elements of the
+    /// list (ActorControllerAsset NumTracks, SequenceAnimTrack counts ...).  Every rule holds for every
+    /// object in the game's file.
     ///   FixCounts(obj) / CheckCounts(obj), FixLinks(db) (two-way links, enum flags), FixAll(db) (Save runs it)
     /// </summary>
     public static class Consistency
@@ -172,6 +172,26 @@ namespace FrostyAnimationEditor.Core
                             bad.Add(Tuple.Create(m.Key, back + " points to " + BE.KeyHex(bk) + " which does not list it"));
                     }
             }
+            // a step clip's steps tile it end to end: AnimStartT(n+1) = AnimStartT(n) + EndT(n).
+            // Exact in all 2,788 consecutive pairs of the shipped file.
+            foreach (GdObj sc in db.Objects("StepClipAsset"))
+            {
+                IList sl = sc["Steps"] as IList;
+                if (sl == null) continue;
+                long want = -1;
+                foreach (object x in sl)
+                {
+                    GdObj so = db.Get(Num.ToKey(x));
+                    GdStruct im = so != null ? so["AssetImpl"] as GdStruct : null;
+                    if (im == null) continue;
+                    GdStruct sa = im["AnimStartT"] as GdStruct, se = im["EndT"] as GdStruct;
+                    if (sa == null || se == null) continue;
+                    long at = sa.GetInt("T");
+                    if (want >= 0 && at != want)
+                        bad.Add(Tuple.Create(so.Key, "AnimStartT " + at + " does not continue from the previous step's end " + want));
+                    want = at + se.GetInt("T");
+                }
+            }
             return bad;
         }
 
@@ -293,6 +313,61 @@ namespace FrostyAnimationEditor.Core
             }
             Walk(o, o.Type.Name, (st, path) =>
             {
+                if (st.Type.Name == "OverrideGameStatesCollectionAsset" && st.Type.Has("OverrideTargets"))
+                {
+                    // the game walks OverrideTargets once and takes one per value, in this order
+                    long want = LenOf(st["OverrideAssets"]) + LenOf(st["OverrideVec3s"]) + LenOf(st["OverrideFloats"])
+                                + LenOf(st["OverrideInts"]) + LenOf(st["OverrideBools"]);
+                    long have = LenOf(st["OverrideTargets"]);
+                    if (have != want) bad.Add(new CountIssue(path + ".OverrideTargets (length)", have, want));
+                }
+                if (st.Type.Name == "TrajectoryState" && st.Type.Has("TrajX"))
+                {
+                    // the four sample arrays are the same length in every one of the 19,244 shipped actor controllers
+                    long n5 = LenOf(st["TrajX"]);
+                    foreach (string f5 in new[] { "TrajY", "TrajZ", "TrajAngles" })
+                        if (st.Has(f5) && LenOf(st[f5]) != n5) bad.Add(new CountIssue(path + "." + f5 + " (length)", LenOf(st[f5]), n5));
+                    // the sample count is (TrajEndTick - TrajStartTick) / RecordDeltaT + 1 in 4,395 of the 4,563
+                    // shipped trajectories and one fewer in the other 168, so it is not checked here
+                }
+                if (st.Type.Name == "AudioEventTag" && st.Type.Has("ParamTypes"))
+                {
+                    // the game loads one array per parameter kind; all 7,300 shipped tags keep them paired
+                    long want3 = LenOf(st["IntIDs"]) + LenOf(st["FloatIDs"]) + LenOf(st["BoolIDs"]) + LenOf(st["StringIDs"]);
+                    long have3 = LenOf(st["ParamTypes"]);
+                    if (have3 != want3) bad.Add(new CountIssue(path + ".ParamTypes (length)", have3, want3));
+                    foreach (string kk in new[] { "Int", "Float", "Bool", "String" })
+                    {
+                        if (st.Has(kk + "IDs") && st.Has(kk + "Vals") && LenOf(st[kk + "IDs"]) != LenOf(st[kk + "Vals"]))
+                            bad.Add(new CountIssue(path + "." + kk + "Vals (length)", LenOf(st[kk + "Vals"]), LenOf(st[kk + "IDs"])));
+                        if (st.Has(kk + "GSIDs") && st.Has(kk + "GSs") && LenOf(st[kk + "GSIDs"]) != LenOf(st[kk + "GSs"]))
+                            bad.Add(new CountIssue(path + "." + kk + "GSs (length)", LenOf(st[kk + "GSs"]), LenOf(st[kk + "GSIDs"])));
+                    }
+                }
+                if (st.Type.Name == "DatasetPreSaveAsset" && st.Type.Has("BlendTimesCount"))
+                {
+                    // the 29 shipped assets that set BlendTimesCount all hold one Min/Max per blend time and one
+                    // NX x NY plane per pair of them; the two that leave it 0 are not checked
+                    long btc = st.GetInt("BlendTimesCount");
+                    if (btc > 0)
+                    {
+                        if (LenOf(st["Min"]) != btc) bad.Add(new CountIssue(path + ".Min (length)", LenOf(st["Min"]), btc));
+                        if (LenOf(st["Max"]) != btc) bad.Add(new CountIssue(path + ".Max (length)", LenOf(st["Max"]), btc));
+                        long want4 = st.GetInt("NX") * st.GetInt("NY") * ((btc + 1) / 2);
+                        if (LenOf(st["Data"]) != want4) bad.Add(new CountIssue(path + ".Data (length)", LenOf(st["Data"]), want4));
+                    }
+                }
+                if (st.Type.Name == "StepAssetImpl" && st.Type.Has("ShoulderAngle") && st.Type.Has("EndT"))
+                {
+                    // one shoulder angle per tick of the step, 0..EndT: it holds for all 3,472 shipped steps
+                    GdStruct e = st["EndT"] as GdStruct;
+                    if (e != null && e.Type.Has("T"))
+                    {
+                        long want2 = e.GetInt("T") + 1;
+                        long have2 = LenOf(st["ShoulderAngle"]);
+                        if (have2 != want2) bad.Add(new CountIssue(path + ".ShoulderAngle (length)", have2, want2));
+                    }
+                }
                 CountRule[] rules;
                 if (!CountRules.TryGetValue(st.Type.Name, out rules)) return;
                 foreach (CountRule r in rules)
@@ -352,6 +427,10 @@ namespace FrostyAnimationEditor.Core
             foreach (string c in CountRules.Keys) if (db.ByType.ContainsKey(c)) r.Add(c);
             foreach (string c in db.ClassesDeriving("ContextDatabaseAsset")) r.Add(c);
             if (db.ByType.ContainsKey("PriorityDatabaseAsset")) r.Add("PriorityDatabaseAsset");
+            if (db.ByType.ContainsKey("OverrideGameStatesCollectionAsset")) r.Add("OverrideGameStatesCollectionAsset");
+            if (db.ByType.ContainsKey("StepAssetAnt")) r.Add("StepAssetAnt");
+            if (db.ByType.ContainsKey("AudioEventTag")) r.Add("AudioEventTag");
+            if (db.ByType.ContainsKey("DatasetPreSaveAsset")) r.Add("DatasetPreSaveAsset");
             r.Add("ActorControllerAsset");
             List<string> l = r.ToList();
             l.Sort(StringComparer.Ordinal);

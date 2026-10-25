@@ -48,7 +48,7 @@ namespace FrostyAnimationEditor.Core.Anim
 
     /// <summary>
     /// Encoders: VbrAnimationAsset / RawAnimationAsset field values from animation keys.
-    /// VBR follows the asset tool's own algorithm (decompiled FUN_145d292f0 / FUN_145d25d20): normalise per range
+    /// VBR follows the asset tool's own algorithm: normalise per range
     /// group, 8-point DCT-II per 8-key block, Dct = max |coefficient|, per-block quantiser rows (w0 quats, w1 scalars
     /// [4Q, 4Q+4], w2 the rest) by bisection against the error tolerance, width nibbles = bit length of the largest
     /// |q|, LSB-first flag/sign/magnitude bit stream, block bodies byte-reversed, constant channels through a float
@@ -519,6 +519,164 @@ namespace FrostyAnimationEditor.Core.Anim
                 }
             }
             return err;
+        }
+
+        /// <summary>decode the encoded fields with the runtime port and sample them at every key frame of full (the clip
+        /// before key reduction); -> max abs error per kind over those frames</summary>
+        public static VbrError VerifyVbrFrames(Dictionary<string, object> fields, ClipData full)
+        {
+            Dictionary<string, object> d = new Dictionary<string, object>(fields);
+            Hashtable bas = new Hashtable();
+            bas["EndFrame"] = full.EndFrame;
+            d["__base"] = bas;
+            VbrClip c = new VbrClip(n => { object v; return d.TryGetValue(n, out v) ? v : null; });
+            float[][][] q, v3;
+            float[][] f;
+            c.SampleFrames(full.KeyFrames.Select(x => (int)x).ToList(), out q, out v3, out f);
+            VbrError err = new VbrError();
+            int qi = 0, vi = 0, fi = 0;
+            for (int ch = 0; ch < full.Kinds.Count; ch++)
+            {
+                string kd = full.Kinds[ch];
+                double[][] val = full.Values[ch];
+                double e = 0;
+                for (int k = 0; k < full.NKeys; k++)
+                {
+                    double[] b = val[k];
+                    if (kd == "quat")
+                    {
+                        double n = Math.Max(Math.Sqrt(((b[0] * b[0] + b[1] * b[1]) + b[2] * b[2]) + b[3] * b[3]), 1e-12);
+                        double em = 0, ep = 0;
+                        for (int cc = 0; cc < 4; cc++)
+                        {
+                            em = Math.Max(em, Math.Abs(q[k][qi][cc] - b[cc] / n));
+                            ep = Math.Max(ep, Math.Abs(q[k][qi][cc] + b[cc] / n));
+                        }
+                        e = Math.Max(e, Math.Min(em, ep));
+                    }
+                    else if (kd == "vec3") for (int cc = 0; cc < 3; cc++) e = Math.Max(e, Math.Abs(v3[k][vi][cc] - b[cc]));
+                    else e = Math.Max(e, Math.Abs(f[k][fi] - b[0]));
+                }
+                if (kd == "quat") { qi++; err.Quat = Math.Max(err.Quat, e); }
+                else if (kd == "vec3") { vi++; err.Vec3 = Math.Max(err.Vec3, e); }
+                else { fi++; err.Float = Math.Max(err.Float, e); }
+            }
+            return err;
+        }
+
+        // ------------------------------------------------------------------ key reduction
+        /// <summary>
+        /// Drop the keys the runtime's interpolation reproduces. The VBR sampler fills a frame between
+        /// two keys by nlerp (quats) / lerp (vec3, float) at alpha = the frame's place between the two key times, and the
+        /// shipped clips rely on it: the Drogba celebration stores 37 keys for its 118 frames, the violin one 37 for 155
+        /// (all VBR clips together: 87.7 % of their frames are keys). The rule EA's pipeline used to choose the keys is
+        /// not in the game: its compressor takes the key times from the source .chan.
+        /// This one is greedy: from a kept key, the farthest later key such that every frame in between is reproduced
+        /// within tolerance, measured like the quantiser measures (per scalar, as a fraction of the range of its group:
+        /// quats; the trajectory vector; the other vectors; floats). The first and last keys stay; a gap is at most 256
+        /// frames (the key-time table's limit). Constant channels do not take part (the encoder stores them once).
+        /// </summary>
+        public static ClipData ReduceKeys(ClipData clip, double tolerance, double constEps = 1e-7, IList<bool> skip = null)
+        {
+            int K = clip.NKeys;
+            if (K <= 2 || !(tolerance > 0)) return clip;
+            List<string> kinds = clip.Kinds;
+            int nch = kinds.Count;
+            List<double[][]> vals = new List<double[][]>();
+            for (int ch = 0; ch < nch; ch++)
+            {
+                int nc = kinds[ch] == "quat" ? 4 : kinds[ch] == "vec3" ? 3 : 1;
+                double[][] src = clip.Values[ch];
+                double[][] v = new double[K][];
+                for (int k = 0; k < K; k++)
+                {
+                    v[k] = new double[nc];
+                    for (int c = 0; c < nc; c++) v[k][c] = c < src[k].Length ? src[k][c] : 0.0;
+                }
+                if (kinds[ch] == "quat")
+                {
+                    // as the encoder sees them: unit length, consecutive keys on one hemisphere
+                    for (int k = 0; k < K; k++)
+                    {
+                        double n = Math.Sqrt(((v[k][0] * v[k][0] + v[k][1] * v[k][1]) + v[k][2] * v[k][2]) + v[k][3] * v[k][3]);
+                        if (n == 0) n = 1;
+                        for (int c = 0; c < 4; c++) v[k][c] = v[k][c] / n;
+                    }
+                    for (int k = 1; k < K; k++)
+                    {
+                        double dot = v[k][0] * v[k - 1][0] + v[k][1] * v[k - 1][1] + v[k][2] * v[k - 1][2] + v[k][3] * v[k - 1][3];
+                        if (dot < 0) for (int c = 0; c < 4; c++) v[k][c] = -v[k][c];
+                    }
+                }
+                vals.Add(v);
+            }
+            bool[] cst = vals.Select(v => MaxAbsDiff(v) <= constEps).ToArray();
+            List<int> aq = Enumerable.Range(0, nch).Where(i => kinds[i] == "quat" && !cst[i]).ToList();
+            List<int> av = Enumerable.Range(0, nch).Where(i => kinds[i] == "vec3" && !cst[i]).ToList();
+            List<int> af = Enumerable.Range(0, nch).Where(i => kinds[i] == "float" && !cst[i]).ToList();
+            if (aq.Count + av.Count + af.Count == 0)
+                return new ClipData(new[] { clip.KeyFrames[0], clip.KeyFrames[K - 1] }, kinds, clip.Values.Select(v => new[] { v[0], v[K - 1] }).ToList(), clip.Loop, clip.EndFrame);
+            Func<IList<int>, double> width = idx =>
+            {
+                double lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+                foreach (int i in idx) foreach (double[] row in vals[i]) foreach (double x in row) { if (x < lo) lo = x; if (x > hi) hi = x; }
+                float flo, fhi;
+                Rng(lo, hi, out flo, out fhi);
+                return (double)fhi - flo;
+            };
+            // per-channel limit in value units (the encoder's group ranges)
+            double[] lim = new double[nch];
+            if (aq.Count > 0) { double w = width(aq); foreach (int i in aq) lim[i] = tolerance * w; }
+            if (av.Count > 0)
+            {
+                double wt = width(av.Take(1).ToList());
+                double wv = av.Count > 1 ? width(av.Skip(1).ToList()) : wt;
+                lim[av[0]] = tolerance * wt;
+                foreach (int i in av.Skip(1)) lim[i] = tolerance * wv;
+            }
+            if (af.Count > 0) { double w = width(af); foreach (int i in af) lim[i] = tolerance * w; }
+            List<int> live = aq.Concat(av).Concat(af).Where(i => skip == null || i >= skip.Count || !skip[i]).ToList();
+            List<long> F = clip.KeyFrames;
+            double[] tmp = new double[4];
+            Func<int, int, bool> fits = (a, b) =>
+            {
+                double span = F[b] - F[a];
+                foreach (int ch in live)
+                {
+                    double[][] v = vals[ch];
+                    double[] va = v[a], vb = v[b];
+                    bool quat = kinds[ch] == "quat";
+                    if (quat && va[0] * vb[0] + va[1] * vb[1] + va[2] * vb[2] + va[3] * vb[3] < 0) return false;
+                    double L = lim[ch];
+                    for (int k = a + 1; k < b; k++)
+                    {
+                        double al = (F[k] - F[a]) / span;
+                        double[] vk = v[k];
+                        int nc = va.Length;
+                        double s = 0;
+                        for (int c = 0; c < nc; c++) { tmp[c] = va[c] + (vb[c] - va[c]) * al; s += tmp[c] * tmp[c]; }
+                        double n = quat ? Math.Sqrt(s) : 1.0;
+                        if (n == 0) n = 1;
+                        for (int c = 0; c < nc; c++) if (Math.Abs(tmp[c] / n - vk[c]) > L) return false;
+                    }
+                }
+                return true;
+            };
+            List<int> keep = new List<int> { 0 };
+            int at = 0;
+            while (at < K - 1)
+            {
+                int best = at + 1;
+                for (int b = at + 2; b < K && F[b] - F[at] <= 256; b++)
+                {
+                    if (fits(at, b)) best = b;
+                    else if (b - best > 4) break;
+                }
+                keep.Add(best);
+                at = best;
+            }
+            if (keep.Count == K) return clip;
+            return new ClipData(keep.Select(k => F[k]).ToList(), kinds, clip.Values.Select(v => keep.Select(k => v[k]).ToArray()).ToList(), clip.Loop, clip.EndFrame);
         }
 
         // ------------------------------------------------------------------ RAW

@@ -20,7 +20,7 @@ namespace FrostyAnimationEditor.Core
     {
         public static readonly string[] ClipTypes = { "VbrAnimationAsset", "DctAnimationAsset", "RawAnimationAsset", "FrameAnimationAsset" };
         public static readonly string[] SmTypes = { "StateFlowControllerAsset", "StateFlowNodeControllerAsset", "StateFlowTransitionAsset" };
-        public static readonly string[] CurveTypes = { "DofWeightCurvesAsset", "FloatGameStateTag" };
+        public static readonly string[] CurveTypes = { "DofWeightCurvesAsset", "FloatGameStateTag", "PiecewiseLinearAsset" };
         public const int ListPage = 100;
 
         public readonly Session S;
@@ -30,6 +30,7 @@ namespace FrostyAnimationEditor.Core
         public event Action<string> Said;
         private RigIndex ri;
         private HashSet<ulong> importedKeys;
+        private ClipNames clipNames;
 
         public EditorModel(Session s, string sourceLabel)
         {
@@ -53,6 +54,29 @@ namespace FrostyAnimationEditor.Core
         }
 
         public void ResetRig() { ri = null; }
+
+        /// <summary>readable clip names (controller names); the reverse index is dropped on every change</summary>
+        public ClipNames Names
+        {
+            get
+            {
+                if (clipNames == null)
+                {
+                    clipNames = new ClipNames(Db);
+                    S.Changed += () => clipNames.Reset();
+                }
+                return clipNames;
+            }
+        }
+
+        /// <summary>readable name of a clip (its ClipControllerAsset's name), else null</summary>
+        public string Alias(ulong k) { return Names.Of(k); }
+
+        private void PutAlias(JObject j, ulong k)
+        {
+            string a = Names.Of(k);
+            if (a != null) j["alias"] = a;
+        }
 
         // ------------------------------------------------------------------ helpers
         public static string H(ulong k) { return BE.KeyHex(k); }
@@ -86,7 +110,7 @@ namespace FrostyAnimationEditor.Core
             int i = Db.BlockOf(k);
             JObject r = new JObject();
             r["key"] = H(k);
-            if (i >= 0 && !Db.Removed.Contains(i)) { r["type"] = Db.TypeName(i); r["name"] = Db.NameOf(i); r["state"] = "ok"; return r; }
+            if (i >= 0 && !Db.Removed.Contains(i)) { r["type"] = Db.TypeName(i); r["name"] = Db.NameOf(i); PutAlias(r, k); r["state"] = "ok"; return r; }
             if (Imported(k)) { r["type"] = "AnimationAsset"; r["name"] = "(imported from another container)"; r["state"] = "imported"; return r; }
             r["type"] = "?"; r["name"] = "(not in this file)"; r["state"] = "missing";
             return r;
@@ -106,6 +130,18 @@ namespace FrostyAnimationEditor.Core
 
         /// <summary>view model of one field value</summary>
         public JObject Node(Field f, object v, string path, int depth, int offset = 0, int limit = ListPage)
+        {
+            JObject r = NodeOnly(f, v, path, depth, offset, limit);
+            FieldSemantics.Entry fe = FieldSemantics.Get(f);
+            if (fe != null)
+            {
+                if (fe.HasMeaning) r["d"] = fe.Meaning;
+                if (fe.StatusText.Length > 0) r["ds"] = fe.StatusText;
+            }
+            return r;
+        }
+
+        private JObject NodeOnly(Field f, object v, string path, int depth, int offset, int limit)
         {
             int dot = path.LastIndexOf('.');
             string name = path.Length > 0 ? (dot >= 0 ? path.Substring(dot + 1) : path) : "";
@@ -314,16 +350,67 @@ namespace FrostyAnimationEditor.Core
             List<object> panels = new List<object>();
             string tn = o.Type.Name;
             if (ClipTypes.Contains(tn) || tn == "ClipControllerAsset") panels.Add("clip");
+            if (Sequence.IsSequenceType(tn)) panels.Add("seq");
+            if (tn == "ChooserControllerAsset") panels.Add("chooser");
+            if (tn == "LayersControllerAsset") panels.Add("layers");
+            if (tn == "BlendMaskAsset" || tn == "BlendMaskListAsset") panels.Add("mask");
+            if (tn == "SteeringControllerAsset") panels.Add("steer");
+            if (HasTagPanel(o)) { panels.Add("tags"); panels.Add("tree"); }
             if (SmTypes.Contains(tn)) panels.Add("sm");
             if (tn == "BlendSpace") panels.Add("blend");
             if (tn == "ExpressionAsset") panels.Add("expr");
             if (CurveTypes.Contains(tn)) panels.Add("curves");
+            if (HasCdbPanel(o)) panels.Add("cdb");
             JObject tree = Elem(null, o, "", 2);
             tree["t"] = tn;
             JObject r = new JObject();
             r["key"] = H(o.Key); r["type"] = tn; r["name"] = NameOf(o); r["tree"] = tree; r["panels"] = panels;
+            PutAlias(r, o.Key);
             r["exported"] = Db.Exports.Contains(o.Key); r["new"] = i >= Db.N0;
             r["chain"] = o.Chain().Select(x => (object)x.Type.Name).ToList();
+            r["about"] = About(o);
+            if (Tags.Part(o, "TimelinePointTag") != null) r["tag_owners"] = TagOwners(o.Key).Take(40).ToList();
+            return r;
+        }
+
+        /// <summary>what the game does with the object's types (its chain, then the struct types in it): FieldSemantics</summary>
+        public List<object> About(GdObj o)
+        {
+            List<string> types = new List<string>();
+            foreach (GdObj x in o.Chain()) if (!types.Contains(x.Type.Name)) types.Add(x.Type.Name);
+            HashSet<string> known = FieldSemantics.Types();
+            Stack<TypeDesc> todo = new Stack<TypeDesc>();
+            HashSet<TypeDesc> seen = new HashSet<TypeDesc>();
+            foreach (GdObj x in o.Chain()) todo.Push(x.Type);
+            while (todo.Count > 0)
+            {
+                TypeDesc t = todo.Pop();
+                if (!seen.Add(t)) continue;
+                foreach (Field g in t.Fields)
+                {
+                    if (g.Type == null || g.FType == TypeIds.Key || g.Name == "__base") continue;
+                    if (g.Type.Fields.Count > 0 && seen.Count < 64 && g.FType != TypeIds.String && g.Type.Name != "String")
+                    {
+                        if (known.Contains(g.Type.Name) && !types.Contains(g.Type.Name)) types.Add(g.Type.Name);
+                        todo.Push(g.Type);
+                    }
+                }
+            }
+            List<object> r = new List<object>();
+            foreach (string tn in types)
+            {
+                List<FieldSemantics.Entry> es = FieldSemantics.OfType(tn);
+                if (es.Count == 0) continue;
+                JObject j = new JObject();
+                j["type"] = tn;
+                j["entries"] = es.Select(e =>
+                {
+                    JObject x = new JObject();
+                    x["field"] = e.Field; x["meaning"] = e.Meaning; x["status"] = e.StatusText; x["unidentified"] = e.Unidentified;
+                    return (object)x;
+                }).ToList();
+                r.Add(j);
+            }
             return r;
         }
 
@@ -433,12 +520,18 @@ namespace FrostyAnimationEditor.Core
                 }
                 else if (text.Length > 0)
                 {
-                    if (db.NameOf(i).ToLowerInvariant().IndexOf(text, StringComparison.Ordinal) < 0) continue;
+                    if (db.NameOf(i).ToLowerInvariant().IndexOf(text, StringComparison.Ordinal) < 0)
+                    {
+                        string al = Names.OfBlock(i);
+                        if (al == null || al.ToLowerInvariant().IndexOf(text, StringComparison.Ordinal) < 0) continue;
+                    }
                 }
                 if (offset <= total && total < offset + limit)
                 {
                     JObject j = new JObject();
                     j["key"] = H(db.Keys[i]); j["type"] = db.TypeName(i); j["name"] = db.NameOf(i);
+                    string a = Names.OfBlock(i);
+                    if (a != null) j["alias"] = a;
                     items.Add(j);
                 }
                 total++;
@@ -729,6 +822,7 @@ namespace FrostyAnimationEditor.Core
                         if (r.Key != o.Key) continue;
                         JObject j = new JObject();
                         j["key"] = H(db.Keys[i]); j["type"] = db.TypeName(i); j["name"] = db.NameOf(i); j["path"] = Tail(r.Path);
+                        PutAlias(j, db.Keys[i]);
                         inc.Add(j);
                     }
                 }

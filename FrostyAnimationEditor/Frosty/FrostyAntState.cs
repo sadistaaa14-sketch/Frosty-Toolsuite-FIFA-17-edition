@@ -41,6 +41,18 @@ namespace FrostyAnimationEditor.Plugin
             return App.AssetManager.EnumerateEbx("AntStateAsset").OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
+        /// <summary>FIFA 17's animation bank (the AntStateAsset that holds the game's animations)</summary>
+        public const string MainAsset = "animations/antanimations/fifa/fifagame/fifagame_win32_antstate";
+
+        /// <summary>the main animation bank: by its name, else the AntStateAsset whose name ends like it; null when absent</summary>
+        public static EbxAssetEntry FindMain()
+        {
+            if (App.AssetManager == null) return null;
+            EbxAssetEntry e = App.AssetManager.GetEbxEntry(MainAsset);
+            if (e != null) return e;
+            return Find().FirstOrDefault(x => x.Name.EndsWith("fifagame_win32_antstate", StringComparison.OrdinalIgnoreCase));
+        }
+
         public static FrostyAntState Locate(EbxAssetEntry e)
         {
             FrostyAntState s = new FrostyAntState { Ebx = e };

@@ -29,7 +29,7 @@ namespace FrostyAnimationEditor.Windows
         {
             if (info == null) return Ui.T(fallback, Ui.Muted);
             string k = info.Str("key");
-            string name = string.IsNullOrEmpty(info.Str("name")) ? k : info.Str("name");
+            string name = string.IsNullOrEmpty(Ui.Label(info)) ? k : Ui.Label(info);
             if (info.Str("state") != "ok") return Ui.T(name, info.Str("state") == "imported" ? (Brush)Ui.Warn : Ui.Bad, 12, false, false, info.Str("type") + " " + k);
             return Ui.Link(name, () => Go(k), null, info.Str("type") + " " + k);
         }
@@ -60,12 +60,15 @@ namespace FrostyAnimationEditor.Windows
             body.Children.Add(inBox);
         }
 
-        private Grid RefTable(List<object> rows)
+        private UIElement RefTable(List<object> rows)
         {
+            const int Max = 1000;
+            if (rows.Count > Max)
+                return Ui.V(RefTable(rows.Take(Max).ToList()), Ui.T("… " + (rows.Count - Max) + " more not listed", Ui.Muted, 11));
             return Ui.Table(new[] { "field", "object", "class" }, rows.Cast<JObject>().Select(x => new object[]
             {
                 Ui.T(x.Str("path"), null, 11, false, true),
-                (x.Str("state") ?? "ok") == "ok" ? (object)Ui.Link(string.IsNullOrEmpty(x.Str("name")) ? x.Str("key") : x.Str("name"), () => Go(x.Str("key")), null, x.Str("key"))
+                (x.Str("state") ?? "ok") == "ok" ? (object)Ui.Link(string.IsNullOrEmpty(Ui.Label(x)) ? x.Str("key") : Ui.Label(x), () => Go(x.Str("key")), null, x.Str("key") + (x.Str("alias") != null ? " " + x.Str("name") : ""))
                                                  : Ui.T(x.Str("name"), x.Str("state") == "imported" ? (Brush)Ui.Warn : Ui.Bad, 12, false, false, x.Str("key")),
                 Ui.T(x.Str("type"), Ui.Muted)
             }));
@@ -88,19 +91,57 @@ namespace FrostyAnimationEditor.Windows
             }
             if (ctrls.Count == 0) ctrlLinks.Children.Add(Ui.T("none", Ui.Muted));
             Ui.Form f = new Ui.Form(110);
-            f.Row("clip", Ui.H(Ui.Link(c.Str("name"), () => Go(clipKey)), Ui.Pad(Ui.T(clipKey, Ui.Muted, 11, false, true), 8, 0, 0, 0)));
+            f.Row("clip", Ui.H(Ui.Link(Ui.Label(c), () => Go(clipKey)), Ui.Pad(Ui.T((c.Str("alias") != null ? c.Str("name") + "  " : "") + clipKey, Ui.Muted, 11, false, true), 8, 0, 0, 0)));
             f.Row("codec", Ui.T((c.Str("codec") ?? "").Trim()));
             f.Row("frames", Ui.T(Ui.Num(c["frames"])));
             f.Row("channels", Ui.Wrap(ch.Count + " (" + string.Join(", ", ch.Take(8).Cast<JObject>().Select(x => x.Str("name"))) + (ch.Count > 8 ? ", …" : "") + ")"));
             f.Row("rig", Ui.T(c.Str("rig") ?? "—"));
             f.Row("controllers", ctrlLinks);
+            if (c["trim_offset"] != null)
+            {
+                TextBlock trim = Ui.Wrap("TrimOffset " + Ui.Num(c["trim_offset"]) + " · TrimmedDuration " + Ui.Num(c["trimmed_duration"]) + " · EndFrame " + Ui.Num(c["end_frame"]), null, 12);
+                trim.ToolTip = "a ClipController shows clip frame = its ticks × TimeScale + TrimOffset and lasts ceil(TrimmedDuration / TimeScale) ticks";
+                f.Row("trim", trim);
+            }
             body.Children.Add(f.Grid);
 
+            List<JObject> uses;
+            try { uses = M.SeqUses(clipKey).Cast<JObject>().ToList(); }
+            catch (Exception e) when (IsUserError(e)) { uses = new List<JObject>(); }
+            if (uses.Count > 0)
+            {
+                body.Children.Add(Ui.H3("Sequences"));
+                StackPanel us = new StackPanel();
+                foreach (JObject u in uses.Take(40))
+                {
+                    string ak = u.Str("actor");
+                    bool past = u.Bool("past_end");
+                    us.Children.Add(Ui.H(Ui.Link(u.Str("actor_name"), () => Go(ak)),
+                        Ui.Pad(Ui.T("track " + u.Long("track") + " · ticks " + u.Long("begin") + "–" + u.Long("end") +
+                                    (u["first_frame"] != null ? " · clip frames " + Ui.Num(u["first_frame"]) + "–" + Ui.Num(u["last_frame"]) : "") +
+                                    (past ? " · past the last frame (held)" : ""), past ? Ui.Warn : Ui.Muted, 11), 8, 0, 0, 0)));
+                }
+                if (uses.Count > 40) us.Children.Add(Ui.T("… " + (uses.Count - 40) + " more", Ui.Muted, 11));
+                body.Children.Add(us);
+                body.Children.Add(Ui.Wrap("These sequences play only part of the clip (the frames listed). A new animation for this clip keeps the clip's TrimOffset and the " +
+                                          "hold after its last frame, so the sequences keep addressing the same frames; to play a different celebration, point the sequence " +
+                                          "(or the object that plays it) at another SequenceContainerAsset instead.", Ui.Muted, 11));
+            }
+
+            body.Children.Add(Ui.H3("Player"));
+            string pk = ObjKey;
+            body.Children.Add(Ui.Flow(Ui.B("Player view…", () => PlayerWindow.Open(this, pk), "the clip on the player skeleton with the player's meshes, in its own window")));
+            body.Children.Add(Ui.Wrap("The player view plays the clip on the render skeleton (EBX skeleton_player, 438 bones) with the project's character meshes, " +
+                                      "and exports / imports FBX.", Ui.Muted, 11));
+
             body.Children.Add(Ui.H3("Export"));
-            body.Children.Add(Ui.Flow(Ui.B("For Blender (.antanim.json)…", () => ExportClip("antanim")), Ui.B("BVH (.bvh)…", () => ExportClip("bvh")),
+            body.Children.Add(Ui.Flow(Ui.B("FBX (.fbx)…", ExportFbx, "skeleton and animation (no meshes; the player view can add them)"),
+                                      Ui.B("For Blender (.antanim.json)…", () => ExportClip("antanim")), Ui.B("BVH (.bvh)…", () => ExportClip("bvh")),
                                       Ui.B("Save the Blender add-on…", SaveAddon)));
-            body.Children.Add(Ui.Wrap("In Blender install the add-on io_fifa17_antanim.py (Edit › Preferences › Add-ons › Install), then File › Import › FIFA 17 ANT animation " +
-                                      "builds the bind-posed armature and the action. Export it back with File › Export › FIFA 17 ANT animation and use Replace or Add below.", Ui.Muted, 11));
+            body.Children.Add(Ui.Wrap("FBX: the clip on the player skeleton (bone names as in the game), one key per frame, Y up, meters. Blender, Maya, MotionBuilder etc. read it; " +
+                                      "export it back as FBX with the same bone names (in Blender set Animation › Simplify to 0 to keep every key) and use Replace or Add below.", Ui.Muted, 11));
+            body.Children.Add(Ui.Wrap("antanim.json: install the Blender add-on io_fifa17_antanim.py (Edit › Preferences › Add-ons › Install); File › Import › FIFA 17 ANT animation " +
+                                      "builds the bind-posed armature and the action; File › Export › FIFA 17 ANT animation writes it back.", Ui.Muted, 11));
             body.Children.Add(Ui.H3("Import"));
             body.Children.Add(Ui.Flow(Ui.B("Replace this animation from a file…", () => ClipImport(c, false)), Ui.B("Add a new animation from a file…", () => ClipImport(c, true))));
 
@@ -170,13 +211,46 @@ namespace FrostyAnimationEditor.Windows
             catch (Exception e) when (IsUserError(e)) { Report(e); }
         }
 
-        private void ClipImport(JObject c, bool asNew)
+        private void ExportFbx()
         {
-            Dialog d = new Dialog(this, asNew ? "Add a new animation" : "Replace " + c.Str("name"), 640);
+            string key = ObjKey;
+            Tuple<string, byte[]> file;
+            try { file = Busy("writing the FBX file", p => M.ClipFbx(key)); }
+            catch (Exception e) when (IsUserError(e)) { Report(e); return; }
+            Microsoft.Win32.SaveFileDialog d = new Microsoft.Win32.SaveFileDialog { FileName = file.Item1, Filter = "FBX (*.fbx)|*.fbx|All files|*.*", Title = "Export the animation as FBX" };
+            if (d.ShowDialog(this) != true) return;
+            try
+            {
+                File.WriteAllBytes(d.FileName, file.Item2);
+                Msg("exported " + d.FileName);
+            }
+            catch (Exception e) when (IsUserError(e)) { Report(e); }
+        }
+
+        private void ClipImport(JObject c, bool asNew) { ImportClipFile(ObjKey, asNew, null, this, c); }
+
+        // the import dialog's last settings (this session)
+        private static string ImportTolerance = "0.00025";
+        private static bool ImportReduceKeys = true;
+
+        /// <summary>the Replace / Add dialog for the clip key; the clip that holds the result (the new one when asNew), or
+        /// null when nothing changed</summary>
+        public string ImportClipFile(string key, bool asNew, string preferFmt, Window owner, JObject c = null)
+        {
+            if (c == null)
+            {
+                try { c = M.Clip(key); }
+                catch (Exception e) when (IsUserError(e)) { Report(e); return null; }
+            }
+            Dialog d = new Dialog(owner ?? this, asNew ? "Add a new animation" : "Replace " + Ui.Label(c), 640);
             TextBox file = Ui.Box("", double.NaN, true);
             Button browse = Ui.B("Browse…", () =>
             {
-                Microsoft.Win32.OpenFileDialog od = new Microsoft.Win32.OpenFileDialog { Filter = "Animations (*.antanim.json;*.json;*.bvh)|*.antanim.json;*.json;*.bvh|All files|*.*" };
+                Microsoft.Win32.OpenFileDialog od = new Microsoft.Win32.OpenFileDialog
+                {
+                    Filter = preferFmt == "fbx" ? "FBX (*.fbx)|*.fbx|Animations (*.fbx;*.antanim.json;*.json;*.bvh)|*.fbx;*.antanim.json;*.json;*.bvh|All files|*.*"
+                                                : "Animations (*.fbx;*.antanim.json;*.json;*.bvh)|*.fbx;*.antanim.json;*.json;*.bvh|All files|*.*"
+                };
                 if (od.ShowDialog(d) == true) file.Text = od.FileName;
             });
             Grid fileRow = new Grid();
@@ -185,15 +259,18 @@ namespace FrostyAnimationEditor.Windows
             Grid.SetColumn(browse, 1);
             fileRow.Children.Add(file);
             fileRow.Children.Add(browse);
-            ComboBox codec = Ui.Combo(new[] { Ui.KV("VBR", "VBR (compressed, like the shipped clips)"), Ui.KV("RAW", "RAW (uncompressed)") }, "VBR");
-            TextBox tol = Ui.Box("0.00105", 120);
+            ComboBox codec = Ui.Combo(new[] { Ui.KV("VBR", "VBR (compressed, like the game's clips)"), Ui.KV("RAW", "RAW (uncompressed)") }, "VBR");
+            TextBox tol = Ui.Box(ImportTolerance, 120, false, "per value, as a fraction of its range; the game's clips use 0.00105");
+            CheckBox fewer = Ui.Check("only where the motion needs them, like the game's clips", ImportReduceKeys,
+                                      "drops every frame the game's in-between interpolation reproduces within the tolerance");
             TextBox name = Ui.Box("");
             TextBox cname = Ui.Box("");
             CheckBox mk = Ui.Check("", true);
             Ui.Form f = new Ui.Form(190);
-            f.Row("file (.antanim.json or .bvh)", fileRow);
+            f.Row("file (.fbx, .antanim.json, .bvh)", fileRow);
             f.Row("codec", codec);
             f.Row("VBR tolerance", tol);
+            f.Row("VBR keys", fewer);
             if (asNew)
             {
                 f.Row("clip name", name);
@@ -204,7 +281,11 @@ namespace FrostyAnimationEditor.Windows
             List<object> ctrls = c.Arr("controllers");
             if (asNew) d.Add(Ui.Wrap("The new clip copies this clip's skeleton channels and rig; the new controller copies " +
                                      (ctrls.Count > 0 ? ((JObject)ctrls[0]).Str("name") : "a controller of this clip") + ".", Ui.Muted, 11));
-            d.Add(Ui.Wrap("An .antanim.json must have this clip's channels (export one first to see them); a .bvh is matched to the rig's joints by name.", Ui.Muted, 11));
+            d.Add(Ui.Wrap("An .fbx is matched to the player skeleton's bones by name (namespaces such as \"mixamorig:\" are ignored), any axes and units; a .bvh is matched to the " +
+                          "rig's joints by name. For both, the foot IK targets (Left/RightAnkleEffectorAux) and the foot height and speed channels are recomputed from the new " +
+                          "motion; other joints the file does not have and the other float channels keep this clip's values. An .antanim.json must have this clip's channels " +
+                          "(export one first to see them) and is stored as it is. A lower tolerance keeps more of the motion: 0.00025 has about a quarter of the error of 0.00105.",
+                          Ui.Muted, 11));
             JObject result = null;
             d.Button("Cancel");
             d.Button(asNew ? "Add" : "Replace", () =>
@@ -212,33 +293,50 @@ namespace FrostyAnimationEditor.Windows
                 string path = file.Text.Trim().Trim('"');
                 if (path.Length == 0) throw new ApiError("choose a file");
                 byte[] data = File.ReadAllBytes(path);
-                string fmt = path.EndsWith(".bvh", StringComparison.OrdinalIgnoreCase) ? "bvh" : "antanim";
+                string fmt = path.EndsWith(".bvh", StringComparison.OrdinalIgnoreCase) ? "bvh" : path.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase) ? "fbx" : "antanim";
                 double t = Ui.ParseDouble(tol.Text, "tolerance");
+                if (!(t > 0) || t > 0.1) throw new ApiError("the tolerance must be above 0 and at most 0.1");
+                bool reduce = Ui.On(fewer);
+                ImportTolerance = tol.Text.Trim();
+                ImportReduceKeys = reduce;
+                double rk = reduce ? t : 0;
                 string cd = Ui.Value(codec);
-                string key = ObjKey;
+                M.FbxTake = null;
+                if (fmt == "fbx")
+                {
+                    List<string> takes;
+                    try { takes = M.FbxTakes(data); }
+                    catch (Exception e) when (IsUserError(e)) { throw new ApiError("the FBX file does not read: " + e.Message); }
+                    if (takes.Count > 1)
+                    {
+                        string take = Dialog.Pick(d, "Take", "The file has " + takes.Count + " animations (takes); which one?", takes, x => x);
+                        if (take == null) return false;
+                        M.FbxTake = take;
+                    }
+                }
                 if (asNew)
                 {
                     string nm = name.Text.Trim(), cn = cname.Text.Trim();
                     bool make = Ui.On(mk);
-                    result = Busy("encoding the animation", p => M.ClipAdd(key, fmt, data, cd, t, nm, null, make, cn));
+                    result = Busy("encoding the animation", p => M.ClipAdd(key, fmt, data, cd, t, nm, null, make, cn, rk));
                 }
-                else result = Busy("encoding the animation", p => M.ClipReplace(key, fmt, data, cd, t));
+                else result = Busy("encoding the animation", p => M.ClipReplace(key, fmt, data, cd, t, rk));
                 return true;
             }, true);
-            if (!d.Run() || result == null) return;
+            if (!d.Run() || result == null) return null;
+            string notes = string.Join("; ", (result.Arr("notes") ?? new List<object>()).Select(x => x.ToString()));
             if (asNew)
             {
                 string ck = result.Str("controller");
                 LoadTypes();
                 Go(ck ?? result.Str("key"));
                 RefreshState();
-                Msg("added " + result.Str("key") + (ck != null ? ", controller " + ck : "") + " · " + result.Str("report"));
+                Msg("added " + result.Str("key") + (ck != null ? ", controller " + ck : "") + " · " + result.Str("report") + (notes.Length > 0 ? " · " + notes : ""));
+                return result.Str("key");
             }
-            else
-            {
-                AfterEdit();
-                Msg("replaced · " + result.Str("report"));
-            }
+            AfterEdit();
+            Msg("replaced · " + result.Str("report") + (notes.Length > 0 ? " · " + notes : ""));
+            return key;
         }
 
         // ================================================================== state machine
@@ -310,8 +408,9 @@ namespace FrostyAnimationEditor.Windows
                 }
                 body.Children.Add(Ui.Card(box, sk == ObjKey ? Ui.Accent : null));
             }
-            body.Children.Add(Ui.Wrap("Transitions are evaluated in order. The runtime tables (FlattenedTransitions, AllTransitionConditions, AllBranchTypes, Identifier, " +
+            body.Children.Add(Ui.Wrap("Transitions are checked in order. The lookup tables (FlattenedTransitions, AllTransitionConditions, AllBranchTypes, Identifier, " +
                                       "UsesGateNodes) are rebuilt after every change.", Ui.Muted, 11));
+            RenderSmRun(ck, states.Cast<JObject>().ToList());
         }
 
         private void ShowSmGraph(string controllerKey)
@@ -332,7 +431,7 @@ namespace FrostyAnimationEditor.Windows
             JObject subj = null;
             TextBlock sv = Ui.T("subject: none", Ui.Muted, 11);
             ObjectPicker pk = new ObjectPicker(M, null);
-            pk.Picked += o => { subj = o; sv.Text = "subject: " + o.Str("name") + " (" + o.Str("type") + ")"; sv.Foreground = Ui.Fg; };
+            pk.Picked += o => { subj = o; sv.Text = "subject: " + Ui.Label(o) + " (" + o.Str("type") + ")"; sv.Foreground = Ui.Fg; };
             Ui.Form f = new Ui.Form(80);
             f.Row("name", name);
             f.Row("kind", kind);
@@ -448,7 +547,12 @@ namespace FrostyAnimationEditor.Windows
                 }),
                 mode, force,
                 Ui.B("Reload", () => { body.Children.Clear(); Guard(() => RenderExpr(dbl)); }),
-                Ui.B(dbl ? "Show ExpressionKernel" : "Show DBL copy", () => { body.Children.Clear(); Guard(() => RenderExpr(!dbl)); })));
+                Ui.B(dbl ? "Show ExpressionKernel" : "Show DBL copy", () => { body.Children.Clear(); Guard(() => RenderExpr(!dbl)); }),
+                Ui.B("Dataflow graph…", () =>
+                {
+                    try { new GraphWindow(this, Busy("building the dataflow graph", p => M.ExprGraph(ObjKey, dbl))).Show(); }
+                    catch (Exception e) when (IsUserError(e)) { Report(e); }
+                }, "the kernel as boxes and links: inputs, the natives it calls, the DOFs it writes")));
             body.Children.Add(outp);
             show(Args("issues", r.Arr("issues")));
 
@@ -550,6 +654,7 @@ namespace FrostyAnimationEditor.Windows
                 if (Guard(() => M.CurvesSet(ObjKey, payload))) { AfterEdit(); Msg("curve updated"); }
             };
             if (r.Str("kind") == "weights") RenderWeightCurves(r, apply);
+            else if (r.Str("kind") == "piecewise") RenderPiecewiseCurve(r);
             else RenderTagCurve(r, apply);
             List<object> issues = r.Arr("issues");
             if (issues != null && issues.Count > 0)
@@ -557,6 +662,38 @@ namespace FrostyAnimationEditor.Windows
                 body.Children.Add(Ui.H3("Issues"));
                 foreach (object m in issues) body.Children.Add(Ui.Wrap(Convert.ToString(m, CultureInfo.InvariantCulture), Ui.Bad, 11));
             }
+        }
+
+        /// <summary>a PiecewiseLinearAsset: its points plotted, with the titles and ranges the editor-only fields hold</summary>
+        private void RenderPiecewiseCurve(JObject r)
+        {
+            List<JObject> pts = r.Arr("points").Cast<JObject>().ToList();
+            string gt = r.Str("graph_title"), xt = r.Str("x_title"), yt = r.Str("y_title");
+            if (gt.Length > 0) body.Children.Add(Ui.H3(gt));
+            double lo = pts.Count > 0 ? pts.Min(p => p.Dbl("x")) : 0, hi = pts.Count > 0 ? pts.Max(p => p.Dbl("x")) : 1;
+            double span = hi - lo < 1e-9 ? 1 : hi - lo;
+            CurvePlot plot = new CurvePlot(0, 0);
+            plot.All.Add(new CurvePlot.Series
+            {
+                X = pts.Select(p => (p.Dbl("x") - lo) / span).ToList(),
+                Y = pts.Select(p => (double?)p.Dbl("y")).ToList(),
+                On = true,
+                Label = gt,
+            });
+            body.Children.Add(Ui.Wrap(pts.Count + " points" + (xt.Length > 0 || yt.Length > 0 ? " · " + (yt.Length > 0 ? yt : "y") + " over " + (xt.Length > 0 ? xt : "x") : "") +
+                                      " · x from " + Ui.Num(lo) + " to " + Ui.Num(hi) + " (the plot's 0 to 1)", Ui.Muted, 11));
+            body.Children.Add(plot);
+            List<object[]> rows = new List<object[]>();
+            for (int i = 0; i < pts.Count; i++)
+                rows.Add(new object[] { Ui.T(i.ToString(CultureInfo.InvariantCulture), Ui.Muted, 11),
+                                        Ui.T(Ui.Num(pts[i]["x"]), null, 12, false, true),
+                                        Ui.T(Ui.Num(pts[i]["y"]), null, 12, false, true) });
+            body.Children.Add(Ui.Table(new[] { "#", xt.Length > 0 ? xt : "x", yt.Length > 0 ? yt : "y" }, rows));
+            Ui.Form f = new Ui.Form(150);
+            f.Row("authored range", Ui.T("x " + Ui.Num(r["x_min"]) + " … " + Ui.Num(r["x_max"]) + "   y " + Ui.Num(r["y_min"]) + " … " + Ui.Num(r["y_max"]), Ui.Muted, 11));
+            f.Row("Slope", Ui.T(Ui.Num(r["slope"]), Ui.Muted, 11));
+            body.Children.Add(f.Grid);
+            body.Children.Add(Ui.Wrap(r.Str("note") + ". Edit the points in the Fields tab.", Ui.Muted, 11));
         }
 
         private void RenderWeightCurves(JObject r, Action<JObject> apply)

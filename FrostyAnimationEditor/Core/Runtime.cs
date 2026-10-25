@@ -12,17 +12,16 @@ namespace FrostyAnimationEditor.Core
     }
 
     /// <summary>
-    /// Exact models of the two header values FIFA17.exe sizes from the file's content.
-    /// H7 - the key-waiter pool reserve (FUN_1461a13f0 reserves H7 x 16-byte entries).  While the loader
+    /// Exact models of the two header values the game sizes from the file's content.
+    /// H7 - the reference-waiting reserve (H7 x 16-byte entries).  While the game
     ///      attaches objects in file order, every key reference to an object of this file that is not
-    ///      attached yet gets a waiter (FUN_1461a0ca0 -> FUN_1461a1330); attaching an object releases its
-    ///      waiters (FUN_1461a0ad0).  The pool grows to the peak number of pending waiters; the shipped H7
+    ///      attached yet gets a waiter; attaching an object releases its
+    ///      waiters.  The pool grows to the peak number of pending waiters; the shipped H7
     ///      (354,549) is exactly that peak.  Each key field is resolved once, except where a loader
     ///      resolves it several times or not at all (ResolveMult).
     /// H8 - the AntLinearResourceAllocator size; version-3 files get H8 + 0xC0080 + (H8 + 0xC0000) / 0xA00
     ///      bytes.  The shipped file uses H8 - 704 bytes during the blob loop and 11,472 more in the
     ///      post-load step (AllocModel gives the exact request list of every object in both phases).
-    /// Both were measured by running the game's own loader on the shipped file in an emulator.
     /// </summary>
     public static class Runtime
     {
@@ -90,7 +89,7 @@ namespace FrostyAnimationEditor.Core
             }
             if (t == "ExpressionAsset")
             {
-                // FUN_146b72490 resolves GameStateValueAssets[i] unless GameStateAssetOffsets[i] is -1;
+                // the game resolves GameStateValueAssets[i] unless GameStateAssetOffsets[i] is -1;
                 // the *DBL variants are not loaded by this build
                 IList offs = o["GameStateAssetOffsets"] as IList ?? new object[0];
                 foreach (KeyRef r in refs)

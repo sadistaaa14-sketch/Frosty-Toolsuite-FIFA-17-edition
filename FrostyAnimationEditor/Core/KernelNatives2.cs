@@ -7,7 +7,7 @@ namespace FrostyAnimationEditor.Core
 {
     public static partial class KernelNatives
     {
-        // ------------------------------------------------------------------ game-state values (FUN_146b73a30 ...)
+        // ------------------------------------------------------------------ game-state values
         private static GSValue GsOf(Machine M, uint x, string what)
         {
             GSValue g = M.Obj(x) as GSValue;
@@ -85,15 +85,15 @@ namespace FrostyAnimationEditor.Core
                 g.Value = v;
                 M.Log("gs", g.Name, v);
             };
-            Reg(0x146B73AA0, get("f"));
-            Reg(0x146B73AF0, get("i"));
-            Reg(0x146B73A30, get("b"));
-            Reg(0x146B73BD0, get("v"));
-            Reg(0x146B73AD0, set("f"));
-            Reg(0x146B73B20, set("i"));
-            Reg(0x146B73A60, set("b"));
-            Reg(0x146B73C30, set("v"));
-            Reg(0x146B73B40, (M, i, o, s) =>
+            Reg("gs.get.f32", get("f"));
+            Reg("gs.get.i32", get("i"));
+            Reg("gs.get.bool", get("b"));
+            Reg("gs.get.vec", get("v"));
+            Reg("gs.set.f32", set("f"));
+            Reg("gs.set.i32", set("i"));
+            Reg("gs.set.bool", set("b"));
+            Reg("gs.set.ref", set("v"));
+            Reg("gs.get.m44", (M, i, o, s) =>
             {
                 GSValue g = GsOf(M, i[1], "gs get");
                 double[] d = GsVec(g.Value);
@@ -102,26 +102,26 @@ namespace FrostyAnimationEditor.Core
                 M.Mem.WM(o[0], r);
             });
 
-            // DOFs (FUN_146b73640, FUN_146b73360, FUN_146b733f0)
-            Reg(0x146B73640, (M, i, o, s) =>
+            // DOFs
+            Reg("dof.read", (M, i, o, s) =>
             {
                 VmPose p; int tr; uint off; int n;
                 Dof(M, i, out p, out tr, out off, out n);
                 if (tr == Machine.INVALID_TRACK) M.Mem.Write(o[0], M.Mem.Read(i[2], n));
                 else M.Mem.Write(o[0], Slice(p.Data, off, n));
             });
-            Reg(0x146B73360, (M, i, o, s) =>
+            Reg("dof.read_if_set", (M, i, o, s) =>
             {
                 VmPose p; int tr; uint off; int n;
                 Dof(M, i, out p, out tr, out off, out n);
                 if (tr != Machine.INVALID_TRACK && p.Flag(tr) != 0) M.Mem.Write(o[0], Slice(p.Data, off, n));
                 else M.Mem.Write(o[0], M.Mem.Read(i[2], n));
             });
-            Reg(0x146B733F0, (M, i, o, s) =>
+            Reg("dof.write", (M, i, o, s) =>
             {
                 VmPose p; int tr; uint off; int n;
                 Dof(M, i, out p, out tr, out off, out n);
-                if (tr == Machine.INVALID_TRACK) throw new VMError("dof.write through an unbound DOF handle (the game writes at pose+0xFFFFFFFF)");
+                if (tr == Machine.INVALID_TRACK) throw new VMError("dof.write through a DOF handle that is not bound to any joint channel (the game would write to a wrong place)");
                 byte[] v = M.Mem.Read(i[2], n);
                 if ((long)off + n > p.Data.Length) throw new VMError("dof.write past the end of the pose");
                 Buffer.BlockCopy(v, 0, p.Data, (int)off, n);
@@ -155,7 +155,7 @@ namespace FrostyAnimationEditor.Core
         // ------------------------------------------------------------------ stateful filters
         private static void Filters()
         {
-            Reg(0x146B78310, (M, i, o, s) =>
+            Reg("f32.spring", (M, i, o, s) =>
             {
                 VmMem m = M.Mem;
                 float x = m.F(i[0]), k = m.F(i[1]), d = m.F(i[2]), dt = m.F(i[3]);
@@ -172,7 +172,7 @@ namespace FrostyAnimationEditor.Core
                 m.WF(s[0], x);
                 m.WF(o[0], x);
             });
-            Reg(0x146B79F30, (M, i, o, s) =>
+            Reg("vec.spring", (M, i, o, s) =>
             {
                 VmMem m = M.Mem;
                 F4 x = m.V(i[0]);
@@ -185,7 +185,7 @@ namespace FrostyAnimationEditor.Core
                 m.WV(s[1], x);
                 m.WV(o[0], x);
             });
-            Reg(0x146B7C760, (M, i, o, s) =>
+            Reg("f32.angle_spring", (M, i, o, s) =>
             {
                 VmMem m = M.Mem;
                 float x = m.F(i[0]), k = m.F(i[1]), d = m.F(i[2]), dt = m.F(i[3]);
@@ -212,7 +212,7 @@ namespace FrostyAnimationEditor.Core
             });
         }
 
-        // ------------------------------------------------------------------ transforms (FUN_146b74800, FUN_146b76530, FUN_146b847e0)
+        // ------------------------------------------------------------------ transforms
         private static int[] H(Machine M, uint x)
         {
             byte[] b = M.Mem.Read(x, 8);
@@ -257,7 +257,7 @@ namespace FrostyAnimationEditor.Core
 
         private static F4 Row(float[] m, int r) { return new F4(m[4 * r], m[4 * r + 1], m[4 * r + 2], m[4 * r + 3]); }
 
-        /// <summary>FUN_146b76530's tail (and FUN_146b76c00's): row lengths, the rotation of the normalised rows, the
+        /// <summary>matrix decomposition: row lengths, the rotation of the normalised rows, the
         /// translation row</summary>
         private static void Decompose(F4[] rows, out F4 sc, out F4 q, out F4 t)
         {
@@ -311,7 +311,7 @@ namespace FrostyAnimationEditor.Core
 
         private static void Transforms()
         {
-            Reg(0x146B74800, (M, i, o, s) =>
+            Reg("pose.trajectory", (M, i, o, s) =>
             {
                 VmMem m = M.Mem;
                 VmPose pa = PoseOf(M, i[0]), pb = PoseOf(M, i[1]);
@@ -332,12 +332,12 @@ namespace FrostyAnimationEditor.Core
                 m.WV(o[1], q);
                 m.WM(o[3], Compose(sc, q, t));
             });
-            Reg(0x146B847E0, (M, i, o, s) =>
+            Reg("m44.compose", (M, i, o, s) =>
             {
                 VmMem m = M.Mem;
                 m.WM(o[0], Compose(m.V(i[0]), m.V(i[1]), m.V(i[2])));
             });
-            Reg(0x146B76530, (M, i, o, s) =>
+            Reg("pose.chain", (M, i, o, s) =>
             {
                 VmMem m = M.Mem;
                 object po = M.Obj(i[0]);
@@ -376,7 +376,7 @@ namespace FrostyAnimationEditor.Core
                 m.WV(o[1], dq);
                 m.WV(o[2], dt);
             });
-            Reg(0x146B84BF0, (M, i, o, s) =>
+            Reg("m44.decompose", (M, i, o, s) =>
             {
                 float[] rm = M.Mem.M(i[0], 16);
                 F4 sc, q, t;
@@ -385,9 +385,9 @@ namespace FrostyAnimationEditor.Core
                 M.Mem.WV(o[1], q);
                 M.Mem.WV(o[2], t);
             });
-            Reg(0x146B78430, (M, i, o, s) =>
+            Reg("quat.aim", (M, i, o, s) =>
             {
-                // FUN_146b78430 / FUN_146b7a010: qY(atan2(-n.z, n.x)) * qZ(asin(n.y)) * qX(roll), n the direction in1 - in0
+                // qY(atan2(-n.z, n.x)) * qZ(asin(n.y)) * qX(roll), n the direction in1 - in0
                 // normalised; identity when the points are closer than 1.5258789e-05 or the result is not finite
                 F4 a = M.Mem.V(i[0]), b = M.Mem.V(i[1]);
                 float roll = M.Mem.F(i[2]);
@@ -408,9 +408,9 @@ namespace FrostyAnimationEditor.Core
                 }
                 M.Mem.WV(o[0], outq);
             });
-            Reg(0x146B7C510, (M, i, o, s) =>
+            Reg("quat.to_euler", (M, i, o, s) =>
             {
-                // FUN_146b7c300: (about Y, about Z, about X)
+                // (about Y, about Z, about X)
                 F4 v = M.Mem.V(i[0]);
                 float x = v.X, y = v.Y, z = v.Z, w = v.W;
                 float t = y * x + w * z;
@@ -428,9 +428,9 @@ namespace FrostyAnimationEditor.Core
                 M.Mem.WF(o[1], r1);
                 M.Mem.WF(o[2], r2);
             });
-            Reg(0x146B7C2A0, (M, i, o, s) =>
+            Reg("f32.euler_to_quat", (M, i, o, s) =>
             {
-                // FUN_146b7b9d0: (qY(a) * qZ(b)) * qX(c) in quat.mul's convention
+                // (qY(a) * qZ(b)) * qX(c) in quat.mul's convention
                 float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]), c = M.Mem.F(i[2]);
                 M.Mem.WV(o[0], Qmul(Qmul(AxisQuat(1, a), AxisQuat(2, b)), AxisQuat(0, c)));
             });
@@ -470,10 +470,10 @@ namespace FrostyAnimationEditor.Core
 
         private static void More()
         {
-            Reg(0x1465734F0, (M, i, o, s) => { });
-            Reg(0x146B7AE60, (M, i, o, s) =>
+            Reg("nop", (M, i, o, s) => { });
+            Reg("f32.angle_follow", (M, i, o, s) =>
             {
-                // FUN_146b7aa30, transcribed
+                // transcribed
                 VmMem m = M.Mem;
                 float f4 = m.F(i[0]), f3 = m.F(i[2]), f5 = m.F(i[4]), f2 = m.F(i[3]);
                 float f8 = f2;
@@ -531,9 +531,9 @@ namespace FrostyAnimationEditor.Core
                 f3 = f8 > f3 ? f3 : f8;
                 m.WF(o[0], FracWrap(f4 * INV_2PI + f3 * INV_2PI) * TWO_PI);
             });
-            Reg(0x146B77A00, (M, i, o, s) =>
+            Reg("f32.op_f91d45c6", (M, i, o, s) =>
             {
-                // FUN_146b77a00 (inputs a, b, c, d, e)
+                // (inputs a, b, c, d, e)
                 VmMem m = M.Mem;
                 float a = m.F(i[0]), b = m.F(i[1]), c = m.F(i[2]), d = m.F(i[3]), e = m.F(i[4]);
                 float eps = (float)9.999999717180685e-10, big = (float)3.4028234663852886e+38, z = 0f;
@@ -580,7 +580,7 @@ namespace FrostyAnimationEditor.Core
                 }
                 m.WF(o[3], r);
             });
-            Reg(0x146B7C800, (M, i, o, s) =>
+            Reg("vec.raise_by_angle", (M, i, o, s) =>
             {
                 VmMem m = M.Mem;
                 F4 a = m.V(i[0]), b = m.V(i[1]);
@@ -597,9 +597,9 @@ namespace FrostyAnimationEditor.Core
                 }
                 m.WV(o[0], new F4(a.X, y, a.Z, a.X));
             });
-            Reg(0x146B78290, (M, i, o, s) =>
+            Reg("vec.follow_at_distance", (M, i, o, s) =>
             {
-                // FUN_146b78290: once initialised (or when the input moves farther than the distance) the point is put on
+                // once initialised (or when the input moves farther than the distance) the point is put on
                 // the line to the input at exactly the distance
                 VmMem m = M.Mem;
                 F4 t = m.V(i[0]);
@@ -617,9 +617,9 @@ namespace FrostyAnimationEditor.Core
                 }
                 m.WV(o[0], pnt);
             });
-            Reg(0x146B85C70, (M, i, o, s) =>
+            Reg("f32.curve8", (M, i, o, s) =>
             {
-                // FUN_146b84160: piecewise linear lookup in the 16-float table of operand 0 (x0..x7, y0..y7)
+                // piecewise linear lookup in the 16-float table of operand 0 (x0..x7, y0..y7)
                 float[] p = M.Mem.M(i[0], 16);
                 float t = M.Mem.F(i[1]);
                 Func<float, float, float, float, float> seg = (x0, x1, y0, y1) => ((t - x0) / (x1 - x0)) * (y1 - y0) + y0;
@@ -639,19 +639,19 @@ namespace FrostyAnimationEditor.Core
                 else r = p[15];
                 M.Mem.WF(o[0], r);
             });
-            Reg(0x146B85EA0, (M, i, o, s) =>
+            Reg("f32.random", (M, i, o, s) =>
             {
                 ulong nxt = Rng(M, i, s);
                 M.Mem.WF(o[0], (float)(uint)((nxt >> 16) & 0xFFFFFFFF) * (float)2.3283064e-10 * 2f - 1f);
             });
-            Reg(0x146B85F30, (M, i, o, s) =>
+            Reg("i32.random", (M, i, o, s) =>
             {
                 ulong nxt = Rng(M, i, s);
                 M.Mem.WI(o[0], (long)((nxt >> 16) & 0xFFFFFFFF));
             });
-            Reg(0x146B78120, (M, i, o, s) =>
+            Reg("f32.range_spring", (M, i, o, s) =>
             {
-                // FUN_146b77ed0 (inputs x, rate, lo, hi, dt; state value, velocity, initialised)
+                // (inputs x, rate, lo, hi, dt; state value, velocity, initialised)
                 VmMem m = M.Mem;
                 float x = m.F(i[0]), rate = m.F(i[1]), lo = m.F(i[2]), hi = m.F(i[3]), dt = m.F(i[4]);
                 if (m.B(s[2]) == 0)
@@ -709,7 +709,7 @@ namespace FrostyAnimationEditor.Core
         private static readonly float[] ATAN1 = { (float)-0.07528963685035706, (float)0.042909614741802216, (float)-0.016165737062692642, (float)0.0028662257827818394 };
         private const float HALF_PI = (float)1.5707963705062866;
 
-        /// <summary>FUN_14543f8f0, four lanes: x = v when |v| &lt;= 1 else 1 / v, the polynomial in x^2 times x, and
+        /// <summary>four lanes: x = v when |v| &lt;= 1 else 1 / v, the polynomial in x^2 times x, and
         /// sign * pi/2 - p for the reciprocal lanes</summary>
         private static F4 XmAtan(F4 v)
         {
@@ -737,7 +737,7 @@ namespace FrostyAnimationEditor.Core
 
         private static readonly float[] ATAN2C = { (float)3.1415927410125732, (float)1.5707963705062866, (float)0.7853981852531433, (float)2.356194496154785 };
 
-        /// <summary>FUN_14543f690, four lanes: the special cases of zeros and infinities with y's sign, else atan(y / x) plus
+        /// <summary>four lanes: the special cases of zeros and infinities with y's sign, else atan(y / x) plus
         /// pi (with y's sign) when x's sign bit is set</summary>
         private static F4 XmAtan2(F4 y, F4 x)
         {
@@ -768,7 +768,7 @@ namespace FrostyAnimationEditor.Core
             return r;
         }
 
-        /// <summary>1 / sqrt(d) and two Newton steps, (1 - y y d) (y / 2) + y, as FUN_146b78540 / FUN_146b78a80 do them</summary>
+        /// <summary>1 / sqrt(d) and two Newton steps, (1 - y y d) (y / 2) + y, as the game does</summary>
         private static float RsqrtNr(float d)
         {
             float y = 1f / Sqrtf(d);
@@ -818,7 +818,7 @@ namespace FrostyAnimationEditor.Core
         private static void PosePut(Machine M, VmPose P, int[] h, F4 vec)
         {
             if (h[0] == Machine.INVALID_TRACK || (long)HOff(h) + 16 > P.Data.Length)
-                throw new VMError("pose write through an unbound DOF handle (the game writes at pose+0x" + HOff(h).ToString("x") + ")");
+                throw new VMError("pose write through a DOF handle that is not bound to any joint channel (the game would write to a wrong place)");
             byte[] b = VmMem.Floats(vec.X, vec.Y, vec.Z, vec.W);
             Buffer.BlockCopy(b, 0, P.Data, (int)HOff(h), 16);
             string nm;
@@ -827,9 +827,9 @@ namespace FrostyAnimationEditor.Core
 
         private static void Simd()
         {
-            Reg(0x146B85E30, (M, i, o, s) =>
+            Reg("quat.to_euler_vec", (M, i, o, s) =>
             {
-                // FUN_146b85ce0: s = q * sqrt(2); the rotation's matrix terms; (atan2 about X, about Y, about Z, about Z) with the
+                // s = q * sqrt(2); the rotation's matrix terms; (atan2 about X, about Y, about Z, about Z) with the
                 // SIMD atan2, or (.., .., 0, ..) from the other terms at the pole (cos <= 0.001)
                 F4 q = M.Mem.V(i[0]);
                 float zero = 0f;
@@ -851,9 +851,9 @@ namespace FrostyAnimationEditor.Core
                 }
                 M.Mem.WV(o[0], outv);
             });
-            Reg(0x146B77E60, (M, i, o, s) =>
+            Reg("vec.add_rotated_y", (M, i, o, s) =>
             {
-                // FUN_146b77b70: a + Ry(angle) b with the game's polynomial sine/cosine; w comes out as a.w + 1
+                // a + Ry(angle) b with the game's polynomial sine/cosine; w comes out as a.w + 1
                 F4 a = M.Mem.V(i[0]), b = M.Mem.V(i[1]);
                 float sn, cs;
                 Gsincos(M.Mem.F(i[2]), out sn, out cs);
@@ -861,9 +861,9 @@ namespace FrostyAnimationEditor.Core
                 F4 r0 = new F4(cs, z, z - sn, z), r1 = new F4(z, one, z, z), r2 = new F4(sn, z, cs, z), r3 = new F4(z, z, z, one);
                 M.Mem.WV(o[0], (((r0 * b.X + r3) + r1 * b.Y) + r2 * b.Z) + a);
             });
-            Reg(0x146B78A20, (M, i, o, s) =>
+            Reg("quat.aim_dir", (M, i, o, s) =>
             {
-                // FUN_146b78540: the rotation whose X axis is v normalised, Z axis normalize(cross(v, up)) and Y axis cross(Z, X)
+                // the rotation whose X axis is v normalised, Z axis normalize(cross(v, up)) and Y axis cross(Z, X)
                 F4 q = M.Mem.V(i[0]), v = M.Mem.V(i[1]);
                 float mn = M.Mem.F(i[2]);
                 F4 outq = q;
@@ -891,9 +891,9 @@ namespace FrostyAnimationEditor.Core
                 }
                 M.Mem.WV(o[0], outq);
             });
-            Reg(0x146B78DB0, (M, i, o, s) =>
+            Reg("vec.side_point", (M, i, o, s) =>
             {
-                // FUN_146b78a80: m = (a - b) / 2 + b; p = m + d * normalize(cross(n, up)) (+Z when n . up > 0.99998474); the
+                // m = (a - b) / 2 + b; p = m + d * normalize(cross(n, up)) (+Z when n . up > 0.99998474); the
                 // angle at p between a and b. Outputs p, m, angle; p = m and angle = 0 when |a - b| <= 1.5258789e-05
                 F4 a = M.Mem.V(i[0]), b = M.Mem.V(i[1]);
                 float dist = M.Mem.F(i[2]);
@@ -922,9 +922,9 @@ namespace FrostyAnimationEditor.Core
                 F4 nb = pb * RsqrtNr(Sum(pb * pb, 3));
                 M.Mem.WF(o[2], Acos(Sum(nb * na, 3)));
             });
-            Reg(0x146B79E60, (M, i, o, s) =>
+            Reg("quat.yaw_pitch_spring", (M, i, o, s) =>
             {
-                // FUN_146b78e20: the yaw and pitch of q's X axis follow damped springs
+                // the yaw and pitch of q's X axis follow damped springs
                 VmMem m = M.Mem;
                 F4 q = m.V(i[0]);
                 float kp = m.F(i[1]), dp = m.F(i[2]), ky = m.F(i[3]), dy = m.F(i[4]), dt = m.F(i[5]);
@@ -974,9 +974,9 @@ namespace FrostyAnimationEditor.Core
                 F4 e = Qmul(AxisQuat(1, m.F(s[2])), AxisQuat(2, m.F(s[0])));
                 m.WV(o[0], Qmul(e, rest));
             });
-            Reg(0x146B7CCB0, (M, i, o, s) =>
+            Reg("vec.lazy_follow", (M, i, o, s) =>
             {
-                // FUN_146b7c950: a point that stays put while the input is inside the ellipsoid around it and follows it once it
+                // a point that stays put while the input is inside the ellipsoid around it and follows it once it
                 // has left. State: initialised, following, value, last input, velocity
                 VmMem m = M.Mem;
                 F4 x = m.V(i[0]), ext = m.V(i[1]), q = m.V(i[2]);
@@ -1028,9 +1028,9 @@ namespace FrostyAnimationEditor.Core
                 m.WV(s[3], x);
                 m.WV(o[0], outv);
             });
-            Reg(0x146B74B30, (M, i, o, s) =>
+            Reg("pose.add_relative_matrix", (M, i, o, s) =>
             {
-                // FUN_146b74b30 (inputs pose A, pose B, scale DOF of A, rotation and translation DOFs of B, rotation and translation
+                // (inputs pose A, pose B, scale DOF of A, rotation and translation DOFs of B, rotation and translation
                 // DOFs of A, matrix M)
                 VmMem m = M.Mem;
                 VmPose pa = PoseOf(M, i[0]), pb = PoseOf(M, i[1]);
@@ -1058,9 +1058,9 @@ namespace FrostyAnimationEditor.Core
                     pa.SetFlag(hs[0]);
                 }
             });
-            Reg(0x146B76C00, (M, i, o, s) =>
+            Reg("pose.set_relative_matrix", (M, i, o, s) =>
             {
-                // FUN_146b76c00 (inputs pose, matrices P and W, scale, rotation and translation DOFs): the scale, rotation and
+                // (inputs pose, matrices P and W, scale, rotation and translation DOFs): the scale, rotation and
                 // translation of W x inverse(P) written into the pose with the tracks' 'set' flags
                 VmMem m = M.Mem;
                 VmPose pa = PoseOf(M, i[0]);

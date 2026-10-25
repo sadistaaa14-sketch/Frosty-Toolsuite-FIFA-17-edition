@@ -1,8 +1,8 @@
 {
 "entries": {
 "00a68ec1": {
-"doc": "copy size bytes from the pose value of the DOF if the handle is bound (track != 0x80000000), else from the default operand",
-"fn": "0x146b73640",
+"doc": "copy size bytes from the pose value of the DOF if the handle is bound to a joint channel, else from the default slot",
+"fn": "dof.read",
 "in": [
 "pose",
 "dof",
@@ -17,7 +17,7 @@
 },
 "01ab41ef": {
 "doc": "pow(a, b)",
-"fn": "0x146b85ca0",
+"fn": "f32.pow",
 "in": [
 "f",
 "f"
@@ -29,8 +29,8 @@
 "state": []
 },
 "020fb77f": {
-"doc": "(|row0|, |row1|, |row2|, |row2|), the rotation of the normalised rows (trace method) and the translation row (FUN_146b848e0)",
-"fn": "0x146b84bf0",
+"doc": "(|row0|, |row1|, |row2|, |row2|), the rotation of the normalised rows (trace method) and the translation row",
+"fn": "m44.decompose",
 "in": [
 "m44"
 ],
@@ -44,7 +44,7 @@
 },
 "02dd315a": {
 "doc": "a > b",
-"fn": "0x146b84310",
+"fn": "f32.gt",
 "in": [
 "f",
 "f"
@@ -56,8 +56,8 @@
 "state": []
 },
 "02f0c157": {
-"doc": "game-state value object vtable+0x10 (obj, ctx, value)",
-"fn": "0x146b73ad0",
+"doc": "writes a game value",
+"fn": "gs.set.f32",
 "in": [
 "f",
 "ctx",
@@ -68,8 +68,8 @@
 "state": []
 },
 "047fe1d5": {
-"doc": "game-state value object vtable+8 (obj, ctx) -> bool",
-"fn": "0x146b73a30",
+"doc": "reads a game value (bool)",
+"fn": "gs.get.bool",
 "in": [
 "ctx",
 "obj"
@@ -82,7 +82,7 @@
 },
 "0530f8a8": {
 "doc": "a > b ? a : b",
-"fn": "0x146b84fb0",
+"fn": "f32.max",
 "in": [
 "f",
 "f"
@@ -94,8 +94,8 @@
 "state": []
 },
 "05fdf492": {
-"doc": "rotation about Z: (0, 0, sin a/2, cos a/2) with the game's polynomial sine/cosine, and a wrapped to [-pi, pi] (FUN_146b7b640)",
-"fn": "0x146b7b9a0",
+"doc": "rotation about Z: (0, 0, sin a/2, cos a/2) with the game's polynomial sine/cosine, and a wrapped to [-pi, pi]",
+"fn": "quat.from_angle_z",
 "in": [
 "f"
 ],
@@ -108,7 +108,7 @@
 },
 "07d34287": {
 "doc": "angle rounded to a multiple of step (step >= 1e-08), wrapped to [-pi, pi]",
-"fn": "0x146cda3a0",
+"fn": "f32.quantize_angle",
 "in": [
 "f",
 "f"
@@ -120,8 +120,8 @@
 "state": []
 },
 "08bed24b": {
-"doc": "rotation about Y: (0, sin a/2, 0, cos a/2) with the game's polynomial sine/cosine, and a wrapped to [-pi, pi] (FUN_146b7b2b0)",
-"fn": "0x146b7b610",
+"doc": "rotation about Y: (0, sin a/2, 0, cos a/2) with the game's polynomial sine/cosine, and a wrapped to [-pi, pi]",
+"fn": "quat.from_angle_y",
 "in": [
 "f"
 ],
@@ -133,8 +133,8 @@
 "state": []
 },
 "0af86ee5": {
-"doc": "game-state value object vtable+0x10 (obj, ctx, pointer to the value)",
-"fn": "0x146b73c30",
+"doc": "writes a game value",
+"fn": "gs.set.ref",
 "in": [
 "?",
 "ctx",
@@ -145,8 +145,8 @@
 "state": []
 },
 "0c7fcffc": {
-"doc": "rotation about X: (sin a/2, 0, 0, cos a/2) with the game's polynomial sine/cosine, and a wrapped to [-pi, pi] (FUN_146b7af20)",
-"fn": "0x146b7b280",
+"doc": "rotation about X: (sin a/2, 0, 0, cos a/2) with the game's polynomial sine/cosine, and a wrapped to [-pi, pi]",
+"fn": "quat.from_angle_x",
 "in": [
 "f"
 ],
@@ -159,7 +159,7 @@
 },
 "0d11cc86": {
 "doc": "sqrt(a)",
-"fn": "0x146b86120",
+"fn": "f32.sqrt",
 "in": [
 "f"
 ],
@@ -171,7 +171,7 @@
 },
 "0df1546d": {
 "doc": "a * b per component",
-"fn": "0x146b851f0",
+"fn": "vec.mul",
 "in": [
 "v",
 "v"
@@ -184,7 +184,7 @@
 },
 "13c7eea7": {
 "doc": "s * a",
-"fn": "0x146b85490",
+"fn": "f32.mul_vec",
 "in": [
 "f",
 "v"
@@ -197,7 +197,7 @@
 },
 "14b3e15e": {
 "doc": "x < lo ? lo : (x > hi ? hi : x)",
-"fn": "0x146b83890",
+"fn": "i32.clamp",
 "in": [
 "i",
 "i",
@@ -211,7 +211,7 @@
 },
 "16f0b3aa": {
 "doc": "|a - b| < 1.5258789e-05",
-"fn": "0x146b83d30",
+"fn": "f32.approx_eq",
 "in": [
 "f",
 "f"
@@ -224,7 +224,7 @@
 },
 "17b8026a": {
 "doc": "a == b",
-"fn": "0x146b83d60",
+"fn": "i32.eq",
 "in": [
 "i",
 "i"
@@ -236,8 +236,8 @@
 "state": []
 },
 "17bcc0ea": {
-"doc": "copy size bytes from the pose value of the DOF if the handle is bound and the pose's flag byte for its track is non-zero, else from the default operand",
-"fn": "0x146b73360",
+"doc": "copy size bytes from the pose value of the DOF if the handle is bound and the pose's flag byte for its track is non-zero, else from the default slot",
+"fn": "dof.read_if_set",
 "in": [
 "pose",
 "dof",
@@ -252,7 +252,7 @@
 },
 "18ab4ebc": {
 "doc": "a ^ b",
-"fn": "0x146b86310",
+"fn": "bool.xor",
 "in": [
 "b",
 "b"
@@ -265,7 +265,7 @@
 },
 "1b74206c": {
 "doc": "!a",
-"fn": "0x146b85ae0",
+"fn": "bool.not",
 "in": [
 "b"
 ],
@@ -276,8 +276,8 @@
 "state": []
 },
 "22bcbced": {
-"doc": "p = m + d normalize(cross(n, +Y)) (+Z when n . Y > 0.99998474) with m = (a + b) / 2 and n = normalize(a - b); outputs p, m and the angle at p between a and b (acosf of the dot of normalize(p - b) and normalize(p - a)); p = m and angle 0 when |a - b| <= 1.5258789e-05 (inputs a, b, d) (FUN_146b78a80)",
-"fn": "0x146b78db0",
+"doc": "p = m + d normalize(cross(n, +Y)) (+Z when n . Y > 0.99998474) with m = (a + b) / 2 and n = normalize(a - b); outputs p, m and the angle at p between a and b (acosf of the dot of normalize(p - b) and normalize(p - a)); p = m and angle 0 when |a - b| <= 1.5258789e-05 (inputs a, b, d)",
+"fn": "vec.side_point",
 "in": [
 "v",
 "v",
@@ -293,7 +293,7 @@
 },
 "23422268": {
 "doc": "exp(a)",
-"fn": "0x146b84290",
+"fn": "f32.exp",
 "in": [
 "f"
 ],
@@ -305,7 +305,7 @@
 },
 "23805a0d": {
 "doc": "a x b, w = 0",
-"fn": "0x146b83900",
+"fn": "vec3.cross",
 "in": [
 "v",
 "v"
@@ -318,7 +318,7 @@
 },
 "24a22531": {
 "doc": "a + (b - a) * t per component",
-"fn": "0x146681f00",
+"fn": "vec.lerp",
 "in": [
 "v",
 "v",
@@ -331,8 +331,8 @@
 "state": []
 },
 "266660fb": {
-"doc": "damped follow of clamp(x, lo, hi) with factor exp(-rate * dt / 60), taking the short way round when that is shorter (inputs x, rate, lo, hi, dt; state value, velocity, initialised flag) (FUN_146b77ed0)",
-"fn": "0x146b78120",
+"doc": "damped follow of clamp(x, lo, hi) with factor exp(-rate * dt / 60), taking the short way round when that is shorter (inputs x, rate, lo, hi, dt; state value, velocity, initialised flag)",
+"fn": "f32.range_spring",
 "in": [
 "f",
 "f",
@@ -352,7 +352,7 @@
 },
 "28b81ec3": {
 "doc": "a point that stays at the given distance from the input: once initialised, or when the input is farther than the distance, the point moves onto the line to the input at that distance (state: flag, point)",
-"fn": "0x146b78290",
+"fn": "vec.follow_at_distance",
 "in": [
 "v",
 "f"
@@ -368,7 +368,7 @@
 },
 "2ae5ca1e": {
 "doc": "a + (b - a) * t",
-"fn": "0x146681f30",
+"fn": "f32.lerp",
 "in": [
 "f",
 "f",
@@ -382,7 +382,7 @@
 },
 "2f9848af": {
 "doc": "pseudo-random float in [-1, 1) re-seeded when the seed input changes (LCG * 0x41c64e6d + 0x3039)",
-"fn": "0x146b85ea0",
+"fn": "f32.random",
 "in": [
 "i"
 ],
@@ -398,7 +398,7 @@
 },
 "30364d4d": {
 "doc": "a * b",
-"fn": "0x146b854c0",
+"fn": "f32.mul",
 "in": [
 "f",
 "f"
@@ -411,7 +411,7 @@
 },
 "3042c4bd": {
 "doc": "a >= b",
-"fn": "0x146b84370",
+"fn": "f32.ge",
 "in": [
 "f",
 "f"
@@ -423,8 +423,8 @@
 "state": []
 },
 "31d5b40c": {
-"doc": "the angles about Y, Z and X (in that order) of a quaternion (FUN_146b7c300)",
-"fn": "0x146b7c510",
+"doc": "the angles about Y, Z and X (in that order) of a quaternion",
+"fn": "quat.to_euler",
 "in": [
 "q"
 ],
@@ -437,8 +437,8 @@
 "state": []
 },
 "3207909a": {
-"doc": "the rotated X, Z and Y axes (in that order) (FUN_146b85b20)",
-"fn": "0x146b85c30",
+"doc": "the rotated X, Z and Y axes (in that order)",
+"fn": "quat.to_axes",
 "in": [
 "q"
 ],
@@ -451,8 +451,8 @@
 "state": []
 },
 "33c7e8a3": {
-"doc": "stateful angle follower with a dead zone between two thresholds (inputs angle, target, two thresholds, gain, damping, dt; state initialised flag, angle, velocity) (FUN_146b7aa30; the Python VM transcribes it)",
-"fn": "0x146b7ae60",
+"doc": "stateful angle follower with a dead zone between two thresholds (inputs angle, target, two thresholds, gain, damping, dt; state initialised flag, angle, velocity)",
+"fn": "f32.angle_follow",
 "in": [
 "f",
 "f",
@@ -473,8 +473,8 @@
 ]
 },
 "3a48b6ba": {
-"doc": "f32.spring on angles: differences wrapped to [-pi, pi] (inputs target, stiffness, damping, dt; state value, velocity, initialised flag) (FUN_146b7c560)",
-"fn": "0x146b7c760",
+"doc": "f32.spring on angles: differences wrapped to [-pi, pi] (inputs target, stiffness, damping, dt; state value, velocity, initialised flag)",
+"fn": "f32.angle_spring",
 "in": [
 "f",
 "f",
@@ -493,7 +493,7 @@
 },
 "3ae57534": {
 "doc": "a + (b - a) * t per component",
-"fn": "0x146681f00",
+"fn": "vec.lerp",
 "in": [
 "v",
 "v",
@@ -507,7 +507,7 @@
 },
 "3af85f0e": {
 "doc": "M = matrix input; for each of n (scale, rotation, translation) DOF triplets (variadic: pose, matrix, n as u16, then n x (dof, dof, dof, default, default, default); a DOF is read when bound and set in the pose, else its default) M = local matrix x M; outputs the row lengths of M, its rotation, its translation row and M",
-"fn": "0x146b76530",
+"fn": "pose.chain",
 "in": [
 "pose",
 "m44",
@@ -532,7 +532,7 @@
 },
 "3c643507": {
 "doc": "a % b",
-"fn": "0x146b85090",
+"fn": "i32.mod",
 "in": [
 "i",
 "i"
@@ -545,7 +545,7 @@
 },
 "3d5aa044": {
 "doc": "acos(dot(normalize(c - a), normalize(c - b))) (3 components)",
-"fn": "0x146b831d0",
+"fn": "vec.angle3",
 "in": [
 "v",
 "v",
@@ -559,7 +559,7 @@
 },
 "3d7dc3a5": {
 "doc": "angle wrapped to [-pi, pi]",
-"fn": "0x146b855b0",
+"fn": "f32.wrap_pi",
 "in": [
 "f"
 ],
@@ -571,7 +571,7 @@
 },
 "3e246883": {
 "doc": "a + (b - a) * t per component",
-"fn": "0x146681f00",
+"fn": "vec.lerp",
 "in": [
 "v",
 "v",
@@ -585,7 +585,7 @@
 },
 "41be725e": {
 "doc": "clears the sign bit",
-"fn": "0x146b83060",
+"fn": "f32.abs",
 "in": [
 "f"
 ],
@@ -597,7 +597,7 @@
 },
 "445f06ce": {
 "doc": "a * b",
-"fn": "0x146b854e0",
+"fn": "i32.mul",
 "in": [
 "i",
 "i"
@@ -609,8 +609,8 @@
 "state": []
 },
 "45af06f4": {
-"doc": "game-state value object vtable+0x10 (obj, ctx, pointer to the value)",
-"fn": "0x146b73c30",
+"doc": "writes a game value",
+"fn": "gs.set.ref",
 "in": [
 "?",
 "ctx",
@@ -621,8 +621,8 @@
 "state": []
 },
 "46134ece": {
-"doc": "game-state value object vtable+8 (obj, buffer, ctx) -> 16 bytes",
-"fn": "0x146b73bd0",
+"doc": "reads a game value (16 bytes)",
+"fn": "gs.get.vec",
 "in": [
 "ctx",
 "obj"
@@ -635,7 +635,7 @@
 },
 "49dd6e9b": {
 "doc": "not vec3.approx_eq",
-"fn": "0x146b859f0",
+"fn": "vec3.approx_ne",
 "in": [
 "v",
 "v"
@@ -648,7 +648,7 @@
 },
 "49e19de0": {
 "doc": "v / |v| over 4 components; zero vector if all are ~0",
-"fn": "0x146b85810",
+"fn": "vec4.normalize",
 "in": [
 "v"
 ],
@@ -660,7 +660,7 @@
 },
 "4af07dbd": {
 "doc": "|a - b| <= 1.5258789e-05 for 4 components",
-"fn": "0x146b83ce0",
+"fn": "vec4.approx_eq",
 "in": [
 "v",
 "v"
@@ -673,7 +673,7 @@
 },
 "4b274f33": {
 "doc": "a - b per component",
-"fn": "0x146b86150",
+"fn": "vec.sub",
 "in": [
 "v",
 "v"
@@ -686,7 +686,7 @@
 },
 "4b7ad5de": {
 "doc": "max per component",
-"fn": "0x146b84f90",
+"fn": "vec.max",
 "in": [
 "v",
 "v"
@@ -699,7 +699,7 @@
 },
 "4d1c732c": {
 "doc": "not vec2.approx_eq",
-"fn": "0x146b859a0",
+"fn": "vec2.approx_ne",
 "in": [
 "v",
 "v"
@@ -712,7 +712,7 @@
 },
 "4ee80402": {
 "doc": "acos(a)",
-"fn": "0x146b836c0",
+"fn": "f32.acos",
 "in": [
 "f"
 ],
@@ -724,7 +724,7 @@
 },
 "4fbbc869": {
 "doc": "max per component",
-"fn": "0x146b84f90",
+"fn": "vec.max",
 "in": [
 "v",
 "v"
@@ -737,7 +737,7 @@
 },
 "4fe65284": {
 "doc": "a - b per component",
-"fn": "0x146b86150",
+"fn": "vec.sub",
 "in": [
 "v",
 "v"
@@ -750,7 +750,7 @@
 },
 "51a10281": {
 "doc": "a - b per component",
-"fn": "0x146b86150",
+"fn": "vec.sub",
 "in": [
 "v",
 "v"
@@ -763,7 +763,7 @@
 },
 "51fc986c": {
 "doc": "max per component",
-"fn": "0x146b84f90",
+"fn": "vec.max",
 "in": [
 "v",
 "v"
@@ -776,7 +776,7 @@
 },
 "5367d052": {
 "doc": "v / |v| over 2 components (all 4 scaled); zero vector if x and y are ~0",
-"fn": "0x146b85690",
+"fn": "vec2.normalize",
 "in": [
 "v"
 ],
@@ -788,7 +788,7 @@
 },
 "5398a743": {
 "doc": "pseudo-random int re-seeded when the seed input changes (LCG * 0x41c64e6d + 0x3039, bits 16..47)",
-"fn": "0x146b85f30",
+"fn": "i32.random",
 "in": [
 "i"
 ],
@@ -803,8 +803,8 @@
 ]
 },
 "5399b742": {
-"doc": "writes into pose A (inputs pose A, pose B, scale DOF of A, rotation and translation DOFs of B, rotation and translation DOFs of A, matrix M): T_A += conj(R_B) applied to M.t - T_B (R_B normalised), R_A = normalize(conj(R_B) * q(M)) * R_A in quat.mul's convention with q(M) the rotation of M's normalised rows, S_A = the row lengths (l0, l1, l2, l2) when the scale DOF is bound; sets the written tracks' flags (no check of the rotation and translation handles) (FUN_146b74b30)",
-"fn": "0x146b74b30",
+"doc": "writes into pose A (inputs pose A, pose B, scale DOF of A, rotation and translation DOFs of B, rotation and translation DOFs of A, matrix M): T_A += conj(R_B) applied to M.t - T_B (R_B normalised), R_A = normalize(conj(R_B) * q(M)) * R_A in quat.mul's convention with q(M) the rotation of M's normalised rows, S_A = the row lengths (l0, l1, l2, l2) when the scale DOF is bound; sets the written tracks' flags (no check of the rotation and translation handles)",
+"fn": "pose.add_relative_matrix",
 "in": [
 "pose",
 "pose",
@@ -821,7 +821,7 @@
 },
 "579a3e9e": {
 "doc": "not vec4.approx_eq",
-"fn": "0x146b85aa0",
+"fn": "vec4.approx_ne",
 "in": [
 "v",
 "v"
@@ -834,7 +834,7 @@
 },
 "57a6cde5": {
 "doc": "v / |v| over 3 components (all 4 scaled); zero vector if x, y, z are ~0",
-"fn": "0x146b85750",
+"fn": "vec3.normalize",
 "in": [
 "v"
 ],
@@ -846,7 +846,7 @@
 },
 "58519b01": {
 "doc": "s * a",
-"fn": "0x146b85490",
+"fn": "f32.mul_vec",
 "in": [
 "f",
 "v"
@@ -859,7 +859,7 @@
 },
 "5984cbf3": {
 "doc": "(-x, -y, -z, w)",
-"fn": "0x146b838d0",
+"fn": "quat.conjugate",
 "in": [
 "q"
 ],
@@ -871,7 +871,7 @@
 },
 "599784cb": {
 "doc": "log(a)",
-"fn": "0x146b84690",
+"fn": "f32.log",
 "in": [
 "f"
 ],
@@ -883,7 +883,7 @@
 },
 "5dbc9e7b": {
 "doc": "atan2(-z, x); pi maps to -pi",
-"fn": "0x146cda3e0",
+"fn": "f32.heading",
 "in": [
 "v"
 ],
@@ -894,8 +894,8 @@
 "state": []
 },
 "5e4f4ae8": {
-"doc": "rotation matrix about Y: rows (c, 0, -s, 0), (0, 1, 0, 0), (s, 0, c, 0), (0, 0, 0, 1) (FUN_146b84c70)",
-"fn": "0x146b84f50",
+"doc": "rotation matrix about Y: rows (c, 0, -s, 0), (0, 1, 0, 0), (s, 0, c, 0), (0, 0, 0, 1)",
+"fn": "m44.rotation_y",
 "in": [
 "f"
 ],
@@ -907,7 +907,7 @@
 },
 "5ee10b80": {
 "doc": "damped spring towards the input (inputs target, stiffness, damping, dt; state value, velocity, initialised flag)",
-"fn": "0x146b78310",
+"fn": "f32.spring",
 "in": [
 "f",
 "f",
@@ -926,7 +926,7 @@
 },
 "67ffd277": {
 "doc": "a / b",
-"fn": "0x146b83b70",
+"fn": "i32.div",
 "in": [
 "i",
 "i"
@@ -938,8 +938,8 @@
 "state": []
 },
 "68a1cb6e": {
-"doc": "game-state value object vtable+0x10 (obj, ctx, pointer to the value)",
-"fn": "0x146b73c30",
+"doc": "writes a game value",
+"fn": "gs.set.ref",
 "in": [
 "?",
 "ctx",
@@ -950,8 +950,8 @@
 "state": []
 },
 "69199f9d": {
-"doc": "matrix product (FUN_146b85220)",
-"fn": "0x146b85400",
+"doc": "matrix product",
+"fn": "m44.mul",
 "in": [
 "m44",
 "m44"
@@ -964,7 +964,7 @@
 },
 "6d63697e": {
 "doc": "a / b per component",
-"fn": "0x146b83aa0",
+"fn": "vec.div",
 "in": [
 "v",
 "v"
@@ -977,7 +977,7 @@
 },
 "6dec5300": {
 "doc": "length of 4 components (0 if all below 1.1920929e-07)",
-"fn": "0x146b84780",
+"fn": "vec4.length",
 "in": [
 "v"
 ],
@@ -988,8 +988,8 @@
 "state": []
 },
 "6e1c28ae": {
-"doc": "game-state value object vtable+0x10 (obj, ctx, pointer to the value)",
-"fn": "0x146b73c30",
+"doc": "writes a game value",
+"fn": "gs.set.ref",
 "in": [
 "?",
 "ctx",
@@ -1001,7 +1001,7 @@
 },
 "6e4b5493": {
 "doc": "v rotated by q",
-"fn": "0x146b86290",
+"fn": "quat.rotate",
 "in": [
 "v",
 "q"
@@ -1014,7 +1014,7 @@
 },
 "6e92fd1f": {
 "doc": "dot product of 4 components",
-"fn": "0x146b83c00",
+"fn": "vec4.dot",
 "in": [
 "v",
 "v"
@@ -1027,7 +1027,7 @@
 },
 "6f83c495": {
 "doc": "q / |q|",
-"fn": "0x146b858e0",
+"fn": "quat.normalize",
 "in": [
 "q"
 ],
@@ -1039,7 +1039,7 @@
 },
 "6fbf7431": {
 "doc": "quaternion product",
-"fn": "0x146b85510",
+"fn": "quat.mul",
 "in": [
 "q",
 "q"
@@ -1052,7 +1052,7 @@
 },
 "7072f0cc": {
 "doc": "a != b",
-"fn": "0x146b85a80",
+"fn": "i32.ne",
 "in": [
 "i",
 "i"
@@ -1064,8 +1064,8 @@
 "state": []
 },
 "70bad5e7": {
-"doc": "game-state value object vtable+8 (obj, ctx) -> int",
-"fn": "0x146b73af0",
+"doc": "reads a game value (int)",
+"fn": "gs.get.i32",
 "in": [
 "ctx",
 "obj"
@@ -1078,7 +1078,7 @@
 },
 "70d5ad1a": {
 "doc": "dot product of 3 components",
-"fn": "0x146b83bc0",
+"fn": "vec3.dot",
 "in": [
 "v",
 "v"
@@ -1091,7 +1091,7 @@
 },
 "73ab0305": {
 "doc": "length of 3 components (0 if all below 1.1920929e-07)",
-"fn": "0x146b84720",
+"fn": "vec3.length",
 "in": [
 "v"
 ],
@@ -1103,7 +1103,7 @@
 },
 "7414b0ad": {
 "doc": "dot product of 2 components",
-"fn": "0x146b83b90",
+"fn": "vec2.dot",
 "in": [
 "v",
 "v"
@@ -1116,7 +1116,7 @@
 },
 "751db776": {
 "doc": "b / (2 tan(clamp(a, 0.1, 179) * pi / 360))",
-"fn": "0x146b781b0",
+"fn": "f32.focal_from_fov",
 "in": [
 "f",
 "f"
@@ -1129,7 +1129,7 @@
 },
 "776a1eb2": {
 "doc": "length of 2 components (0 if both below 1.1920929e-07)",
-"fn": "0x146b846d0",
+"fn": "vec2.length",
 "in": [
 "v"
 ],
@@ -1141,7 +1141,7 @@
 },
 "7bdb60d5": {
 "doc": "x * row0 + y * row1 + z * row2 + row3",
-"fn": "0x146b86250",
+"fn": "m44.transform_point",
 "in": [
 "v",
 "m44"
@@ -1154,7 +1154,7 @@
 },
 "7bec9f8f": {
 "doc": "a - b",
-"fn": "0x146b86210",
+"fn": "f32.sub",
 "in": [
 "f",
 "f"
@@ -1166,8 +1166,8 @@
 "state": []
 },
 "7f37c161": {
-"doc": "quaternion from three angles: the first about Y, the second about Z, the third about X (FUN_146b7b9d0)",
-"fn": "0x146b7c2a0",
+"doc": "quaternion from three angles: the first about Y, the second about Z, the third about X",
+"fn": "f32.euler_to_quat",
 "in": [
 "f",
 "f",
@@ -1180,8 +1180,8 @@
 "state": []
 },
 "81549e0a": {
-"doc": "a + b rotated about Y by the angle with the game's polynomial sine/cosine: (a.x + b.x cos + b.z sin, a.y + b.y, a.z - b.x sin + b.z cos, a.w + 1) (FUN_146b77b70)",
-"fn": "0x146b77e60",
+"doc": "a + b rotated about Y by the angle with the game's polynomial sine/cosine: (a.x + b.x cos + b.z sin, a.y + b.y, a.z - b.x sin + b.z cos, a.w + 1)",
+"fn": "vec.add_rotated_y",
 "in": [
 "v",
 "v",
@@ -1195,7 +1195,7 @@
 },
 "81ca1918": {
 "doc": "a / b",
-"fn": "0x146b83b30",
+"fn": "f32.div",
 "in": [
 "f",
 "f"
@@ -1208,7 +1208,7 @@
 },
 "821d42c8": {
 "doc": "12 floats a - b",
-"fn": "0x146b86180",
+"fn": "m34.sub",
 "in": [
 "m34",
 "m34"
@@ -1220,8 +1220,8 @@
 "state": []
 },
 "83788694": {
-"doc": "game-state value object vtable+8 (obj, buffer, ctx) -> 64 bytes",
-"fn": "0x146b73b40",
+"doc": "reads a game value (64 bytes)",
+"fn": "gs.get.m44",
 "in": [
 "ctx",
 "obj"
@@ -1233,8 +1233,8 @@
 "state": []
 },
 "85c56554": {
-"doc": "game-state value object vtable+8 (obj, buffer, ctx) -> 16 bytes",
-"fn": "0x146b73bd0",
+"doc": "reads a game value (16 bytes)",
+"fn": "gs.get.vec",
 "in": [
 "ctx",
 "obj"
@@ -1247,7 +1247,7 @@
 },
 "87cf9794": {
 "doc": "a + b per component",
-"fn": "0x146b830e0",
+"fn": "vec.add",
 "in": [
 "v",
 "v"
@@ -1260,7 +1260,7 @@
 },
 "888ad97f": {
 "doc": "(acos x, acos y, acos z, acos x)",
-"fn": "0x146b835a0",
+"fn": "vec3.acos",
 "in": [
 "v"
 ],
@@ -1272,7 +1272,7 @@
 },
 "8c4bc4c8": {
 "doc": "(acos x, acos y, acos x, acos x)",
-"fn": "0x146b83540",
+"fn": "vec2.acos",
 "in": [
 "v"
 ],
@@ -1283,8 +1283,8 @@
 "state": []
 },
 "8d0fddb3": {
-"doc": "a point that stays put while the input is inside the ellipsoid around it (half-axes |e|, at least 1.5258789e-05, rotated by q) and, once the input has left it, follows the input with a damped spring (stiffness > 0) or by the input's own motion (stiffness <= 0) until the speeds of the input and of the point are both at most the threshold (inputs x, e, q, stiffness, damping, threshold, dt; state initialised, following, value, last input, velocity) (FUN_146b7c950)",
-"fn": "0x146b7ccb0",
+"doc": "a point that stays put while the input is inside the ellipsoid around it (half-axes |e|, at least 1.5258789e-05, rotated by q) and, once the input has left it, follows the input with a damped spring (stiffness > 0) or by the input's own motion (stiffness <= 0) until the speeds of the input and of the point are both at most the threshold (inputs x, e, q, stiffness, damping, threshold, dt; state initialised, following, value, last input, velocity)",
+"fn": "vec.lazy_follow",
 "in": [
 "v",
 "v",
@@ -1307,8 +1307,8 @@
 ]
 },
 "8dfee552": {
-"doc": "rotation with X along v, Z along normalize(cross(v, +Y)) and Y = cross(Z, X) (matrix to quaternion, trace method); q unchanged when |v| <= min, v is ~0 or v is parallel to +Y; for min < |v| < 2 min the normalised lerp from q (the shorter way) by (|v| - min) / min (inputs q, v, min) (FUN_146b78540)",
-"fn": "0x146b78a20",
+"doc": "rotation with X along v, Z along normalize(cross(v, +Y)) and Y = cross(Z, X) (matrix to quaternion, trace method); q unchanged when |v| <= min, v is ~0 or v is parallel to +Y; for min < |v| < 2 min the normalised lerp from q (the shorter way) by (|v| - min) / min (inputs q, v, min)",
+"fn": "quat.aim_dir",
 "in": [
 "q",
 "v",
@@ -1322,7 +1322,7 @@
 },
 "8eaf8603": {
 "doc": "|b - a| (4 components); 0 below 1.5258789e-05 squared",
-"fn": "0x146b83a30",
+"fn": "vec4.distance",
 "in": [
 "v",
 "v"
@@ -1335,7 +1335,7 @@
 },
 "8eb2196d": {
 "doc": "a && b",
-"fn": "0x146b831a0",
+"fn": "bool.and",
 "in": [
 "b",
 "b"
@@ -1348,7 +1348,7 @@
 },
 "90e8d606": {
 "doc": "|b - a| (3 components); 0 below 1.5258789e-05 squared",
-"fn": "0x146b839c0",
+"fn": "vec3.distance",
 "in": [
 "v",
 "v"
@@ -1360,8 +1360,8 @@
 "state": []
 },
 "91872ebb": {
-"doc": "quaternion qz * qy * qx from the angles (x, y, z) of the vector (FUN_146b83da0)",
-"fn": "0x146b84130",
+"doc": "quaternion qz * qy * qx from the angles (x, y, z) of the vector",
+"fn": "vec.euler_to_quat",
 "in": [
 "v"
 ],
@@ -1372,8 +1372,8 @@
 "state": []
 },
 "93ed1a25": {
-"doc": "f32.angle_diff in degrees: wrap(rad(a)) - wrap(rad(b)), wrapped, in degrees (FUN_146b83330)",
-"fn": "0x146b83430",
+"doc": "f32.angle_diff in degrees: wrap(rad(a)) - wrap(rad(b)), wrapped, in degrees",
+"fn": "f32.angle_diff_deg",
 "in": [
 "f",
 "f"
@@ -1386,7 +1386,7 @@
 },
 "9429cbb1": {
 "doc": "|b - a| (2 components); 0 below 1.5258789e-05 squared",
-"fn": "0x146b83950",
+"fn": "vec2.distance",
 "in": [
 "v",
 "v"
@@ -1399,7 +1399,7 @@
 },
 "94e0fbdc": {
 "doc": "|a|",
-"fn": "0x146b83090",
+"fn": "i32.abs",
 "in": [
 "i"
 ],
@@ -1411,7 +1411,7 @@
 },
 "96a92bb2": {
 "doc": "empty function (EA::Ant::FIFAAnimatable::operator delete): does nothing",
-"fn": "0x1465734f0",
+"fn": "nop",
 "in": [],
 "name": "nop",
 "out": [],
@@ -1419,7 +1419,7 @@
 },
 "96ab47f0": {
 "doc": "(int)floor(a + 0.5)",
-"fn": "0x146b86040",
+"fn": "f32.round_i32",
 "in": [
 "f"
 ],
@@ -1431,7 +1431,7 @@
 },
 "96cd897a": {
 "doc": "acos per component",
-"fn": "0x146b83630",
+"fn": "vec4.acos",
 "in": [
 "v"
 ],
@@ -1443,7 +1443,7 @@
 },
 "9988c791": {
 "doc": "a + b per component",
-"fn": "0x146b830e0",
+"fn": "vec.add",
 "in": [
 "v",
 "v"
@@ -1456,7 +1456,7 @@
 },
 "9ab86669": {
 "doc": "b < a ? b : a",
-"fn": "0x146b85010",
+"fn": "f32.min",
 "in": [
 "f",
 "f"
@@ -1469,7 +1469,7 @@
 },
 "9b413cbb": {
 "doc": "a / b per component",
-"fn": "0x146b83aa0",
+"fn": "vec.div",
 "in": [
 "v",
 "v"
@@ -1481,8 +1481,8 @@
 "state": []
 },
 "9b63981d": {
-"doc": "game-state value object vtable+0x10 (obj, ctx, value)",
-"fn": "0x146b73b20",
+"doc": "writes a game value",
+"fn": "gs.set.i32",
 "in": [
 "i",
 "ctx",
@@ -1494,7 +1494,7 @@
 },
 "9d49da26": {
 "doc": "a + b per component",
-"fn": "0x146b830e0",
+"fn": "vec.add",
 "in": [
 "v",
 "v"
@@ -1507,7 +1507,7 @@
 },
 "a106297c": {
 "doc": "a / s per component",
-"fn": "0x146b83ac0",
+"fn": "vec.div_f32",
 "in": [
 "v",
 "f"
@@ -1520,7 +1520,7 @@
 },
 "a107e82e": {
 "doc": "damped spring towards the input vector (inputs target, stiffness, damping, dt; state initialised flag, value, velocity)",
-"fn": "0x146b79f30",
+"fn": "vec.spring",
 "in": [
 "v",
 "f",
@@ -1539,7 +1539,7 @@
 },
 "a46ea4fe": {
 "doc": "a - b",
-"fn": "0x146b86230",
+"fn": "i32.sub",
 "in": [
 "i",
 "i"
@@ -1552,7 +1552,7 @@
 },
 "a50caac1": {
 "doc": "a * 0.017453292",
-"fn": "0x146b85e70",
+"fn": "f32.deg_to_rad",
 "in": [
 "f"
 ],
@@ -1564,7 +1564,7 @@
 },
 "ab956cb7": {
 "doc": "16 floats a - b",
-"fn": "0x146b861c0",
+"fn": "m44.sub",
 "in": [
 "m44",
 "m44"
@@ -1577,7 +1577,7 @@
 },
 "ac642718": {
 "doc": "clamp(x, min(a, b), max(a, b))",
-"fn": "0x146b83830",
+"fn": "f32.clamp",
 "in": [
 "f",
 "f",
@@ -1590,8 +1590,8 @@
 "state": []
 },
 "adca0334": {
-"doc": "game-state value object vtable+0x10 (obj, ctx, pointer to the value)",
-"fn": "0x146b73c30",
+"doc": "writes a game value",
+"fn": "gs.set.ref",
 "in": [
 "?",
 "ctx",
@@ -1602,8 +1602,8 @@
 "state": []
 },
 "ae764b0e": {
-"doc": "game-state value object vtable+8 (obj, buffer, ctx) -> 16 bytes",
-"fn": "0x146b73bd0",
+"doc": "reads a game value (16 bytes)",
+"fn": "gs.get.vec",
 "in": [
 "ctx",
 "obj"
@@ -1615,8 +1615,8 @@
 "state": []
 },
 "ae8f7b47": {
-"doc": "piecewise-linear lookup of t in the 16-float table (x0..x7, y0..y7) of operand 0, as the game evaluates it (FUN_146b84160)",
-"fn": "0x146b85c70",
+"doc": "piecewise-linear lookup of t in the 16-float table (x0..x7, y0..y7) of the first input, as the game evaluates it",
+"fn": "f32.curve8",
 "in": [
 "m44",
 "f"
@@ -1629,7 +1629,7 @@
 },
 "aec377ce": {
 "doc": "a * b per component",
-"fn": "0x146b851f0",
+"fn": "vec.mul",
 "in": [
 "v",
 "v"
@@ -1642,7 +1642,7 @@
 },
 "af3b75e5": {
 "doc": "the four 16-byte rows",
-"fn": "0x146b860e0",
+"fn": "m44.rows",
 "in": [
 "m44"
 ],
@@ -1657,7 +1657,7 @@
 },
 "b2bdfdbc": {
 "doc": "a == b",
-"fn": "0x146b83c40",
+"fn": "bool.eq",
 "in": [
 "b",
 "b"
@@ -1669,8 +1669,8 @@
 "state": []
 },
 "b3b9d94c": {
-"doc": "damped springs on the yaw atan2(-x.z, x.x) and pitch asin(x.y) of q's X axis, the pitch clamped to [-pi/2, pi/2], q's roll kept: qY(yaw') qZ(pitch') conj(qZ(pitch)) conj(qY(yaw)) q (inputs q, pitch stiffness, pitch damping, yaw stiffness, yaw damping, dt; state pitch, pitch velocity, yaw, yaw velocity, initialised flag) (FUN_146b78e20)",
-"fn": "0x146b79e60",
+"doc": "damped springs on the yaw atan2(-x.z, x.x) and pitch asin(x.y) of q's X axis, the pitch clamped to [-pi/2, pi/2], q's roll kept: qY(yaw') qZ(pitch') conj(qZ(pitch)) conj(qY(yaw)) q (inputs q, pitch stiffness, pitch damping, yaw stiffness, yaw damping, dt; state pitch, pitch velocity, yaw, yaw velocity, initialised flag)",
+"fn": "quat.yaw_pitch_spring",
 "in": [
 "q",
 "f",
@@ -1693,7 +1693,7 @@
 },
 "b840fab8": {
 "doc": "inputs (pose A, pose B, scale DOF of B, default scale, rotation R and translation T of B, rotation dR and translation dT of A; the last four handles are not checked): scale, normalize(R * dR), T + rotate(dT by R), and the matrix of the three",
-"fn": "0x146b74800",
+"fn": "pose.trajectory",
 "in": [
 "pose",
 "pose",
@@ -1715,7 +1715,7 @@
 },
 "b9d1fcd2": {
 "doc": "(int)ceil(a)",
-"fn": "0x146b837c0",
+"fn": "f32.ceil_i32",
 "in": [
 "f"
 ],
@@ -1727,7 +1727,7 @@
 },
 "ba2e2404": {
 "doc": "a / s per component",
-"fn": "0x146b83ac0",
+"fn": "vec.div_f32",
 "in": [
 "v",
 "f"
@@ -1740,7 +1740,7 @@
 },
 "bb9ecb3e": {
 "doc": "a >= b",
-"fn": "0x146b843a0",
+"fn": "i32.ge",
 "in": [
 "i",
 "i"
@@ -1753,7 +1753,7 @@
 },
 "bfccd25f": {
 "doc": "angle wrapped to [0, 2 pi)",
-"fn": "0x146b85610",
+"fn": "f32.wrap_2pi",
 "in": [
 "f"
 ],
@@ -1765,7 +1765,7 @@
 },
 "c07cd1f5": {
 "doc": "|a - b| >= 1.5258789e-05",
-"fn": "0x146b85a30",
+"fn": "f32.approx_ne",
 "in": [
 "f",
 "f"
@@ -1778,7 +1778,7 @@
 },
 "c0d19a52": {
 "doc": "outMin + (outMax - outMin) * clamp01((x - inMin) / (inMax - inMin)); outMin if the input range is ~0",
-"fn": "0x146b85fa0",
+"fn": "f32.remap_clamped",
 "in": [
 "f",
 "f",
@@ -1794,7 +1794,7 @@
 },
 "c18ada49": {
 "doc": "(int)floor(a)",
-"fn": "0x146b842c0",
+"fn": "f32.floor_i32",
 "in": [
 "f"
 ],
@@ -1806,7 +1806,7 @@
 },
 "c22c64f8": {
 "doc": "a > b",
-"fn": "0x146b84340",
+"fn": "i32.gt",
 "in": [
 "i",
 "i"
@@ -1819,7 +1819,7 @@
 },
 "c2b304f1": {
 "doc": "a * 57.29578",
-"fn": "0x146b83930",
+"fn": "f32.rad_to_deg",
 "in": [
 "f"
 ],
@@ -1831,7 +1831,7 @@
 },
 "c2d33e37": {
 "doc": "wrap(wrap(a) - wrap(b)) with wrap to [-pi, pi]",
-"fn": "0x146b83470",
+"fn": "f32.angle_diff",
 "in": [
 "f",
 "f"
@@ -1844,7 +1844,7 @@
 },
 "c430df4f": {
 "doc": "min per component",
-"fn": "0x146b84ff0",
+"fn": "vec.min",
 "in": [
 "v",
 "v"
@@ -1857,7 +1857,7 @@
 },
 "c45a4dbd": {
 "doc": "sin a, cos a, (cos a, sin a, cos a, cos a)",
-"fn": "0x146b86070",
+"fn": "f32.sincos",
 "in": [
 "f"
 ],
@@ -1871,7 +1871,7 @@
 },
 "c51f76e9": {
 "doc": "rows of a times the 3x4 matrix b",
-"fn": "0x146b850c0",
+"fn": "m34.mul",
 "in": [
 "m34",
 "m34"
@@ -1883,8 +1883,8 @@
 "state": []
 },
 "c55931ce": {
-"doc": "inverse of a 4x4 matrix: cofactors divided by the determinant (FUN_1457972e0)",
-"fn": "0x146b844f0",
+"doc": "inverse of a 4x4 matrix: cofactors divided by the determinant",
+"fn": "m44.inverse",
 "in": [
 "m44"
 ],
@@ -1896,7 +1896,7 @@
 },
 "c882de68": {
 "doc": "clamp(x, min(a, b), max(a, b)) per component",
-"fn": "0x146b837f0",
+"fn": "vec.clamp",
 "in": [
 "v",
 "v",
@@ -1910,7 +1910,7 @@
 },
 "ca1ebb7e": {
 "doc": "a * b per component",
-"fn": "0x146b851f0",
+"fn": "vec.mul",
 "in": [
 "v",
 "v"
@@ -1923,7 +1923,7 @@
 },
 "ca632a77": {
 "doc": "|a - b| <= 1.5258789e-05 for 2 components",
-"fn": "0x146b83c60",
+"fn": "vec2.approx_eq",
 "in": [
 "v",
 "v"
@@ -1936,7 +1936,7 @@
 },
 "caadcd2e": {
 "doc": "a != b",
-"fn": "0x146b85980",
+"fn": "bool.ne",
 "in": [
 "b",
 "b"
@@ -1949,7 +1949,7 @@
 },
 "cc43c3df": {
 "doc": "clamp(x, min(a, b), max(a, b)) per component",
-"fn": "0x146b837f0",
+"fn": "vec.clamp",
 "in": [
 "v",
 "v",
@@ -1963,7 +1963,7 @@
 },
 "ce1d7fec": {
 "doc": "16 floats a + b",
-"fn": "0x146b83110",
+"fn": "m44.add",
 "in": [
 "m44",
 "m44"
@@ -1976,7 +1976,7 @@
 },
 "ce900afc": {
 "doc": "a + b",
-"fn": "0x146b83160",
+"fn": "f32.add",
 "in": [
 "f",
 "f"
@@ -1989,7 +1989,7 @@
 },
 "cea237c0": {
 "doc": "|a - b| <= 1.5258789e-05 for 3 components",
-"fn": "0x146b83ca0",
+"fn": "vec3.approx_eq",
 "in": [
 "v",
 "v"
@@ -2002,7 +2002,7 @@
 },
 "d0d7491d": {
 "doc": "a / b per component",
-"fn": "0x146b83aa0",
+"fn": "vec.div",
 "in": [
 "v",
 "v"
@@ -2015,7 +2015,7 @@
 },
 "d0e567c5": {
 "doc": "|a - b| <= 1.5258789e-05 for 4 components",
-"fn": "0x146b83ce0",
+"fn": "vec4.approx_eq",
 "in": [
 "v",
 "v"
@@ -2027,8 +2027,8 @@
 "state": []
 },
 "d12112f4": {
-"doc": "writes the scale (row lengths l0, l1, l2, l2), rotation (trace method) and translation (row 3) of W x inverse(P) into the pose's three DOFs and sets their flags (inputs pose, P, W, scale, rotation and translation DOFs; no check of the handles) (FUN_146b76c00)",
-"fn": "0x146b76c00",
+"doc": "writes the scale (row lengths l0, l1, l2, l2), rotation (trace method) and translation (row 3) of W x inverse(P) into the pose's three DOFs and sets their flags (inputs pose, P, W, scale, rotation and translation DOFs; no check of the handles)",
+"fn": "pose.set_relative_matrix",
 "in": [
 "pose",
 "m44",
@@ -2043,7 +2043,7 @@
 },
 "d1b2c38c": {
 "doc": "a * s",
-"fn": "0x146b85470",
+"fn": "vec.mul_f32",
 "in": [
 "v",
 "f"
@@ -2056,7 +2056,7 @@
 },
 "d6c58e6d": {
 "doc": "clamp(x, min(a, b), max(a, b)) per component",
-"fn": "0x146b837f0",
+"fn": "vec.clamp",
 "in": [
 "v",
 "v",
@@ -2070,7 +2070,7 @@
 },
 "d7f3630f": {
 "doc": "(a.x, b.y + d tan(clamp(angle, -89, 89) degrees), a.z, a.x) with d the x/z distance of a and b; y = a.y when d is ~0",
-"fn": "0x146b7c800",
+"fn": "vec.raise_by_angle",
 "in": [
 "v",
 "v",
@@ -2084,7 +2084,7 @@
 },
 "d81e7a75": {
 "doc": "atan2(a, b) of the normalised pair; 0 when |(a, b)| < 1.5258789e-05",
-"fn": "0x146b83710",
+"fn": "f32.atan2",
 "in": [
 "f",
 "f"
@@ -2097,7 +2097,7 @@
 },
 "d8353a9b": {
 "doc": "a * s",
-"fn": "0x146b85470",
+"fn": "vec.mul_f32",
 "in": [
 "v",
 "f"
@@ -2110,7 +2110,7 @@
 },
 "da778f4a": {
 "doc": "min per component",
-"fn": "0x146b84ff0",
+"fn": "vec.min",
 "in": [
 "v",
 "v"
@@ -2123,7 +2123,7 @@
 },
 "db02c42a": {
 "doc": "a * s",
-"fn": "0x146b85470",
+"fn": "vec.mul_f32",
 "in": [
 "v",
 "f"
@@ -2135,8 +2135,8 @@
 "state": []
 },
 "dcd3aa9c": {
-"doc": "(atan2(2(wx + yz), 1 - 2(x^2 + y^2)), atan2(2(wy - xz), c), atan2(2(wz + xy), 1 - 2(y^2 + z^2)), the same) with c = |(1 - 2(y^2 + z^2), 2(wz + xy))|, computed from q * sqrt(2) with the game's SIMD atan2 (FUN_14543f690); when c <= 0.001: (atan2(2(wx - yz), 1 - 2(x^2 + z^2)), the Y angle, 0, the X angle) (FUN_146b85ce0)",
-"fn": "0x146b85e30",
+"doc": "(atan2(2(wx + yz), 1 - 2(x^2 + y^2)), atan2(2(wy - xz), c), atan2(2(wz + xy), 1 - 2(y^2 + z^2)), the same) with c = |(1 - 2(y^2 + z^2), 2(wz + xy))|, computed from q * sqrt(2); when c <= 0.001: (atan2(2(wx - yz), 1 - 2(x^2 + z^2)), the Y angle, 0, the X angle)",
+"fn": "quat.to_euler_vec",
 "in": [
 "q"
 ],
@@ -2148,7 +2148,7 @@
 },
 "dd0a4980": {
 "doc": "a - (int)(a / b) * b",
-"fn": "0x146b85040",
+"fn": "f32.fmod",
 "in": [
 "f",
 "f"
@@ -2161,7 +2161,7 @@
 },
 "deb692fd": {
 "doc": "min per component",
-"fn": "0x146b84ff0",
+"fn": "vec.min",
 "in": [
 "v",
 "v"
@@ -2173,8 +2173,8 @@
 "state": []
 },
 "e0aa7603": {
-"doc": "rotation aiming +X along b - a: qY(atan2(-n.z, n.x)) * qZ(asin(n.y)) * qX(roll) with n = normalize(b - a); identity when a and b are closer than 1.5258789e-05 or the result is not finite (FUN_146b7a010)",
-"fn": "0x146b78430",
+"doc": "rotation aiming +X along b - a: qY(atan2(-n.z, n.x)) * qZ(asin(n.y)) * qX(roll) with n = normalize(b - a); identity when a and b are closer than 1.5258789e-05 or the result is not finite",
+"fn": "quat.aim",
 "in": [
 "v",
 "v",
@@ -2188,7 +2188,7 @@
 },
 "e0de0b14": {
 "doc": "a * (1 / s)",
-"fn": "0x146b83b00",
+"fn": "vec.mul_inv_f32",
 "in": [
 "v",
 "f"
@@ -2200,8 +2200,8 @@
 "state": []
 },
 "e121231f": {
-"doc": "game-state value object vtable+8 (obj, buffer, ctx) -> 16 bytes",
-"fn": "0x146b73bd0",
+"doc": "reads a game value (16 bytes)",
+"fn": "gs.get.vec",
 "in": [
 "ctx",
 "obj"
@@ -2214,7 +2214,7 @@
 },
 "e1acb0b4": {
 "doc": "atan(b / (2 max(a, 1))) * 360 / pi",
-"fn": "0x146b78230",
+"fn": "f32.fov_from_focal",
 "in": [
 "f",
 "f"
@@ -2227,7 +2227,7 @@
 },
 "e2722575": {
 "doc": "max(v, 0 - v) per component",
-"fn": "0x146b83020",
+"fn": "vec.abs",
 "in": [
 "v"
 ],
@@ -2239,7 +2239,7 @@
 },
 "e5e5bb62": {
 "doc": "s * a",
-"fn": "0x146b85490",
+"fn": "f32.mul_vec",
 "in": [
 "f",
 "v"
@@ -2252,7 +2252,7 @@
 },
 "e6117a11": {
 "doc": "a <= b",
-"fn": "0x146b84640",
+"fn": "f32.le",
 "in": [
 "f",
 "f"
@@ -2265,7 +2265,7 @@
 },
 "e6b338c2": {
 "doc": "max(-v, v) per component",
-"fn": "0x146b83040",
+"fn": "vec.abs.b",
 "in": [
 "v"
 ],
@@ -2277,7 +2277,7 @@
 },
 "e7955193": {
 "doc": "12 floats a + b",
-"fn": "0x146b830b0",
+"fn": "m34.add",
 "in": [
 "m34",
 "m34"
@@ -2290,7 +2290,7 @@
 },
 "e881624e": {
 "doc": "a + b",
-"fn": "0x146b83180",
+"fn": "i32.add",
 "in": [
 "i",
 "i"
@@ -2302,8 +2302,8 @@
 "state": []
 },
 "e9298cad": {
-"doc": "game-state value object vtable+8 (obj, ctx) -> float",
-"fn": "0x146b73aa0",
+"doc": "reads a game value (float)",
+"fn": "gs.get.f32",
 "in": [
 "ctx",
 "obj"
@@ -2316,7 +2316,7 @@
 },
 "eabfec6f": {
 "doc": "a || b",
-"fn": "0x146b85af0",
+"fn": "bool.or",
 "in": [
 "b",
 "b"
@@ -2329,7 +2329,7 @@
 },
 "ebbc308e": {
 "doc": "conjugate / |q|^2",
-"fn": "0x146b84590",
+"fn": "quat.inverse",
 "in": [
 "q"
 ],
@@ -2341,7 +2341,7 @@
 },
 "ecd11fb1": {
 "doc": "inverse of the 3x3 part (rows 0..2, columns 0..2)",
-"fn": "0x146b843f0",
+"fn": "m34.inverse3",
 "in": [
 "m34"
 ],
@@ -2352,8 +2352,8 @@
 "state": []
 },
 "efa6ac2f": {
-"doc": "game-state value object vtable+0x10 (obj, ctx, value)",
-"fn": "0x146b73a60",
+"doc": "writes a game value",
+"fn": "gs.set.bool",
 "in": [
 "b",
 "ctx",
@@ -2365,7 +2365,7 @@
 },
 "f174f181": {
 "doc": "not vec4.approx_eq",
-"fn": "0x146b85aa0",
+"fn": "vec4.approx_ne",
 "in": [
 "v",
 "v"
@@ -2378,7 +2378,7 @@
 },
 "f3918ee3": {
 "doc": "a < b",
-"fn": "0x146b84600",
+"fn": "f32.lt",
 "in": [
 "f",
 "f"
@@ -2391,7 +2391,7 @@
 },
 "f78bc893": {
 "doc": "a <= b",
-"fn": "0x146b84670",
+"fn": "i32.le",
 "in": [
 "i",
 "i"
@@ -2404,7 +2404,7 @@
 },
 "f8f468c7": {
 "doc": "max(-v, v) per component",
-"fn": "0x146b83040",
+"fn": "vec.abs.b",
 "in": [
 "v"
 ],
@@ -2415,8 +2415,8 @@
 "state": []
 },
 "f91d45c6": {
-"doc": "four ratios c a^2 / (a^2 +- e b (c - a)) and c a^2 / (a^2 +- d b (c - a)), clamped to [0, c] / [c, FLT_MAX] (purpose UNIDENTIFIED; FUN_146b77a00)",
-"fn": "0x146b77a00",
+"doc": "four ratios c a^2 / (a^2 +- e b (c - a)) and c a^2 / (a^2 +- d b (c - a)), clamped to [0, c] / [c, FLT_MAX] (purpose not known)",
+"fn": "f32.op_f91d45c6",
 "in": [
 "f",
 "f",
@@ -2435,7 +2435,7 @@
 },
 "faa7c217": {
 "doc": "matrix from scale, rotation (normalised) and translation: rows scale * rotation axes, then (t, 1)",
-"fn": "0x146b847e0",
+"fn": "m44.compose",
 "in": [
 "v",
 "q",
@@ -2449,7 +2449,7 @@
 },
 "fc658d10": {
 "doc": "copy size bytes into the pose at the DOF's offset and set the track's flag byte to 0xFF (no check of the handle)",
-"fn": "0x146b733f0",
+"fn": "dof.write",
 "in": [
 "pose",
 "dof",
@@ -2462,7 +2462,7 @@
 },
 "fe6c5eac": {
 "doc": "a < b",
-"fn": "0x146b84620",
+"fn": "i32.lt",
 "in": [
 "i",
 "i"
@@ -2473,6 +2473,5 @@
 ],
 "state": []
 }
-},
-"registry": "0x1448558f8"
+}
 }

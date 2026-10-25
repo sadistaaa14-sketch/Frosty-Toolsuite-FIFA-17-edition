@@ -6,7 +6,7 @@ using System.Numerics;
 namespace FrostyAnimationEditor.Core
 {
     /// <summary>
-    /// The 153 native functions of FIFA17.exe's expression VM, from the game's code: single-precision arithmetic in the
+    /// The 153 native functions of the game's expression VM, from the game's code: single-precision arithmetic in the
     /// game's order of operations and lane layout, the game's SSE helpers (polynomial sine/cosine, DirectXMath-style
     /// atan/atan2, reciprocal square roots with two Newton steps, the 4x4 inverse) and its branch conditions as
     /// COMISS/JA/JBE evaluate them, NaNs included. Natives that call the C library use CrtMath.
@@ -15,13 +15,13 @@ namespace FrostyAnimationEditor.Core
     {
         public delegate void Fn(Machine M, List<uint> i, List<uint> o, List<uint> s);
 
-        private static readonly Dictionary<long, Fn> natives = new Dictionary<long, Fn>();
+        private static readonly Dictionary<string, Fn> natives = new Dictionary<string, Fn>(StringComparer.Ordinal);
 
-        public static Fn Get(long fn) { Fn f; return natives.TryGetValue(fn, out f) ? f : null; }
+        public static Fn Get(string id) { Fn f; return id != null && natives.TryGetValue(id, out f) ? f : null; }
 
         public static int Count { get { return natives.Count; } }
 
-        private static void Reg(long a, Fn f) { natives[a] = f; }
+        private static void Reg(string id, Fn f) { natives[id] = f; }
 
         // ------------------------------------------------------------------ float32 helpers (numpy semantics)
         private const float TWO_PI = (float)6.2831855, INV_2PI = (float)0.15915494, EPS = (float)1.5258789e-05;
@@ -111,7 +111,7 @@ namespace FrostyAnimationEditor.Core
                           w2 * w1 - ((z2 * z1 + y2 * y1) + x2 * x1));
         }
 
-        // the game's polynomial cosine (FUN_146b7b2b0, FUN_146b83da0, ...)
+        // the game's polynomial cosine
         private static readonly float[] Cc = { (float)6.2831855, (float)-41.3417, (float)81.60525, (float)-76.70586, (float)42.058693, (float)-15.094643,
                                                (float)3.8199525, (float)-0.7181223, (float)0.10422916, (float)-0.012031586 };
         private const float MAGIC = (float)12582912.0;
@@ -155,7 +155,7 @@ namespace FrostyAnimationEditor.Core
             return q;
         }
 
-        /// <summary>FUN_146b85b20's rotation of v by q (the 0 / 1 factors kept, they decide signed zeros)</summary>
+        /// <summary>the game's rotation of v by q (the 0 / 1 factors kept, they decide signed zeros)</summary>
         private static F4 Rot(F4 q, float vx, float vy, float vz)
         {
             float x = q.X, y = q.Y, z = q.Z, w = q.W;
@@ -182,14 +182,14 @@ namespace FrostyAnimationEditor.Core
 
         private static void Scalars()
         {
-            Reg(0x146B83160, (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[1]) + M.Mem.F(i[0])));
-            Reg(0x146B86210, (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[0]) - M.Mem.F(i[1])));
-            Reg(0x146B854C0, (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[1]) * M.Mem.F(i[0])));
-            Reg(0x146B83B30, (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[0]) / M.Mem.F(i[1])));
-            Reg(0x146B83060, (M, i, o, s) => M.Mem.WI(o[0], M.Mem.U32(i[0]) & 0x7FFFFFFF));
-            Reg(0x146B84FB0, (M, i, o, s) => { float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]); M.Mem.WF(o[0], b < a ? a : b); });
-            Reg(0x146B85010, (M, i, o, s) => { float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]); M.Mem.WF(o[0], b < a ? b : a); });
-            Reg(0x146B83830, (M, i, o, s) =>
+            Reg("f32.add", (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[1]) + M.Mem.F(i[0])));
+            Reg("f32.sub", (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[0]) - M.Mem.F(i[1])));
+            Reg("f32.mul", (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[1]) * M.Mem.F(i[0])));
+            Reg("f32.div", (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[0]) / M.Mem.F(i[1])));
+            Reg("f32.abs", (M, i, o, s) => M.Mem.WI(o[0], M.Mem.U32(i[0]) & 0x7FFFFFFF));
+            Reg("f32.max", (M, i, o, s) => { float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]); M.Mem.WF(o[0], b < a ? a : b); });
+            Reg("f32.min", (M, i, o, s) => { float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]); M.Mem.WF(o[0], b < a ? b : a); });
+            Reg("f32.clamp", (M, i, o, s) =>
             {
                 // the bounds in either order (COMISS / JA as the game branches: a NaN x gives the upper bound)
                 float x = M.Mem.F(i[0]), a = M.Mem.F(i[1]), b = M.Mem.F(i[2]);
@@ -198,8 +198,8 @@ namespace FrostyAnimationEditor.Core
                 float r = lo > x ? lo : x;
                 M.Mem.WF(o[0], hi > r ? r : hi);
             });
-            Reg(0x146681F30, (M, i, o, s) => { float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]), t = M.Mem.F(i[2]); M.Mem.WF(o[0], (b - a) * t + a); });
-            Reg(0x146B85FA0, (M, i, o, s) =>
+            Reg("f32.lerp", (M, i, o, s) => { float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]), t = M.Mem.F(i[2]); M.Mem.WF(o[0], (b - a) * t + a); });
+            Reg("f32.remap_clamped", (M, i, o, s) =>
             {
                 VmMem m = M.Mem;
                 float x = m.F(i[0]), a = m.F(i[1]), b = m.F(i[2]), c = m.F(i[3]), d = m.F(i[4]);
@@ -209,27 +209,27 @@ namespace FrostyAnimationEditor.Core
                 float u = 0f > t ? 0f : (1f > t ? t : 1f);
                 m.WF(o[0], (d - c) * u + c);
             });
-            Reg(0x146B85040, (M, i, o, s) =>
+            Reg("f32.fmod", (M, i, o, s) =>
             {
                 float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]);
                 float q = a / b;
                 M.Mem.WF(o[0], a - (float)F2I(q) * b);
             });
-            Reg(0x146B86120, (M, i, o, s) => M.Mem.WF(o[0], (float)CrtMath.Sqrtf(M.Mem.F(i[0]))));
-            Reg(0x146B84290, (M, i, o, s) => M.Mem.WF(o[0], (float)CrtMath.Expf(M.Mem.F(i[0]))));
-            Reg(0x146B84690, (M, i, o, s) => M.Mem.WF(o[0], (float)CrtMath.Logf(M.Mem.F(i[0]))));
-            Reg(0x146B85CA0, (M, i, o, s) => M.Mem.WF(o[0], (float)CrtMath.Powf(M.Mem.F(i[0]), M.Mem.F(i[1]))));
-            Reg(0x146B836C0, (M, i, o, s) => M.Mem.WF(o[0], Acos(M.Mem.F(i[0]))));
-            Reg(0x146B83930, (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[0]) * (float)57.29578));
-            Reg(0x146B85E70, (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[0]) * (float)0.017453292));
-            Reg(0x146B855B0, (M, i, o, s) => M.Mem.WF(o[0], Wrap(M.Mem.F(i[0]))));
-            Reg(0x146B85610, (M, i, o, s) =>
+            Reg("f32.sqrt", (M, i, o, s) => M.Mem.WF(o[0], (float)CrtMath.Sqrtf(M.Mem.F(i[0]))));
+            Reg("f32.exp", (M, i, o, s) => M.Mem.WF(o[0], (float)CrtMath.Expf(M.Mem.F(i[0]))));
+            Reg("f32.log", (M, i, o, s) => M.Mem.WF(o[0], (float)CrtMath.Logf(M.Mem.F(i[0]))));
+            Reg("f32.pow", (M, i, o, s) => M.Mem.WF(o[0], (float)CrtMath.Powf(M.Mem.F(i[0]), M.Mem.F(i[1]))));
+            Reg("f32.acos", (M, i, o, s) => M.Mem.WF(o[0], Acos(M.Mem.F(i[0]))));
+            Reg("f32.rad_to_deg", (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[0]) * (float)57.29578));
+            Reg("f32.deg_to_rad", (M, i, o, s) => M.Mem.WF(o[0], M.Mem.F(i[0]) * (float)0.017453292));
+            Reg("f32.wrap_pi", (M, i, o, s) => M.Mem.WF(o[0], Wrap(M.Mem.F(i[0]))));
+            Reg("f32.wrap_2pi", (M, i, o, s) =>
             {
                 float r = Wrap(M.Mem.F(i[0]));
                 if (r < 0f) r = r + TWO_PI;
                 M.Mem.WF(o[0], r);
             });
-            Reg(0x146B83470, (M, i, o, s) =>
+            Reg("f32.angle_diff", (M, i, o, s) =>
             {
                 float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]);
                 float t = (WrapT(a) * TWO_PI - WrapT(b) * TWO_PI) * INV_2PI;
@@ -237,7 +237,7 @@ namespace FrostyAnimationEditor.Core
                 if (t > 0.5f) t = t + -1f;
                 M.Mem.WF(o[0], t * TWO_PI);
             });
-            Reg(0x146B83430, (M, i, o, s) =>
+            Reg("f32.angle_diff_deg", (M, i, o, s) =>
             {
                 float a = M.Mem.F(i[0]) * (float)0.017453292 * INV_2PI;
                 a = a - Floorf(a);
@@ -250,7 +250,7 @@ namespace FrostyAnimationEditor.Core
                 if (t > 0.5f) t = t + -1f;
                 M.Mem.WF(o[0], t * TWO_PI * (float)57.29578);
             });
-            Reg(0x146CDA3A0, (M, i, o, s) =>
+            Reg("f32.quantize_angle", (M, i, o, s) =>
             {
                 float step = M.Mem.F(i[1]);
                 step = step > (float)1e-08 ? step : (float)1e-08;
@@ -265,14 +265,14 @@ namespace FrostyAnimationEditor.Core
                 if (v > 0.5f) v = v + -1f;
                 M.Mem.WF(o[0], v * TWO_PI);
             });
-            Reg(0x146CDA3E0, (M, i, o, s) =>
+            Reg("f32.heading", (M, i, o, s) =>
             {
                 F4 v = M.Mem.V(i[0]);
                 float r = (float)CrtMath.Atan2f(0f - v.Z, v.X);
                 if (0f <= r - (float)3.1415927) r = (float)-3.1415927;
                 M.Mem.WF(o[0], r);
             });
-            Reg(0x146B83710, (M, i, o, s) =>
+            Reg("f32.atan2", (M, i, o, s) =>
             {
                 float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]);
                 float l2 = b * b + a * a;
@@ -281,14 +281,14 @@ namespace FrostyAnimationEditor.Core
                 float inv = 1f / r;
                 M.Mem.WF(o[0], (float)CrtMath.Atan2f(inv * a, inv * b));
             });
-            Reg(0x146B781B0, (M, i, o, s) =>
+            Reg("f32.focal_from_fov", (M, i, o, s) =>
             {
                 float a = M.Mem.F(i[0]), b = M.Mem.F(i[1]);
                 float c = (float)0.1 > a ? (float)0.1 : ((float)179.0 > a ? a : (float)179.0);
                 float t = (float)CrtMath.Tanf((c * (float)3.1415927 * 0.5f) / 180f);
                 M.Mem.WF(o[0], b / (t * 2f));
             });
-            Reg(0x146B78230, (M, i, o, s) =>
+            Reg("f32.fov_from_focal", (M, i, o, s) =>
             {
                 float a = M.Mem.F(i[0]);
                 a = a > 1f ? a : 1f;
@@ -299,45 +299,45 @@ namespace FrostyAnimationEditor.Core
 
         private static void Integers()
         {
-            Reg(0x146B83180, (M, i, o, s) => M.Mem.WI(o[0], (long)M.Mem.I(i[1]) + M.Mem.I(i[0])));
-            Reg(0x146B86230, (M, i, o, s) => M.Mem.WI(o[0], (long)M.Mem.I(i[0]) - M.Mem.I(i[1])));
-            Reg(0x146B854E0, (M, i, o, s) => M.Mem.WI(o[0], (long)M.Mem.I(i[1]) * M.Mem.I(i[0])));
-            Reg(0x146B83B70, (M, i, o, s) => M.Mem.WI(o[0], CDiv(M.Mem.I(i[0]), M.Mem.I(i[1]))));
-            Reg(0x146B85090, (M, i, o, s) => { long a = M.Mem.I(i[0]), b = M.Mem.I(i[1]); M.Mem.WI(o[0], a - CDiv(a, b) * b); });
-            Reg(0x146B83090, (M, i, o, s) => M.Mem.WI(o[0], Math.Abs((long)M.Mem.I(i[0]))));
-            Reg(0x146B83890, (M, i, o, s) =>
+            Reg("i32.add", (M, i, o, s) => M.Mem.WI(o[0], (long)M.Mem.I(i[1]) + M.Mem.I(i[0])));
+            Reg("i32.sub", (M, i, o, s) => M.Mem.WI(o[0], (long)M.Mem.I(i[0]) - M.Mem.I(i[1])));
+            Reg("i32.mul", (M, i, o, s) => M.Mem.WI(o[0], (long)M.Mem.I(i[1]) * M.Mem.I(i[0])));
+            Reg("i32.div", (M, i, o, s) => M.Mem.WI(o[0], CDiv(M.Mem.I(i[0]), M.Mem.I(i[1]))));
+            Reg("i32.mod", (M, i, o, s) => { long a = M.Mem.I(i[0]), b = M.Mem.I(i[1]); M.Mem.WI(o[0], a - CDiv(a, b) * b); });
+            Reg("i32.abs", (M, i, o, s) => M.Mem.WI(o[0], Math.Abs((long)M.Mem.I(i[0]))));
+            Reg("i32.clamp", (M, i, o, s) =>
             {
                 int x = M.Mem.I(i[0]), lo = M.Mem.I(i[1]), hi = M.Mem.I(i[2]);
                 if (x < lo) { M.Mem.WI(o[0], lo); return; }
                 M.Mem.WI(o[0], hi < x ? hi : x);
             });
-            Reg(0x146B86040, (M, i, o, s) => M.Mem.WI(o[0], F2I(Floorf(M.Mem.F(i[0]) + 0.5f))));
-            Reg(0x146B842C0, (M, i, o, s) => M.Mem.WI(o[0], F2I(Floorf(M.Mem.F(i[0])))));
-            Reg(0x146B837C0, (M, i, o, s) => M.Mem.WI(o[0], F2I(Ceilf(M.Mem.F(i[0])))));
+            Reg("f32.round_i32", (M, i, o, s) => M.Mem.WI(o[0], F2I(Floorf(M.Mem.F(i[0]) + 0.5f))));
+            Reg("f32.floor_i32", (M, i, o, s) => M.Mem.WI(o[0], F2I(Floorf(M.Mem.F(i[0])))));
+            Reg("f32.ceil_i32", (M, i, o, s) => M.Mem.WI(o[0], F2I(Ceilf(M.Mem.F(i[0])))));
 
             // comparisons
             Func<Func<float, float, bool>, Fn> cf = fn => (M, i, o, s) => M.Mem.WB(o[0], fn(M.Mem.F(i[0]), M.Mem.F(i[1])));
             Func<Func<int, int, bool>, Fn> ci = fn => (M, i, o, s) => M.Mem.WB(o[0], fn(M.Mem.I(i[0]), M.Mem.I(i[1])));
             Func<Func<byte, byte, bool>, Fn> cb = fn => (M, i, o, s) => M.Mem.WB(o[0], fn(M.Mem.B(i[0]), M.Mem.B(i[1])));
-            Reg(0x146B84600, cf((a, b) => a < b));
-            Reg(0x146B84640, cf((a, b) => a <= b));
-            Reg(0x146B84310, cf((a, b) => a > b));
-            Reg(0x146B84370, cf((a, b) => a >= b));
-            Reg(0x146B84620, ci((a, b) => a < b));
-            Reg(0x146B84670, ci((a, b) => a <= b));
-            Reg(0x146B84340, ci((a, b) => a > b));
-            Reg(0x146B843A0, ci((a, b) => a >= b));
-            Reg(0x146B83D60, ci((a, b) => a == b));
-            Reg(0x146B85A80, ci((a, b) => a != b));
-            Reg(0x146B83C40, cb((a, b) => a == b));
-            Reg(0x146B85980, cb((a, b) => a != b));
-            Reg(0x146B83D30, cf((a, b) => Fabs(a - b) < EPS));
-            Reg(0x146B85A30, cf((a, b) => !(EPS > Fabs(a - b))));      // SETBE
+            Reg("f32.lt", cf((a, b) => a < b));
+            Reg("f32.le", cf((a, b) => a <= b));
+            Reg("f32.gt", cf((a, b) => a > b));
+            Reg("f32.ge", cf((a, b) => a >= b));
+            Reg("i32.lt", ci((a, b) => a < b));
+            Reg("i32.le", ci((a, b) => a <= b));
+            Reg("i32.gt", ci((a, b) => a > b));
+            Reg("i32.ge", ci((a, b) => a >= b));
+            Reg("i32.eq", ci((a, b) => a == b));
+            Reg("i32.ne", ci((a, b) => a != b));
+            Reg("bool.eq", cb((a, b) => a == b));
+            Reg("bool.ne", cb((a, b) => a != b));
+            Reg("f32.approx_eq", cf((a, b) => Fabs(a - b) < EPS));
+            Reg("f32.approx_ne", cf((a, b) => !(EPS > Fabs(a - b))));      // SETBE
 
-            Reg(0x146B86310, (M, i, o, s) => M.Mem.Write(o[0], new[] { (byte)(M.Mem.B(i[0]) ^ M.Mem.B(i[1])) }));
-            Reg(0x146B831A0, (M, i, o, s) => M.Mem.WB(o[0], M.Mem.B(i[0]) != 0 && M.Mem.B(i[1]) != 0));
-            Reg(0x146B85AF0, (M, i, o, s) => M.Mem.WB(o[0], !(M.Mem.B(i[0]) == 0 && M.Mem.B(i[1]) == 0)));
-            Reg(0x146B85AE0, (M, i, o, s) => M.Mem.WB(o[0], M.Mem.B(i[0]) == 0));
+            Reg("bool.xor", (M, i, o, s) => M.Mem.Write(o[0], new[] { (byte)(M.Mem.B(i[0]) ^ M.Mem.B(i[1])) }));
+            Reg("bool.and", (M, i, o, s) => M.Mem.WB(o[0], M.Mem.B(i[0]) != 0 && M.Mem.B(i[1]) != 0));
+            Reg("bool.or", (M, i, o, s) => M.Mem.WB(o[0], !(M.Mem.B(i[0]) == 0 && M.Mem.B(i[1]) == 0)));
+            Reg("bool.not", (M, i, o, s) => M.Mem.WB(o[0], M.Mem.B(i[0]) == 0));
         }
 
         private static float Nr2(float r, float q)
@@ -350,20 +350,20 @@ namespace FrostyAnimationEditor.Core
         private static void Vectors()
         {
             Func<Func<F4, F4, F4>, Fn> vbin = fn => (M, i, o, s) => M.Mem.WV(o[0], fn(M.Mem.V(i[0]), M.Mem.V(i[1])));
-            Reg(0x146B830E0, vbin((a, b) => b + a));
-            Reg(0x146B86150, vbin((a, b) => a - b));
-            Reg(0x146B851F0, vbin((a, b) => b * a));
-            Reg(0x146B84F90, vbin((a, b) => WhereGt(a, b, a, b)));      // maxps(a, b): b unless a > b
-            Reg(0x146B84FF0, vbin((a, b) => WhereLt(a, b, a, b)));      // minps(a, b)
-            Reg(0x146B83AA0, (M, i, o, s) => M.Mem.WV(o[0], M.Mem.V(i[0]) / M.Mem.V(i[1])));
-            Reg(0x146B83AC0, (M, i, o, s) => M.Mem.WV(o[0], M.Mem.V(i[0]) / M.Mem.F(i[1])));
-            Reg(0x146B83B00, (M, i, o, s) => { float r = 1f / M.Mem.F(i[1]); M.Mem.WV(o[0], r * M.Mem.V(i[0])); });
-            Reg(0x146B85470, (M, i, o, s) => M.Mem.WV(o[0], M.Mem.F(i[1]) * M.Mem.V(i[0])));
-            Reg(0x146B85490, (M, i, o, s) => M.Mem.WV(o[0], M.Mem.F(i[0]) * M.Mem.V(i[1])));
-            Reg(0x146681F00, (M, i, o, s) => { F4 a = M.Mem.V(i[0]), b = M.Mem.V(i[1]); float t = M.Mem.F(i[2]); M.Mem.WV(o[0], (b - a) * t + a); });
-            Reg(0x146B83020, (M, i, o, s) => { F4 a = M.Mem.V(i[0]); F4 n = 0f - a; M.Mem.WV(o[0], WhereGt(a, n, a, n)); });
-            Reg(0x146B83040, (M, i, o, s) => { F4 a = M.Mem.V(i[0]); F4 n = a * -1f; M.Mem.WV(o[0], WhereGt(n, a, n, a)); });
-            Reg(0x146B837F0, (M, i, o, s) =>
+            Reg("vec.add", vbin((a, b) => b + a));
+            Reg("vec.sub", vbin((a, b) => a - b));
+            Reg("vec.mul", vbin((a, b) => b * a));
+            Reg("vec.max", vbin((a, b) => WhereGt(a, b, a, b)));      // maxps(a, b): b unless a > b
+            Reg("vec.min", vbin((a, b) => WhereLt(a, b, a, b)));      // minps(a, b)
+            Reg("vec.div", (M, i, o, s) => M.Mem.WV(o[0], M.Mem.V(i[0]) / M.Mem.V(i[1])));
+            Reg("vec.div_f32", (M, i, o, s) => M.Mem.WV(o[0], M.Mem.V(i[0]) / M.Mem.F(i[1])));
+            Reg("vec.mul_inv_f32", (M, i, o, s) => { float r = 1f / M.Mem.F(i[1]); M.Mem.WV(o[0], r * M.Mem.V(i[0])); });
+            Reg("vec.mul_f32", (M, i, o, s) => M.Mem.WV(o[0], M.Mem.F(i[1]) * M.Mem.V(i[0])));
+            Reg("f32.mul_vec", (M, i, o, s) => M.Mem.WV(o[0], M.Mem.F(i[0]) * M.Mem.V(i[1])));
+            Reg("vec.lerp", (M, i, o, s) => { F4 a = M.Mem.V(i[0]), b = M.Mem.V(i[1]); float t = M.Mem.F(i[2]); M.Mem.WV(o[0], (b - a) * t + a); });
+            Reg("vec.abs", (M, i, o, s) => { F4 a = M.Mem.V(i[0]); F4 n = 0f - a; M.Mem.WV(o[0], WhereGt(a, n, a, n)); });
+            Reg("vec.abs.b", (M, i, o, s) => { F4 a = M.Mem.V(i[0]); F4 n = a * -1f; M.Mem.WV(o[0], WhereGt(n, a, n, a)); });
+            Reg("vec.clamp", (M, i, o, s) =>
             {
                 F4 x = M.Mem.V(i[0]), a = M.Mem.V(i[1]), b = M.Mem.V(i[2]);
                 F4 lo = WhereLt(a, b, a, b);
@@ -371,9 +371,9 @@ namespace FrostyAnimationEditor.Core
                 F4 r = WhereGt(x, lo, x, lo);
                 M.Mem.WV(o[0], WhereLt(r, hi, r, hi));
             });
-            Reg(0x146B83B90, (M, i, o, s) => M.Mem.WF(o[0], Dot(M.Mem.V(i[1]), M.Mem.V(i[0]), 2)));
-            Reg(0x146B83BC0, (M, i, o, s) => M.Mem.WF(o[0], Dot(M.Mem.V(i[1]), M.Mem.V(i[0]), 3)));
-            Reg(0x146B83C00, (M, i, o, s) => M.Mem.WF(o[0], Dot(M.Mem.V(i[1]), M.Mem.V(i[0]), 4)));
+            Reg("vec2.dot", (M, i, o, s) => M.Mem.WF(o[0], Dot(M.Mem.V(i[1]), M.Mem.V(i[0]), 2)));
+            Reg("vec3.dot", (M, i, o, s) => M.Mem.WF(o[0], Dot(M.Mem.V(i[1]), M.Mem.V(i[0]), 3)));
+            Reg("vec4.dot", (M, i, o, s) => M.Mem.WF(o[0], Dot(M.Mem.V(i[1]), M.Mem.V(i[0]), 4)));
             Func<int, Fn> dist = n => (M, i, o, s) =>
             {
                 F4 a = M.Mem.V(i[0]), b = M.Mem.V(i[1]);
@@ -381,9 +381,9 @@ namespace FrostyAnimationEditor.Core
                 float q = Sum(d * d, n);
                 M.Mem.WF(o[0], Fabs(q - 0f) < EPS ? 0f : Sqrtf(q));
             };
-            Reg(0x146B83950, dist(2));
-            Reg(0x146B839C0, dist(3));
-            Reg(0x146B83A30, dist(4));
+            Reg("vec2.distance", dist(2));
+            Reg("vec3.distance", dist(3));
+            Reg("vec4.distance", dist(4));
             Func<int, Fn> len = n => (M, i, o, s) =>
             {
                 F4 a = M.Mem.V(i[0]);
@@ -393,9 +393,9 @@ namespace FrostyAnimationEditor.Core
                 float q = Sum(a * a, n);
                 M.Mem.WF(o[0], Sqrtf(q));
             };
-            Reg(0x146B846D0, len(2));
-            Reg(0x146B84720, len(3));
-            Reg(0x146B84780, len(4));
+            Reg("vec2.length", len(2));
+            Reg("vec3.length", len(3));
+            Reg("vec4.length", len(4));
             Func<int, bool, Fn> normalize = (n, check) => (M, i, o, s) =>
             {
                 F4 a = M.Mem.V(i[0]);
@@ -410,10 +410,10 @@ namespace FrostyAnimationEditor.Core
                 r = Nr2(r, q);
                 M.Mem.WV(o[0], a * r);
             };
-            Reg(0x146B85690, normalize(2, true));
-            Reg(0x146B85750, normalize(3, true));
-            Reg(0x146B85810, normalize(4, true));
-            Reg(0x146B858E0, normalize(4, false));
+            Reg("vec2.normalize", normalize(2, true));
+            Reg("vec3.normalize", normalize(3, true));
+            Reg("vec4.normalize", normalize(4, true));
+            Reg("quat.normalize", normalize(4, false));
             Func<int, bool, Fn> approx = (n, eq) => (M, i, o, s) =>
             {
                 F4 d = Abs(M.Mem.V(i[0]) - M.Mem.V(i[1]));
@@ -421,18 +421,18 @@ namespace FrostyAnimationEditor.Core
                 for (int j = 0; j < n; j++) if (!(d[j] <= EPS)) ok = false;
                 M.Mem.WB(o[0], eq ? ok : !ok);
             };
-            Reg(0x146B83C60, approx(2, true));
-            Reg(0x146B83CA0, approx(3, true));
-            Reg(0x146B83CE0, approx(4, true));
-            Reg(0x146B859A0, approx(2, false));
-            Reg(0x146B859F0, approx(3, false));
-            Reg(0x146B85AA0, approx(4, false));
-            Reg(0x146B83900, (M, i, o, s) =>
+            Reg("vec2.approx_eq", approx(2, true));
+            Reg("vec3.approx_eq", approx(3, true));
+            Reg("vec4.approx_eq", approx(4, true));
+            Reg("vec2.approx_ne", approx(2, false));
+            Reg("vec3.approx_ne", approx(3, false));
+            Reg("vec4.approx_ne", approx(4, false));
+            Reg("vec3.cross", (M, i, o, s) =>
             {
                 F4 a = M.Mem.V(i[0]), b = M.Mem.V(i[1]);
                 M.Mem.WV(o[0], new F4(b.Z * a.Y - b.Y * a.Z, b.X * a.Z - b.Z * a.X, b.Y * a.X - b.X * a.Y, b.X * a.X - b.X * a.X));
             });
-            Reg(0x146B831D0, (M, i, o, s) =>
+            Reg("vec.angle3", (M, i, o, s) =>
             {
                 F4 a = M.Mem.V(i[0]), b = M.Mem.V(i[1]), c = M.Mem.V(i[2]);
                 F4 u = c - a, w = c - b;
@@ -455,10 +455,10 @@ namespace FrostyAnimationEditor.Core
                 else if (n == 3) a = new F4(a.X, a.Y, a.Z, a.X);
                 M.Mem.WV(o[0], a);
             };
-            Reg(0x146B83540, vacos(2));
-            Reg(0x146B835A0, vacos(3));
-            Reg(0x146B83630, vacos(4));
-            Reg(0x146B86070, (M, i, o, s) =>
+            Reg("vec2.acos", vacos(2));
+            Reg("vec3.acos", vacos(3));
+            Reg("vec4.acos", vacos(4));
+            Reg("f32.sincos", (M, i, o, s) =>
             {
                 double x = M.Mem.F(i[0]);
                 float sn = (float)CrtMath.Sinf(x), cs = (float)CrtMath.Cosf(x);
@@ -466,9 +466,9 @@ namespace FrostyAnimationEditor.Core
                 M.Mem.WF(o[1], cs);
                 M.Mem.WV(o[2], new F4(cs, sn, cs, cs));
             });
-            Reg(0x146B84F50, (M, i, o, s) =>
+            Reg("m44.rotation_y", (M, i, o, s) =>
             {
-                // FUN_146b84c70: rotation matrix about Y (rows (c, 0, -s, 0), (0, 1, 0, 0), (s, 0, c, 0), (0, 0, 0, 1))
+                // rotation matrix about Y (rows (c, 0, -s, 0), (0, 1, 0, 0), (s, 0, c, 0), (0, 0, 0, 1))
                 float x = M.Mem.F(i[0]);
                 float sn, cs;
                 Gsincos(x, out sn, out cs);
@@ -478,9 +478,9 @@ namespace FrostyAnimationEditor.Core
 
         private static void Quaternions()
         {
-            Reg(0x146B85510, (M, i, o, s) => M.Mem.WV(o[0], Qmul(M.Mem.V(i[0]), M.Mem.V(i[1]))));
-            Reg(0x146B838D0, (M, i, o, s) => { F4 q = M.Mem.V(i[0]); M.Mem.WV(o[0], new F4(-q.X, -q.Y, -q.Z, q.W)); });
-            Reg(0x146B84590, (M, i, o, s) =>
+            Reg("quat.mul", (M, i, o, s) => M.Mem.WV(o[0], Qmul(M.Mem.V(i[0]), M.Mem.V(i[1]))));
+            Reg("quat.conjugate", (M, i, o, s) => { F4 q = M.Mem.V(i[0]); M.Mem.WV(o[0], new F4(-q.X, -q.Y, -q.Z, q.W)); });
+            Reg("quat.inverse", (M, i, o, s) =>
             {
                 F4 q = M.Mem.V(i[0]);
                 float n = Sum(q * q, 4);
@@ -489,7 +489,7 @@ namespace FrostyAnimationEditor.Core
                 r = (2f - r * n) * r;
                 M.Mem.WV(o[0], new F4(r * -q.X, r * -q.Y, r * -q.Z, r * q.W));
             });
-            Reg(0x146B86290, (M, i, o, s) =>
+            Reg("quat.rotate", (M, i, o, s) =>
             {
                 F4 v = M.Mem.V(i[0]), q = M.Mem.V(i[1]);
                 float x = v.X, y = v.Y, z = v.Z, w = v.W, qx = q.X, qy = q.Y, qz = q.Z, qw = q.W;
@@ -508,10 +508,10 @@ namespace FrostyAnimationEditor.Core
                 M.Mem.WV(o[0], q);
                 M.Mem.WF(o[1], Wrap(x));
             };
-            Reg(0x146B7B280, qaxis(0));
-            Reg(0x146B7B610, qaxis(1));
-            Reg(0x146B7B9A0, qaxis(2));
-            Reg(0x146B84130, (M, i, o, s) =>
+            Reg("quat.from_angle_x", qaxis(0));
+            Reg("quat.from_angle_y", qaxis(1));
+            Reg("quat.from_angle_z", qaxis(2));
+            Reg("vec.euler_to_quat", (M, i, o, s) =>
             {
                 F4 v = M.Mem.V(i[0]);
                 float sx, cx, sy, cy, sz, cz;
@@ -520,7 +520,7 @@ namespace FrostyAnimationEditor.Core
                 Gsincos(v.Z * 0.5f, out sz, out cz);
                 M.Mem.WV(o[0], new F4(cy * (cz * sx) - sy * (sz * cx), sy * (cz * cx) + cy * (sz * sx), cy * (sz * cx) - sy * (cz * sx), cy * (cz * cx) + sy * (sz * sx)));
             });
-            Reg(0x146B85C30, (M, i, o, s) =>
+            Reg("quat.to_axes", (M, i, o, s) =>
             {
                 F4 q = M.Mem.V(i[0]);
                 M.Mem.WV(o[0], Rot(q, 1f, 0f, 0f));
@@ -534,11 +534,11 @@ namespace FrostyAnimationEditor.Core
 
         private static void Matrices()
         {
-            Reg(0x146B830B0, (M, i, o, s) => M.Mem.WM(o[0], Add(M.Mem.M(i[1], 12), M.Mem.M(i[0], 12))));
-            Reg(0x146B83110, (M, i, o, s) => M.Mem.WM(o[0], Add(M.Mem.M(i[1], 16), M.Mem.M(i[0], 16))));
-            Reg(0x146B86180, (M, i, o, s) => M.Mem.WM(o[0], Sub(M.Mem.M(i[0], 12), M.Mem.M(i[1], 12))));
-            Reg(0x146B861C0, (M, i, o, s) => M.Mem.WM(o[0], Sub(M.Mem.M(i[0], 16), M.Mem.M(i[1], 16))));
-            Reg(0x146B86250, (M, i, o, s) =>
+            Reg("m34.add", (M, i, o, s) => M.Mem.WM(o[0], Add(M.Mem.M(i[1], 12), M.Mem.M(i[0], 12))));
+            Reg("m44.add", (M, i, o, s) => M.Mem.WM(o[0], Add(M.Mem.M(i[1], 16), M.Mem.M(i[0], 16))));
+            Reg("m34.sub", (M, i, o, s) => M.Mem.WM(o[0], Sub(M.Mem.M(i[0], 12), M.Mem.M(i[1], 12))));
+            Reg("m44.sub", (M, i, o, s) => M.Mem.WM(o[0], Sub(M.Mem.M(i[0], 16), M.Mem.M(i[1], 16))));
+            Reg("m44.transform_point", (M, i, o, s) =>
             {
                 F4 p = M.Mem.V(i[0]);
                 float[] m = M.Mem.M(i[1], 16);
@@ -546,7 +546,7 @@ namespace FrostyAnimationEditor.Core
                 for (int c = 0; c < 4; c++) r[c] = ((p.X * m[c] + m[12 + c]) + p.Y * m[4 + c]) + m[8 + c] * p.Z;
                 M.Mem.WV(o[0], r);
             });
-            Reg(0x146B860E0, (M, i, o, s) =>
+            Reg("m44.rows", (M, i, o, s) =>
             {
                 byte[] b = M.Mem.Read(i[0], 64);
                 for (int j = 0; j < 4; j++)
@@ -556,7 +556,7 @@ namespace FrostyAnimationEditor.Core
                     M.Mem.Write(o[j], row);
                 }
             });
-            Reg(0x146B850C0, (M, i, o, s) =>
+            Reg("m34.mul", (M, i, o, s) =>
             {
                 float[] a = M.Mem.M(i[0], 12), b = M.Mem.M(i[1], 12);
                 float[] r = new float[12];
@@ -565,9 +565,9 @@ namespace FrostyAnimationEditor.Core
                         r[4 * rr + c] = (a[4 * rr + 1] * b[4 + c] + a[4 * rr] * b[c]) + b[8 + c] * a[4 * rr + 2];
                 M.Mem.WM(o[0], r);
             });
-            Reg(0x146B85400, (M, i, o, s) =>
+            Reg("m44.mul", (M, i, o, s) =>
             {
-                // FUN_146b85220: out[r][c] = ((b[1][c] a[r][1] + b[0][c] a[r][0]) + b[2][c] a[r][2]) + b[3][c] a[r][3]
+                // out[r][c] = ((b[1][c] a[r][1] + b[0][c] a[r][0]) + b[2][c] a[r][2]) + b[3][c] a[r][3]
                 float[] a = M.Mem.M(i[0], 16), b = M.Mem.M(i[1], 16);
                 float[] r = new float[16];
                 for (int rr = 0; rr < 4; rr++)
@@ -575,9 +575,9 @@ namespace FrostyAnimationEditor.Core
                         r[4 * rr + c] = ((b[4 + c] * a[4 * rr + 1] + b[c] * a[4 * rr]) + b[8 + c] * a[4 * rr + 2]) + b[12 + c] * a[4 * rr + 3];
                 M.Mem.WM(o[0], r);
             });
-            Reg(0x146B843F0, (M, i, o, s) =>
+            Reg("m34.inverse3", (M, i, o, s) =>
             {
-                // FUN_146b843f0 (SSE): cofactors by cross products, divided by the determinant
+                // (SSE): cofactors by cross products, divided by the determinant
                 float[] m = M.Mem.M(i[0], 12);
                 F4 r0 = new F4(m[0], m[1], m[2], m[3]), r1 = new F4(m[4], m[5], m[6], m[7]), r2 = new F4(m[8], m[9], m[10], m[11]);
                 Func<F4, F4> yzx = v => v.Sw(1, 2, 0, 0), zxy = v => v.Sw(2, 0, 1, 0);
@@ -590,10 +590,10 @@ namespace FrostyAnimationEditor.Core
                 for (int j = 0; j < 12; j++) r[j] = r[j] / det;
                 M.Mem.WM(o[0], r);
             });
-            Reg(0x146B844F0, (M, i, o, s) => M.Mem.WM(o[0], Inv44(M.Mem.M(i[0], 16))));
+            Reg("m44.inverse", (M, i, o, s) => M.Mem.WM(o[0], Inv44(M.Mem.M(i[0], 16))));
         }
 
-        /// <summary>FUN_1457972e0: SIMD cofactors (lane rotations PSHUFD 0x39), sign masks, the determinant (p1+p3)+(p0+p2)
+        /// <summary>SIMD cofactors (lane rotations PSHUFD 0x39), sign masks, the determinant (p1+p3)+(p0+p2)
         /// from row 0, an SHUFPS transpose and a DIVPS by the determinant</summary>
         private static float[] Inv44(float[] m)
         {

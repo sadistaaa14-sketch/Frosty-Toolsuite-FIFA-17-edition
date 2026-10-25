@@ -39,8 +39,8 @@ namespace FrostyAnimationEditor.Core
         public override string ToString()
         {
             if (!Measured) return "unchanged";
-            return "waiter peak " + WaiterPeakOriginal + " -> " + WaiterPeakNew + ", linear bytes " + LinearOriginal + " -> " + LinearNew +
-                   ", post-load " + PostLoadNew + (Unmodelled.Count > 0 ? ", classes without cost model: " + string.Join(", ", Unmodelled) : "");
+            return "open references " + WaiterPeakOriginal + " -> " + WaiterPeakNew + ", loading memory " + LinearOriginal + " -> " + LinearNew +
+                   " bytes, after loading " + PostLoadNew + (Unmodelled.Count > 0 ? ", types not measured: " + string.Join(", ", Unmodelled) : "");
         }
     }
 
@@ -66,7 +66,7 @@ namespace FrostyAnimationEditor.Core
     /// </summary>
     public sealed class AntDb
     {
-        public const uint AnimationAssetClass = 0xB3A0A282;   // engine id of AnimationAsset (FUN_145ca2c50)
+        public const uint AnimationAssetClass = 0xB3A0A282;   // engine id of AnimationAsset
 
         public readonly Container C;
         public readonly TypeTable Types;
@@ -76,6 +76,14 @@ namespace FrostyAnimationEditor.Core
         public readonly List<ARow> OrigA;
         public readonly List<BRow> OrigB;
         public readonly Dictionary<int, GdObj> Cache = new Dictionary<int, GdObj>();
+
+        /// <summary>
+        /// With TrackTouches (an editing Session sets it) only the blocks edits declared (Touched) can differ from the
+        /// file, so reference lookups re-read those instead of every decoded block.
+        /// </summary>
+        public bool TrackTouches;
+        public readonly HashSet<int> Touched = new HashSet<int>();
+        public void Touch(int i) { if (i >= 0) Touched.Add(i); }
         public readonly List<int> Order;
         public readonly int N0;
         public readonly Dictionary<int, GdObj> NewObjs = new Dictionary<int, GdObj>();
@@ -405,6 +413,9 @@ namespace FrostyAnimationEditor.Core
 
         private Dictionary<ulong, List<int>> rev;
 
+        /// <summary>true when the reverse reference index is built (RefsTo is cheap)</summary>
+        public bool RefIndexReady { get { return rev != null; } }
+
         /// <summary>blocks that reference a key (built over the whole file once; edits update it on demand)</summary>
         public List<int> RefsTo(ulong key)
         {
@@ -415,7 +426,7 @@ namespace FrostyAnimationEditor.Core
                 foreach (int i in l)
                 {
                     if (Removed.Contains(i)) continue;
-                    if (IsLoaded(i))
+                    if (IsLoaded(i) && (!TrackTouches || i >= N0 || Touched.Contains(i)))
                     {
                         // re-check the current content of loaded blocks
                         List<ulong> ks = new List<ulong>();
@@ -425,7 +436,8 @@ namespace FrostyAnimationEditor.Core
                     if (!r.Contains(i)) r.Add(i);
                 }
             // loaded/new blocks may reference it now
-            foreach (int i in Cache.Keys.Concat(NewObjs.Keys))
+            IEnumerable<int> live = TrackTouches ? Touched.Where(i => i < N0 && Cache.ContainsKey(i)).Concat(NewObjs.Keys) : Cache.Keys.Concat(NewObjs.Keys);
+            foreach (int i in live)
             {
                 if (Removed.Contains(i) || r.Contains(i)) continue;
                 List<ulong> ks = new List<ulong>();
@@ -665,7 +677,7 @@ namespace FrostyAnimationEditor.Core
             bool structural = NewObjs.Count > 0 || Removed.Count > 0 || ids.Count != N0;
             if (!structural) for (int n = 0; n < ids.Count; n++) if (ids[n] != n) { structural = true; break; }
             if (!changed && !structural) return hp;
-            if (log != null) log("measuring the loader's waiter peak (H7) and linear allocator use (H8)...");
+            if (log != null) log("measuring loading memory...");
             RuntimeProfile bp = BaseProfile();
             RuntimeProfile np = Profile(ids);
             hp.Measured = true;
@@ -711,7 +723,7 @@ namespace FrostyAnimationEditor.Core
                 if (StateMachine.Touched(this))
                 {
                     int n = StateMachine.Rebuild(this);
-                    if (n > 0) L("state machine runtime tables rebuilt on " + n + " objects");
+                    if (n > 0) L("state machine lookup tables rebuilt on " + n + " objects");
                 }
             }
             SyncKeys();
@@ -753,12 +765,12 @@ namespace FrostyAnimationEditor.Core
             uint H7 = h7 ?? Header.H[6], H8 = h8 ?? Header.H[7];
             if (autoHeader && (!h7.HasValue || !h8.HasValue))
             {
-                if (progress != null) progress("measuring the loader's use of the header values", 0.35);
+                if (progress != null) progress("measuring loading memory", 0.35);
                 plan = PlanHeader(ids, L);
                 if (!h7.HasValue) H7 = plan.H7;
                 if (!h8.HasValue) H8 = plan.H8;
                 if (H7 != Header.H[6] || H8 != Header.H[7])
-                    L("header: H7 " + Header.H[6] + " -> " + H7 + ", H8 0x" + Header.H[7].ToString("X") + " -> 0x" + H8.ToString("X") + "  (" + plan + ")");
+                    L("loading limits: references " + Header.H[6] + " -> " + H7 + ", memory 0x" + Header.H[7].ToString("X") + " -> 0x" + H8.ToString("X") + "  (" + plan + ")");
             }
             if (progress != null) progress("writing the container", 0.7);
             Header hdr = Header.Copy();
@@ -775,6 +787,7 @@ namespace FrostyAnimationEditor.Core
             res.Image = Container.BuildFile(hdr, T, Cx, A, B, strmAux, Types.ToBytes(), Types.Aux, blocks, withoutPrefix, out strmPos);
             res.Blocks = ids.Count;
             res.Modified = modified.Count(i => !Removed.Contains(i));
+            foreach (int i in modified) Touch(i);   // the derived-data fixes of the save edit blocks too
             res.H7 = H7;
             res.H8 = H8;
             res.StrmAux = strmAux;

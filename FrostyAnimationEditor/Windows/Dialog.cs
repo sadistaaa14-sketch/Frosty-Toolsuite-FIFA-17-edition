@@ -186,9 +186,9 @@ namespace FrostyAnimationEditor.Windows
             foreach (object o in r.Arr("items"))
             {
                 JObject it = (JObject)o;
-                string name = it.Str("name");
+                string name = Ui.Label(it);
                 StackPanel p = Ui.H(Ui.T(string.IsNullOrEmpty(name) ? "(no name)" : name, string.IsNullOrEmpty(name) ? Ui.Muted : null),
-                                    Ui.Pad(Ui.T(it.Str("type") + " " + it.Str("key"), Ui.Muted, 11, false, true), 8, 0, 0, 0));
+                                    Ui.Pad(Ui.T((it.Str("alias") != null ? it.Str("name") + "  " : "") + it.Str("type") + " " + it.Str("key"), Ui.Muted, 11, false, true), 8, 0, 0, 0));
                 list.Items.Add(new ListBoxItem { Content = p, Tag = it });
             }
             if (list.Items.Count == 0) list.Items.Add(new ListBoxItem { Content = Ui.T("nothing found", Ui.Muted), IsEnabled = false });

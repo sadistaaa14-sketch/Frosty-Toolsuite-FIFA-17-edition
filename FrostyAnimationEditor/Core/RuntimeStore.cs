@@ -108,7 +108,7 @@ namespace FrostyAnimationEditor.Core
             s.allocAlign = aal.ToArray();
             s.keyVals = kv.ToArray();
             db.Store = s;
-            if (progress != null) progress("measuring the loader profile", 0.92);
+            if (progress != null) progress("measuring loading memory", 0.92);
             s.Base = db.Profile(null, true);
             return s;
         }

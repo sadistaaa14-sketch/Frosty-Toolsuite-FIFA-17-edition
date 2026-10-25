@@ -54,7 +54,7 @@ namespace FrostyAnimationEditor.Windows
         private readonly TextBlock stMsg = Ui.Trim(Ui.T(""));
         private readonly TextBlock stInfo = Ui.T("", Ui.Muted, 11);
 
-        private static readonly string[] PanelTabs = { "clip", "sm", "blend", "expr", "curves" };
+        private static readonly string[] PanelTabs = { "clip", "seq", "chooser", "layers", "mask", "steer", "tags", "tree", "sm", "blend", "expr", "curves", "cdb" };
 
         public EditorWindow(LoadedSource source)
         {
@@ -124,7 +124,7 @@ namespace FrostyAnimationEditor.Windows
             head1.Children.Add(nav);
             head1.Children.Add(title);
             foreach (KeyValuePair<string, string> t in new[] { Ui.KV("fields", "Fields"), Ui.KV("refs", "References"), Ui.KV("clip", "Animation"),
-                     Ui.KV("sm", "State machine"), Ui.KV("blend", "Blend space"), Ui.KV("expr", "Expression"), Ui.KV("curves", "Curves") })
+                     Ui.KV("seq", "Sequence"), Ui.KV("chooser", "Chooser"), Ui.KV("layers", "Layers"), Ui.KV("mask", "Blend mask"), Ui.KV("steer", "Steering"), Ui.KV("tags", "Tags"), Ui.KV("tree", "Controllers"), Ui.KV("sm", "State machine"), Ui.KV("blend", "Blend space"), Ui.KV("expr", "Expression"), Ui.KV("curves", "Curves"), Ui.KV("cdb", "Database") })
             {
                 string id = t.Key;
                 Button tb = Ui.B(t.Value, () => SetTab(id));
@@ -318,8 +318,9 @@ namespace FrostyAnimationEditor.Windows
                 foreach (object o in items)
                 {
                     JObject it = (JObject)o;
-                    string name = it.Str("name");
+                    string name = Ui.Label(it);
                     StackPanel p = Ui.H(Ui.T(string.IsNullOrEmpty(name) ? "(no name)" : name, string.IsNullOrEmpty(name) ? Ui.Muted : null));
+                    if (it.Str("alias") != null) p.Children.Add(Ui.Pad(Ui.T(it.Str("name"), Ui.Muted, 11, false, true), 6, 0, 0, 0));
                     if (t == null) p.Children.Add(Ui.Pad(Ui.T(it.Str("type"), Ui.Muted, 11, false, true), 6, 0, 0, 0));
                     ListBoxItem li = new ListBoxItem { Content = p, Tag = it.Str("key"), ToolTip = it.Str("type") + " " + it.Str("key") };
                     objList.Items.Add(li);
@@ -412,7 +413,8 @@ namespace FrostyAnimationEditor.Windows
             View = v;
             title.Children.Clear();
             title.Children.Add(Ui.Trim(Ui.T(string.Join(" : ", v.Arr("chain").Cast<string>()), Ui.Muted)));
-            title.Children.Add(Ui.Pad(Ui.T(string.IsNullOrEmpty(v.Str("name")) ? "(no name)" : v.Str("name"), null, 13, true), 8, 0, 0, 0));
+            title.Children.Add(Ui.Pad(Ui.T(string.IsNullOrEmpty(Ui.Label(v)) ? "(no name)" : Ui.Label(v), null, 13, true), 8, 0, 0, 0));
+            if (v.Str("alias") != null) title.Children.Add(Ui.Pad(Ui.T(v.Str("name"), Ui.Muted, 12, false, true), 8, 0, 0, 0));
             TextBlock kt = Ui.T(v.Str("key"), Ui.Muted, 12, false, true);
             kt.Margin = new Thickness(8, 0, 0, 0);
             kt.ToolTip = "double-click to copy the key";
@@ -449,6 +451,14 @@ namespace FrostyAnimationEditor.Windows
                     case "fields": RenderFields(); break;
                     case "refs": RenderRefs(); break;
                     case "clip": RenderClip(); break;
+                    case "seq": RenderSeq(); break;
+                    case "tags": RenderTags(); break;
+                    case "chooser": RenderChooser(); break;
+                    case "cdb": RenderCdb(); break;
+                    case "layers": RenderLayers(); break;
+                    case "mask": RenderMask(); break;
+                    case "steer": RenderSteering(); break;
+                    case "tree": RenderTree(); break;
                     case "sm": RenderSm(); break;
                     case "blend": RenderBlend(); break;
                     case "expr": RenderExpr(false); break;
@@ -508,6 +518,7 @@ namespace FrostyAnimationEditor.Windows
 
         private void AfterUndo()
         {
+            PlayerWindow.Refresh();
             LoadTypes();
             if (ObjKey != null) LoadObject();
             RefreshState();
@@ -568,7 +579,7 @@ namespace FrostyAnimationEditor.Windows
         private static string SaveSummary(SaveResult r)
         {
             string s = Ui.Thousands(r.Blocks) + " objects, " + r.Modified + " changed";
-            if (r.Plan != null && r.Plan.Measured) s += ", H7 " + r.H7 + ", H8 0x" + r.H8.ToString("X");
+            if (r.Plan != null && r.Plan.Measured) s += ", loading limits " + r.H7 + " references / 0x" + r.H8.ToString("X") + " bytes";
             return s;
         }
 
@@ -590,18 +601,18 @@ namespace FrostyAnimationEditor.Windows
             Dialog opt = new Dialog(this, "Save .res", 560);
             TextBox h7 = Ui.Box(""), h8 = Ui.Box("");
             Ui.Form f = new Ui.Form(170);
-            f.Row("H7 waiter reserve", h7);
-            f.Row("H8 resource heap", h8);
+            f.Row("reference limit", h7);
+            f.Row("loading memory (bytes)", h8);
             opt.Add(Ui.Wrap(path, null, 12, true),
-                    Ui.Wrap("Header values (advanced): left empty, the editor keeps the file's values and raises them when the edits need more.", Ui.Muted, 11),
+                    Ui.Wrap("Loading limits stored in the file (advanced): left empty, the editor keeps the file's values and raises them when your edits need more.", Ui.Muted, 11),
                     f.Grid,
-                    Ui.Wrap("Count fields, two-way links, blend space diagrams and state machine runtime tables are brought up to date before writing.", Ui.Muted, 11));
+                    Ui.Wrap("Count fields, two-way links, blend space diagrams and the state machines' lookup tables are brought up to date before writing.", Ui.Muted, 11));
             uint? v7 = null, v8 = null;
             opt.Button("Cancel");
             opt.Button("Save", () =>
             {
-                v7 = h7.Text.Trim().Length > 0 ? (uint?)ParseU32(h7.Text, "H7") : null;
-                v8 = h8.Text.Trim().Length > 0 ? (uint?)ParseU32(h8.Text, "H8") : null;
+                v7 = h7.Text.Trim().Length > 0 ? (uint?)ParseU32(h7.Text, "reference limit") : null;
+                v8 = h8.Text.Trim().Length > 0 ? (uint?)ParseU32(h8.Text, "loading memory") : null;
                 return true;
             }, true);
             if (!opt.Run()) return;
@@ -660,6 +671,7 @@ namespace FrostyAnimationEditor.Windows
             }
             src = ls;
             M = ls.Model;
+            PlayerWindow.CloseAll();
             ObjKey = null;
             hist.Clear();
             fwd.Clear();
@@ -695,7 +707,7 @@ namespace FrostyAnimationEditor.Windows
             JObject tpl = null;
             TextBlock tplShow = Ui.T("no template: a blank object of the class (with its base-class parts)", Ui.Muted, 11);
             ObjectPicker pk = new ObjectPicker(M, typeSel);
-            pk.Picked += o => { tpl = o; tplShow.Text = "template: " + o.Str("name") + " " + o.Str("key"); tplShow.Foreground = Ui.Fg; Ui.Select(cls, o.Str("type")); };
+            pk.Picked += o => { tpl = o; tplShow.Text = "template: " + Ui.Label(o) + " " + o.Str("key"); tplShow.Foreground = Ui.Fg; Ui.Select(cls, o.Str("type")); };
             Ui.Form f = new Ui.Form(80);
             f.Row("class", cls);
             f.Row("name", name);
@@ -784,7 +796,7 @@ namespace FrostyAnimationEditor.Windows
         {
             if (View == null) return;
             bool isSm = View.Arr("panels").Cast<string>().Contains("sm");
-            Dialog d = new Dialog(this, "Graph of " + View.Str("name"), 520);
+            Dialog d = new Dialog(this, "Graph of " + Ui.Label(View), 520);
             TextBox depth = Ui.Box("2", 60);
             CheckBox inc = Ui.Check("also follow references to each object (incoming)", false);
             TextBox max = Ui.Box("600", 80);
@@ -834,23 +846,23 @@ namespace FrostyAnimationEditor.Windows
             section("Two-way links that disagree", r.Arr("links"), x => x.Str("name") + ": " + x.Str("problem"), false);
             section("Edits the game cannot load (engine limits)", r.Arr("limits"), x => (string.IsNullOrEmpty(x.Str("name")) ? x.Str("key") : x.Str("name")) + " " + x.Str("path") + ": " + x.Str("problem"), true);
             section("Keys in edited objects that point to nothing", r.Arr("dangling"), x => x.Str("name") + " " + x.Str("path") + " -> " + x.Str("target"), false);
-            d.Add(Ui.H3("Loader sizing (H7 / H8)"),
-                  Ui.Wrap("Runs the editor's model of FIFA17.exe's loader over every object (a few seconds with the cache).", Ui.Muted, 11));
+            d.Add(Ui.H3("Loading memory"),
+                  Ui.Wrap("Checks that the edited file still fits in the memory the game sets aside for loading it (takes a few seconds).", Ui.Muted, 11));
             StackPanel rt = new StackPanel();
             Button measure = null;
             measure = Ui.B("Measure", () =>
             {
                 JObject x;
-                try { x = Busy("measuring the loader", p => M.Runtime((a, b) => p("objects " + a + " / " + b, b > 0 ? (double)a / b : 0))); }
+                try { x = Busy("measuring loading memory", p => M.Runtime((a, b) => p("objects " + a + " / " + b, b > 0 ? (double)a / b : 0))); }
                 catch (Exception e) when (IsUserError(e)) { rt.Children.Add(Ui.Wrap(e.Message, Ui.Bad)); return; }
                 measure.Visibility = Visibility.Collapsed;
                 Func<string, string> n = k => Ui.Thousands(x.Long(k));
-                rt.Children.Add(Ui.Wrap("key-waiter peak " + n("waiter_peak") + " (as opened " + n("waiter_peak_original") + ") · H7 in the file " + n("h7") + " · written on save " + n("h7_save")));
-                rt.Children.Add(Ui.Wrap("linear allocator " + n("linear_bytes") + " bytes while loading (as opened " + n("linear_bytes_original") + ") + " + n("post_load_bytes") +
-                                        " in the post-load step · H8 in the file " + n("h8") + " · written on save " + n("h8_save") + " · loader capacity " + n("capacity")));
-                if (x.Long("linear_bytes") + x.Long("post_load_bytes") > x.Long("capacity")) rt.Children.Add(Ui.Wrap("over the loader's capacity: objects would fail to load", Ui.Bad));
+                rt.Children.Add(Ui.Wrap("open references while loading: " + n("waiter_peak") + " (before your edits " + n("waiter_peak_original") + ") · limit stored in the file " + n("h7") + " · limit written on save " + n("h7_save")));
+                rt.Children.Add(Ui.Wrap("memory used while loading: " + n("linear_bytes") + " bytes (before your edits " + n("linear_bytes_original") + ") + " + n("post_load_bytes") +
+                                        " after loading · size stored in the file " + n("h8") + " · size written on save " + n("h8_save") + " · most the game allows " + n("capacity")));
+                if (x.Long("linear_bytes") + x.Long("post_load_bytes") > x.Long("capacity")) rt.Children.Add(Ui.Wrap("more than the game allows: objects would fail to load", Ui.Bad));
                 List<object> um = x.Arr("unmodelled");
-                if (um.Count > 0) rt.Children.Add(Ui.Wrap("classes without an allocation model: " + string.Join(", ", um), Ui.Bad));
+                if (um.Count > 0) rt.Children.Add(Ui.Wrap("types the check cannot measure yet: " + string.Join(", ", um), Ui.Bad));
             });
             measure.HorizontalAlignment = HorizontalAlignment.Left;
             rt.Children.Add(measure);

@@ -1,4 +1,4 @@
-using Frosty.Controls;
+﻿using Frosty.Controls;
 using Frosty.Core;
 using Frosty.Core.Windows;
 using FrostySdk;
@@ -750,7 +750,7 @@ namespace DuplicationPlugin
             return result;
         }
 
-        private class SectionData
+        internal class SectionData
         {
             public int VertexCount;
             public float[] Positions;
@@ -760,7 +760,7 @@ namespace DuplicationPlugin
             public uint[] Indices;
         }
 
-        private static SectionData DecodeSection(MeshSetLod lod, MeshSetSection section, byte[] chunk)
+        internal static SectionData DecodeSection(MeshSetLod lod, MeshSetSection section, byte[] chunk)
         {
             int nv = (int)section.VertexCount;
             SectionData sd = new SectionData { VertexCount = nv, Positions = new float[nv * 3] };
@@ -830,7 +830,7 @@ namespace DuplicationPlugin
             return sd;
         }
 
-        private static float[] Decode(VertexElementFormat fmt, byte[] b, long off)
+        internal static float[] Decode(VertexElementFormat fmt, byte[] b, long off)
         {
             int o = (int)off;
             switch (fmt)

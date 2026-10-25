@@ -18,7 +18,12 @@ namespace FrostyAnimationEditor.Core
         public bool Dirty;
         public event Action Changed;
 
-        public Session(AntDb db) { Db = db; }
+        public Session(AntDb db) { Db = db; db.TrackTouches = true; }
+
+        private void TouchKeys(IEnumerable<ulong> keys)
+        {
+            foreach (ulong k in keys) Db.Touch(Db.BlockOf(k));
+        }
 
         public sealed class Entry
         {
@@ -52,6 +57,7 @@ namespace FrostyAnimationEditor.Core
             {
                 this.s = s;
                 e = new Entry { Label = label, Keys = new HashSet<ulong>(keys) };
+                s.TouchKeys(e.Keys);
                 e.Before = s.Snap(e.Keys);
                 new0 = new HashSet<int>(s.Db.NewObjs.Keys);
                 removed0 = new HashSet<int>(s.Db.Removed);
@@ -61,6 +67,7 @@ namespace FrostyAnimationEditor.Core
             /// <summary>add keys to snapshot (before the change touches them)</summary>
             public void Track(ulong key)
             {
+                s.Db.Touch(s.Db.BlockOf(key));
                 if (e.Keys.Add(key))
                     foreach (KeyValuePair<ulong, Tuple<int, GdObj>> kv in s.Snap(new[] { key })) e.Before[kv.Key] = kv.Value;
             }
@@ -70,6 +77,7 @@ namespace FrostyAnimationEditor.Core
             public void Dispose()
             {
                 AntDb db = s.Db;
+                s.TouchKeys(e.Keys);
                 if (!completed)
                 {
                     s.Restore(e.Before);
@@ -113,6 +121,7 @@ namespace FrostyAnimationEditor.Core
             foreach (KeyValuePair<ulong, Tuple<int, GdObj>> kv in snap)
             {
                 int i = kv.Value.Item1;
+                Db.Touch(i);
                 GdObj c = DeepCopy.Obj(kv.Value.Item2);
                 if (i >= Db.N0) Db.NewObjs[i] = c;
                 else Db.Cache[i] = c;

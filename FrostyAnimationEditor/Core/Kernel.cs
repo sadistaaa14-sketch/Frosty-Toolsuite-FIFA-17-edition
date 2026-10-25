@@ -134,12 +134,11 @@ namespace FrostyAnimationEditor.Core
     }
 
     /// <summary>
-    /// ExpressionKernel blobs: the bytecode of FIFA 17's expression VM, as FIFA17.exe reads and runs it.
-    ///   load FUN_146b72e40 / FUN_146b72490, link FUN_146b81060 + FUN_146b816f0 (fills call slots from the kernel
-    ///   registry; an unregistered hash makes the linker read address 0), state FUN_146b81560 / FUN_146b81110,
-    ///   DofMapping FUN_146b75e30, run FUN_146b81fa0 -> FUN_146b819a0 -> FUN_146b81e00 -> FUN_146b82370.
-    /// Blob (little-endian): +0x00 u64 0; +0x08 u32 kernel id; +0x0c 4xu32 0xFFFFFFFF (UNIDENTIFIED); +0x1c code
-    /// words; +0x20 constant relocations; +0x24 state relocations; +0x28 state size; +0x2c 0xFFFFFFFF (UNIDENTIFIED);
+    /// ExpressionKernel blobs: the bytecode of FIFA 17's expression VM, as the game reads and runs it.
+    ///   The game loads it, fills its call slots from the native table (an unknown hash crashes the game),
+    ///   sets up its state and DofMapping, then runs it.
+    /// Blob (little-endian): +0x00 u64 0; +0x08 u32 kernel id; +0x0c 4xu32 0xFFFFFFFF (not known); +0x1c code
+    /// words; +0x20 constant relocations; +0x24 state relocations; +0x28 state size; +0x2c 0xFFFFFFFF (not known);
     /// +0x30 constants size; +0x34 temporaries; +0x38/3c/40 max inputs/outputs/state operands; +0x44 event channels;
     /// +0x48 event nodes; +0x4c call-stack entries; +0x50 constants; code at align4; relocations; state at align16.
     /// Operand = segment &lt;&lt; 24 | offset (0 constants, 1 state registers, 2 temporaries), 0xFFFFFFFF = none.
@@ -191,7 +190,6 @@ namespace FrostyAnimationEditor.Core
         // ------------------------------------------------------------------ natives
         private static Dictionary<uint, Native> natives;
         private static Dictionary<string, List<uint>> byName;
-        public static JObject Registry;
 
         public static Dictionary<uint, Native> Natives
         {
@@ -212,7 +210,6 @@ namespace FrostyAnimationEditor.Core
                         };
                         r[n.Hash] = n;
                     }
-                    Registry = d.Obj("registry");
                     natives = r;
                 }
                 return natives;
@@ -285,7 +282,7 @@ namespace FrostyAnimationEditor.Core
         public List<byte> StatePrefix = new List<byte>(new byte[0x20]);
         public List<byte> Regs = new List<byte>();
 
-        /// <summary>the linker's walk (FUN_146b816f0)</summary>
+        /// <summary>the linker's walk</summary>
         public static List<Ins> DecodeCode(byte[] code)
         {
             int n = code.Length;
@@ -355,7 +352,7 @@ namespace FrostyAnimationEditor.Core
             return outp;
         }
 
-        /// <summary>offset of the state registers in the ExpressionState (FUN_146b819a0, FUN_146b81ce0)</summary>
+        /// <summary>offset of the state registers in the ExpressionState</summary>
         public static long Seg1Base(uint channels, uint nodes, uint callstack)
         {
             return (0x20L * channels + 0x28L * nodes + 4L * callstack + 0x2F) & ~0xFL;
@@ -589,7 +586,7 @@ namespace FrostyAnimationEditor.Core
             {
                 string where = "code+0x" + i.Off.ToString("x");
                 if (IsCall(i.Op) && !nat.ContainsKey(i.Hash))
-                    r.Add(Tuple.Create("error", where + ": native " + i.Hash.ToString("x8") + " is not registered (the game's linker reads address 0)"));
+                    r.Add(Tuple.Create("error", where + ": native " + i.Hash.ToString("x8") + " does not exist in the game (the game crashes)"));
                 foreach (Ins.Operand o in i.Operands())
                 {
                     if (o.X == NONE)
@@ -649,8 +646,8 @@ namespace FrostyAnimationEditor.Core
             }
             foreach (Ins i in k.Code)
                 if (i.Op == OP_EMIT && subbed.Contains(i.Chan))
-                    r.Add(Tuple.Create("warning", "code+0x" + i.Off.ToString("x") + ": emit on channel 0x" + i.Chan.ToString("x") + ", which nodes subscribe to: FIFA 17 runs kernels " +
-                                                  "without an event context and crashes if a node is subscribed when this runs"));
+                    r.Add(Tuple.Create("warning", "code+0x" + i.Off.ToString("x") + ": emit on channel 0x" + i.Chan.ToString("x") + ", which nodes subscribe to: the game runs kernels " +
+                                                  "without events and crashes if a node is subscribed when this runs"));
             if (need != null)
             {
                 Tuple<string, string, long, long?>[] fs =
@@ -792,7 +789,7 @@ namespace FrostyAnimationEditor.Core
             return l != null ? l.Cast<object>().Select(x => (byte)Num.ToLong(x)).ToArray() : new byte[0];
         }
 
-        /// <summary>disassembly of an ExpressionAsset's kernel (or its *DBL copy) with its bindings</summary>
+        /// <summary>readable text of an ExpressionAsset's kernel (or its *DBL copy) with its bindings</summary>
         public static string ExportText(AntDb db, GdObj o, bool dbl = false)
         {
             string sfx = dbl ? "DBL" : "";
@@ -856,7 +853,7 @@ namespace FrostyAnimationEditor.Core
     }
 
     /// <summary>
-    /// the ExpressionAsset fields that tie registers to the outside (FUN_146b72490, FUN_146b75e30, FUN_146b74250):
+    /// the ExpressionAsset fields that tie registers to the outside:
     /// pose / master_pose / delta_ticks / table registers, game-state value objects and DOF mappings
     /// </summary>
     public sealed class KernelBindings
@@ -936,7 +933,7 @@ namespace FrostyAnimationEditor.Core
             return r;
         }
 
-        /// <summary>operand -> name, for the disassembly</summary>
+        /// <summary>operand -> name, for the readable text</summary>
         public Dictionary<uint, string> Symbols()
         {
             Dictionary<uint, string> r = new Dictionary<uint, string>();

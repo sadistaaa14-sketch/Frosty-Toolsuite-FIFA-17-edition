@@ -10,9 +10,12 @@ namespace FrostyAnimationEditor.Core.Anim
         public VbrError MaxError;
         public int DataBytes;
         public int DataFloats;
+        public int Keys, Frames;          // VBR: keys stored / frames (they differ after key reduction)
         public override string ToString()
         {
-            return MaxError != null ? "VBR, " + DataBytes + " bytes, max error " + MaxError : "RAW, " + DataFloats + " floats";
+            if (MaxError == null) return "RAW, " + DataFloats + " floats";
+            string keys = Frames > 0 && Keys != Frames ? ", " + Keys + " keys for " + Frames + " frames" : "";
+            return "VBR, " + DataBytes + " bytes" + keys + ", max error " + MaxError + (keys.Length > 0 ? " (over every frame)" : "");
         }
     }
 
@@ -48,13 +51,14 @@ namespace FrostyAnimationEditor.Core.Anim
             return new ClipData(frames, clip.Kinds, vals.Select(ClipData.ToDouble).ToList(), clip.Loops, clip.EndFrame);
         }
 
-        private static GdObj AnimationBase(AntDb db, string codec, long endFrame, ulong c2dKey, ulong layoutKey, bool additive, long? animId, float trimOffset = 0f)
+        private static GdObj AnimationBase(AntDb db, string codec, long endFrame, ulong c2dKey, ulong layoutKey, bool additive, long? animId, float trimOffset = 0f,
+                                           float? trimmedDuration = null)
         {
             GdObj b = db.NewObject("AnimationAsset");
             b["CodecType"] = (long)AnimClip.CodecTags[codec];
             b["AnimId"] = animId.HasValue ? animId.Value : (long)Bits(32);
             b["TrimOffset"] = trimOffset;
-            b["TrimmedDuration"] = (float)endFrame;
+            b["TrimmedDuration"] = trimmedDuration ?? (float)endFrame;
             b["EndFrame"] = endFrame;
             b["ChannelToDofAsset"] = c2dKey;
             b["DofSetList"] = layoutKey;
@@ -66,8 +70,11 @@ namespace FrostyAnimationEditor.Core.Anim
         }
 
         /// <summary>-> a VbrAnimationAsset / RawAnimationAsset object and a report</summary>
+        /// <param name="reduceKeys">VBR only: &gt; 0 drops the keys interpolation reproduces within this tolerance
+        /// (Encode.ReduceKeys); 0 stores every key</param>
         public static GdObj BuildCodecObject(AntDb db, ClipData cd, string codec, string name, ulong c2dKey, ulong layoutKey, bool additive,
-                                             long? animId, double tolerance, long flagsExtra, bool check, out EncodeReport report)
+                                             long? animId, double tolerance, long flagsExtra, bool check, out EncodeReport report, double reduceKeys = 0,
+                                             float trimOffset = 0f, float? trimmedDuration = null)
         {
             string cls;
             if (!ClassForCodec.TryGetValue(codec, out cls)) throw new ArgumentException("can only encode VBR or RAW (got '" + codec + "')");
@@ -76,9 +83,13 @@ namespace FrostyAnimationEditor.Core.Anim
             Dictionary<string, object> f;
             if (codec == "VBR ")
             {
+                ClipData full = cd;
+                if (reduceKeys > 0) cd = Encode.ReduceKeys(cd, reduceKeys);
                 f = Encode.EncodeVbr(cd, tolerance, flagsExtra);
-                if (check) report.MaxError = Encode.VerifyVbr(f, cd);
+                if (check) report.MaxError = cd.NKeys != full.NKeys ? Encode.VerifyVbrFrames(f, full) : Encode.VerifyVbr(f, cd);
                 report.DataBytes = ((byte[])f["Data"]).Length;
+                report.Keys = cd.NKeys;
+                report.Frames = full.NKeys;
             }
             else
             {
@@ -88,13 +99,14 @@ namespace FrostyAnimationEditor.Core.Anim
             Coerce.Apply(o, f);
             o["__name"] = name;
             o["__key"] = 0UL;
-            o["__base"] = AnimationBase(db, codec, cd.EndFrame, c2dKey, layoutKey, additive, animId);
+            o["__base"] = AnimationBase(db, codec, cd.EndFrame, c2dKey, layoutKey, additive, animId, trimOffset, trimmedDuration);
             return o;
         }
 
         /// <summary>Replace the animation data of an existing clip (any codec) in place: same __key, __name,
         /// ChannelToDof/DofSetList/AnimId; the clip may change codec class.</summary>
-        public static EncodeReport Replace(AntDb db, ulong key, ClipData cd, string codec = "VBR ", double tolerance = Encode.TolDefault, bool keepFlags = true)
+        public static EncodeReport Replace(AntDb db, ulong key, ClipData cd, string codec = "VBR ", double tolerance = Encode.TolDefault, bool keepFlags = true,
+                                           double reduceKeys = 0)
         {
             int i = db.BlockOf(key);
             if (i < 0) throw new KeyNotFoundException(BE.KeyHex(key));
@@ -103,16 +115,36 @@ namespace FrostyAnimationEditor.Core.Anim
             long extra = 0x100;
             if (keepFlags && old.Type.Name == "VbrAnimationAsset") extra = old.GetInt("Flags") & ~0xFL;
             EncodeReport rep;
+            // keep the clip's playback window: the controller samples frame = ticks x TimeScale + TrimOffset and lasts
+            // TrimmedDuration frames, and sequences address the clip by those ticks
+            float trim, dur;
+            KeptTrim(bs, cd.EndFrame, out trim, out dur);
             GdObj nw = BuildCodecObject(db, cd, codec, old.Name, bs.GetKey("ChannelToDofAsset"), bs.GetKey("DofSetList"),
-                                        bs.GetBool("Additive"), bs.GetInt("AnimId"), tolerance, extra, true, out rep);
+                                        bs.GetBool("Additive"), bs.GetInt("AnimId"), tolerance, extra, true, out rep, reduceKeys, trim, dur);
             nw["__key"] = key;
             ReplaceRoot(db, i, nw);
             return rep;
         }
 
+        /// <summary>
+        /// The trim a replaced clip keeps: the old TrimOffset, and the old hold after the last frame
+        /// (TrimmedDuration - (EndFrame - TrimOffset)) on top of the new EndFrame. A clip of the same length keeps both
+        /// values exactly.
+        /// </summary>
+        public static void KeptTrim(GdObj oldBase, long newEndFrame, out float trimOffset, out float trimmedDuration)
+        {
+            trimOffset = oldBase != null ? oldBase.GetFloat("TrimOffset") : 0f;
+            float oldDur = oldBase != null ? oldBase.GetFloat("TrimmedDuration") : 0f;
+            long oldEnd = oldBase != null ? oldBase.GetInt("EndFrame") : newEndFrame;
+            float hold = oldDur - (oldEnd - trimOffset);          // frames held after the last one (negative: cut)
+            trimmedDuration = (newEndFrame - trimOffset) + hold;
+            if (oldBase != null && oldEnd == newEndFrame) trimmedDuration = oldDur;
+            if (trimmedDuration < 1) trimmedDuration = Math.Max(1f, newEndFrame - trimOffset);
+        }
+
         /// <summary>Add a brand-new animation clip (root object); channel map / dof set from a template clip or given.</summary>
         public static ulong Add(AntDb db, ClipData cd, ulong templateKey, string name, ulong c2dKey, ulong layoutKey, string codec, double tolerance,
-                                bool? additive, out EncodeReport rep)
+                                bool? additive, out EncodeReport rep, double reduceKeys = 0)
         {
             GdObj tpl = templateKey != 0 ? db.Get(templateKey) : null;
             if (tpl != null)
@@ -128,7 +160,7 @@ namespace FrostyAnimationEditor.Core.Anim
                 name = Bits(64).ToString("x16") + ".chan";
             }
             long extra = tpl != null && tpl.Type.Name == "VbrAnimationAsset" ? tpl.GetInt("Flags") & ~0xFL : 0x100;
-            GdObj o = BuildCodecObject(db, cd, codec, name, c2dKey, layoutKey, additive ?? false, null, tolerance, extra, true, out rep);
+            GdObj o = BuildCodecObject(db, cd, codec, name, c2dKey, layoutKey, additive ?? false, null, tolerance, extra, true, out rep, reduceKeys);
             db.Add(o, templateKey != 0 ? (ulong?)templateKey : null);
             return o.Key;
         }

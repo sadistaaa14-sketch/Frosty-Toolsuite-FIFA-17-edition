@@ -360,8 +360,13 @@ namespace FrostyAnimationEditor.Core.Anim
                     double[] e;
                     if (track.TryGetValue(nm + ".q", out qv))
                     {
+                        // the decoder's key values are not unit length (quantised); the rotation they stand for is
+                        // the normalised one (the runtime nlerps and normalises). Euler angles of the unnormalised
+                        // matrix were off by up to 1.47 degrees (Drogba celebration BVH round trip; 0.08 now)
                         float[] q = qv[fi];
-                        e = MatToEulerZxy(QuatToMatF(q[0], q[1], q[2], q[3]));
+                        double qn = Math.Sqrt((double)q[0] * q[0] + (double)q[1] * q[1] + (double)q[2] * q[2] + (double)q[3] * q[3]);
+                        if (qn == 0) qn = 1;
+                        e = MatToEulerZxy(QuatToMat(q[0] / qn, q[1] / qn, q[2] / qn, q[3] / qn));
                     }
                     else
                     {
