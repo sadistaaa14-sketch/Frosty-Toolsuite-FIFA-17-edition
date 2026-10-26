@@ -29,7 +29,14 @@ namespace DuplicationPlugin
         /// <summary>package slot (standslower, ...) -> mesh asset name; slots not listed are skipped.</summary>
         public Dictionary<string, string> SlotTargets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public bool ImportTextures = true;
+        /// <summary>Meshes without baked lighting from the package (or with BakedLighting off) get EnlightenType_Dynamic.</summary>
         public bool DynamicLighting = true;
+        /// <summary>
+        /// Use the package's baked lighting (lighting/*.fblight: lightmap UVs, an Enlighten system per mesh, sky
+        /// visibility, night lightmap): written into the stadium's Lighting database and textures, the meshes stay
+        /// EnlightenType_Static (StadiumBakedLighting.cs).
+        /// </summary>
+        public bool BakedLighting = true;
         /// <summary>
         /// When the mesh would need a 32-bit index buffer because its dedicated depth/shadow section holds a copy of
         /// every vertex, drop that section and let the named sections render the depth and shadow passes.
@@ -337,6 +344,12 @@ namespace DuplicationPlugin
             // slots the stadium has no mesh for (weather / night layers) get a new component mesh first
             CreateNewSlotMeshes(slots);
 
+            // baked lighting: the package's lightmaps are read before the meshes are imported (those meshes keep their
+            // lightmap UVs); the atlas rectangles are chosen after the FIFA components are cleared (WriteBakedLighting)
+            task.Update("Baked lighting");
+            try { PlanBakedLighting(slots); }
+            catch (Exception ex) { Log("  WARNING: baked lighting not planned ({0}); the meshes keep dynamic lighting", ex.Message); bakedPlan.Clear(); lightingDb = null; }
+
             int done = 0;
             foreach (PesStadiumPackage.SlotInfo slot in slots)
             {
@@ -370,12 +383,33 @@ namespace DuplicationPlugin
                 catch (Exception ex) { Log("  WARNING: bench areas: {0}", ex.Message); }
             }
 
+            // baked lighting last: the chart records of the FIFA components emptied above hold no space any more
+            if (bakedPlan.Count > 0)
+            {
+                task.Update("Baked lighting");
+                try { WriteBakedLighting(); }
+                catch (Exception ex)
+                {
+                    Log("  WARNING: baked lighting not written: {0}", ex);
+                    BakedLightingFallBack();
+                    report.Add(bakedCommitted
+                        ? "Baked lighting failed after the lighting database was written (see the log); re-import with baked lighting off if the stadium looks wrong."
+                        : "Baked lighting failed (see the log); the meshes planned for it " + (settings.DynamicLighting ? "got dynamic lighting." : "kept their EnlightenType."));
+                }
+            }
+
+            // the group members of the stadium's levels: member type and part count as FIFA17.exe reads them
+            task.Update("Checking the group members");
+            try { CheckGroupMembers(); }
+            catch (Exception ex) { Log("  WARNING: group member check failed: {0}", ex); }
+
             report.Insert(0, string.Format("{0} mesh(es) imported from {1} ({2}).", meshesImported, pkg.StadiumName, pkg.StadiumId));
             if (settings.ImportTextures)
                 report.Add(string.Format("{0} texture(s) imported into {1}{2}.", importedTextures.Count, settings.TextureFolder,
                     textureFailures.Count > 0 ? ", " + textureFailures.Count + " failed (see the log)" : ""));
-            report.Add("Save the project and apply the mod with the Mod Manager; the imported meshes use dynamic lighting" +
-                       (settings.DynamicLighting ? "." : " only where no lightmap UVs exist."));
+            report.Add("Save the project and apply the mod with the Mod Manager; " + (bakedWritten.Count > 0
+                ? string.Format("{0} mesh(es) use the package's baked lighting, the others {1}.", bakedWritten.Count, settings.DynamicLighting ? "dynamic lighting" : "dynamic lighting where they have no lightmap UVs")
+                : "the imported meshes use dynamic lighting" + (settings.DynamicLighting ? "." : " only where no lightmap UVs exist.")));
             task.Update("Done", 100.0);
         }
 
@@ -534,7 +568,7 @@ namespace DuplicationPlugin
                 largestSection = Math.Max(largestSection, gs.VertexCount);
             GeometryImportOptions importOptions = new GeometryImportOptions
             {
-                ForceDynamicLighting = settings.DynamicLighting,
+                ForceDynamicLighting = SlotGetsBakedLighting(slot.Name) ? false : settings.DynamicLighting,
                 // Never a dedicated depth/shadow copy: that unnamed section has no texture coordinates, so the
                 // depth pre-pass and the shadow pass draw its triangles solid. PES seat rows, fences, nets and
                 // lamp frames are alpha-tested sheets; drawn solid in the pre-pass they hide the stand structure
@@ -993,8 +1027,13 @@ namespace DuplicationPlugin
                 gs.Normals = fs.Normals;
             string uv0Name = fs.UvSetOrder.Count > 0 ? fs.UvSetOrder[0] : null;
             gs.TexCoord0 = uv0Name != null ? fs.UvSets[uv0Name] : new float[n * 2];
+            // the second set is TexCoord1 unless it is the lightmap set (packages with baked lighting write TexCoord0, [TexCoord1], Lightmap)
             if (fs.UvSetOrder.Count > 1)
-                gs.TexCoord1 = fs.UvSets[fs.UvSetOrder[1]];
+            {
+                string k1 = fs.UvSetOrder[1].ToLower();
+                if (k1 != "lightmap" && k1 != "radiositytexcoord")
+                    gs.TexCoord1 = fs.UvSets[fs.UvSetOrder[1]];
+            }
             foreach (KeyValuePair<string, float[]> kv in fs.UvSets)
             {
                 string k = kv.Key.ToLower();

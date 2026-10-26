@@ -127,9 +127,26 @@ namespace DuplicationPlugin
             data.Clear();
             int transferred = 0, inBoxes = 0;
             List<Box3> boxes = CarveBoxes();
+            List<CrowdPointRecord> kept = new List<CrowdPointRecord>(points.Count);
             foreach (CrowdPointRecord pt in points)
             {
                 if (boxes.Count > 0 && InAnyBox(boxes, pt.X, pt.Y, pt.Z, 0.3f)) { inBoxes++; continue; }
+                kept.Add(pt);
+            }
+            // the crowd system's agent limit (see CrowdAgentLimit): a cloud with more points overflows the game's crowd
+            // buffers (Camp Nou: 78,173 points -> crash in the crowd code, 2026-10-25)
+            int limit = CrowdAgentLimit();
+            int thinned = 0;
+            if (kept.Count > limit)
+            {
+                thinned = kept.Count - limit;
+                kept = ThinEvenly(kept, limit);
+                Log("  crowd: {0} spectators are more than the crowd system holds ({1}, SwarmEntityData.MaxAgentCount of {2}): {3} left out, spread evenly over the stands (empty seats)",
+                    kept.Count + thinned, limit, CrowdSwarmAsset, thinned);
+                report.Add(string.Format("Crowd: {0} of the package's {1} spectators written - FIFA 17's crowd system holds at most {0} (more crash the game).", limit, kept.Count + thinned));
+            }
+            foreach (CrowdPointRecord pt in kept)
+            {
                 dynamic np = TypeLibrary.CreateObject("CrowdPlacementPointCloudData");
                 // the EBX Vec3 is a runtime-generated type: never `new Vec3` (that is MeshSetPlugin's own struct)
                 dynamic pos = TypeLibrary.CreateObject("Vec3");
@@ -153,9 +170,67 @@ namespace DuplicationPlugin
                 data.Add(np);
             }
             App.AssetManager.ModifyEbx(cloudEntry.Name, asset);
-            Log("  crowd: {0} points written, attributes of the base cloud transferred to {1} of them{2}", points.Count - inBoxes, transferred,
-                inBoxes > 0 ? ", " + inBoxes + " left out inside the FIFA bench / tunnel boxes" : "");
-            return points.Count - inBoxes;
+            Log("  crowd: {0} points written, attributes of the base cloud transferred to {1} of them{2}{3}", kept.Count, transferred,
+                inBoxes > 0 ? ", " + inBoxes + " left out inside the FIFA bench / tunnel boxes" : "",
+                thinned > 0 ? ", " + thinned + " left out for the crowd system's limit" : "");
+            return kept.Count;
+        }
+
+        /// <summary>The Swarm system of the stadium crowd (CrowdSystem_PF places it).</summary>
+        private const string CrowdSwarmAsset = "content/common/components/crowd/crowd_default_swarmsys";
+
+        /// <summary>
+        /// The most spectators the stadium crowd can have: SwarmEntityData.MaxAgentCount of the crowd's Swarm system
+        /// (65,000 in FIFA 17), at most 65,000. FIFA17.exe (FUN_1476994f0) creates at most MaxAgentCount agents (field
+        /// offset 0x94 in the exe's SwarmEntityData type info) and sets the agent count of the position data store to
+        /// that number without resizing it; FUN_147688700 (via FUN_14768c850) still writes every point of a cloud from
+        /// the cloud's first agent on. FIFA's own clouds stay far below (Old Trafford 45,336, Bernabeu 44,039).
+        /// </summary>
+        private int CrowdAgentLimit()
+        {
+            const int fifaLimit = 65000;
+            try
+            {
+                EbxAssetEntry e = App.AssetManager.GetEbxEntry(CrowdSwarmAsset);
+                EbxAsset a = e != null ? App.AssetManager.GetEbx(e) : null;
+                if (a != null)
+                {
+                    foreach (object o in a.Objects)
+                    {
+                        if (o == null || o.GetType().Name != "SwarmEntityData")
+                            continue;
+                        uint v = (uint)((dynamic)o).MaxAgentCount;
+                        if (v > 0)
+                            return (int)Math.Min(v, (uint)fifaLimit);
+                    }
+                }
+            }
+            catch (Exception ex) { Log("  crowd: {0} not readable ({1}); limit {2}", CrowdSwarmAsset, ex.Message, fifaLimit); }
+            return fifaLimit;
+        }
+
+        /// <summary>
+        /// <paramref name="keep"/> of the points, in their order: the ones whose index has the lowest hash, so the
+        /// left-out ones are spread over every stand like empty seats (deterministic).
+        /// </summary>
+        private static List<CrowdPointRecord> ThinEvenly(List<CrowdPointRecord> points, int keep)
+        {
+            if (keep >= points.Count)
+                return points;
+            int[] order = Enumerable.Range(0, points.Count).OrderBy(i => MixIndex((uint)i)).Take(keep).OrderBy(i => i).ToArray();
+            List<CrowdPointRecord> result = new List<CrowdPointRecord>(keep);
+            foreach (int i in order)
+                result.Add(points[i]);
+            return result;
+        }
+
+        private static uint MixIndex(uint x)
+        {
+            // 32-bit integer hash (lowbias32)
+            x ^= x >> 16; x *= 0x7feb352d;
+            x ^= x >> 15; x *= 0x846ca68b;
+            x ^= x >> 16;
+            return x;
         }
 
         /// <summary>The base stadium's spectator positions (x, y, z) as they were before the package crowd replaced them.</summary>

@@ -249,6 +249,7 @@ namespace DuplicationPlugin.Windows
                 StadiumNameOnly = componentFolder ?? CurrentStadiumNameOnly,
                 ImportTextures = importTexturesCheckBox.IsChecked == true,
                 DynamicLighting = dynamicLightingCheckBox.IsChecked == true,
+                BakedLighting = bakedLightingCheckBox.IsChecked == true,
                 TextureFolder = textureFolderTextBox.Text.Trim().Replace('\\', '/').Trim('/'),
                 OpaquePreset = opaquePresetTextBox.Text.Trim(),
                 AlphaTestPreset = alphaPresetTextBox.Text.Trim(),

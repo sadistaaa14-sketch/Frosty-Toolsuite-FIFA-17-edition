@@ -92,9 +92,13 @@
                     <TextBox x:Name="textureFolderTextBox" Padding="4" FontFamily="Global User Interface" BorderThickness="1"
                              ToolTip="Asset folder of the imported textures"/>
                 </DockPanel>
-                <CheckBox x:Name="dynamicLightingCheckBox" IsChecked="True" Margin="0,4,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                <CheckBox x:Name="bakedLightingCheckBox" IsChecked="True" Margin="0,4,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
                           Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
-                          Content="Dynamic lighting (EnlightenType_Dynamic): the imported geometry has no baked lightmap"/>
+                          ToolTip="The package's lighting/*.fblight files (written by the converter): each mesh gets an Enlighten radiosity system in free space of the stadium's lighting atlas (Lighting/&lt;stadium&gt;), its lightmap rectangle, the sky visibility and the night lightmap; the mesh stays EnlightenType_Static. A previous import of the same package is replaced."
+                          Content="Baked lighting from the package (Enlighten system, sky visibility, night lightmap per mesh)"/>
+                <CheckBox x:Name="dynamicLightingCheckBox" IsChecked="True" Margin="0,2,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
+                          Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
+                          Content="Dynamic lighting (EnlightenType_Dynamic) for meshes without baked lighting"/>
                 <CheckBox x:Name="crowdCheckBox" IsChecked="True" Margin="0,4,0,0" Padding="4,0,0,0" FontFamily="Global User Interface"
                           Foreground="{StaticResource FontColor}" VerticalContentAlignment="Center"
                           Content="Crowd: rewrite the stadium's crowd point cloud with the package's spectator positions"/>

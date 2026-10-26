@@ -18,7 +18,8 @@ namespace DuplicationPlugin
     /// layers: rain, snow, night). A new mesh is a copy of one of the stadium's component meshes (mesh asset, mesh
     /// set, chunks) with its own ObjectBlueprint, placed by a new member of the StaticModelGroup of the sublevel
     /// that shows it (rain, snow) or of the main level, listed in that sublevel's mesh variation database and put
-    /// into the sublevel's bundles. The package geometry is then imported into it like into any other slot.
+    /// into the sublevel's bundles. The member's MemberType is the blueprint's StaticModelEntityData (with a guid of
+    /// its own), not the ObjectBlueprint. The package geometry is then imported into it like into any other slot.
     /// </summary>
     public partial class StadiumImporter
     {
@@ -110,18 +111,14 @@ namespace DuplicationPlugin
                 if (!target.StartsWith(NewTargetPrefix, StringComparison.OrdinalIgnoreCase))
                     continue;
                 string meshName = target.Substring(NewTargetPrefix.Length).Trim().Replace('\\', '/').ToLowerInvariant();
+                // a mesh left by an earlier import is completed rather than skipped: that import may have stopped after
+                // copying it (no blueprint, no group member, no database entry - the rain mesh of the allianz import)
                 EbxAssetEntry existing = App.AssetManager.GetEbxEntry(meshName);
-                if (existing != null)
-                {
-                    Log("--- {0}: {1} exists, re-used", slot.Name, meshName);
-                    settings.SlotTargets[slot.Name] = existing.Name;
-                    continue;
-                }
-                task.Update(string.Format("Creating {0}", meshName));
+                task.Update(string.Format(existing != null ? "Checking {0}" : "Creating {0}", meshName));
                 EbxAssetEntry created = null;
                 try
                 {
-                    created = CreateComponentMesh(slot, meshName);
+                    created = CreateComponentMesh(slot, meshName, existing);
                 }
                 catch (Exception ex)
                 {
@@ -136,13 +133,16 @@ namespace DuplicationPlugin
                 throw new InvalidOperationException("No slot is mapped to a mesh");
         }
 
-        /// <summary>Creates the component mesh, its blueprint, its group member and its variation database entry.</summary>
-        private EbxAssetEntry CreateComponentMesh(PesStadiumPackage.SlotInfo slot, string meshName)
+        /// <summary>
+        /// Creates the component mesh, its blueprint, its group member and its variation database entry. With
+        /// <paramref name="existing"/> (a mesh of an earlier import) only the missing parts are added.
+        /// </summary>
+        private EbxAssetEntry CreateComponentMesh(PesStadiumPackage.SlotInfo slot, string meshName, EbxAssetEntry existing)
         {
             string folder = settings.StadiumNameOnly.ToLower();
             string componentPrefix = "content/worlds/components/stadiums/" + folder + "/";
             string levelPrefix = "content/worlds/stadiums/" + settings.StadiumFolder.ToLower() + "/";
-            Log("--- {0}: new component mesh {1}", slot.Name, meshName);
+            Log(existing != null ? "--- {0}: {1} exists (earlier import): checking its blueprint, placement and database entry" : "--- {0}: new component mesh {1}", slot.Name, meshName);
 
             // the sublevel that shows the mesh (its group, bundles and variation database); the main level otherwise
             string sublevel = (slot.HostSublevel ?? "").Trim().ToLower();
@@ -203,10 +203,14 @@ namespace DuplicationPlugin
             Log("  copy of {0} (blueprint {1}), shown by {2}, {3} bundle(s)", templateMesh.Name, templateBlueprint.Name, sublevel == "" ? "the main level" : "the " + sublevel + " sublevel", bundles.Count);
 
             // the mesh (ebx + mesh set + chunks)
-            DuplicationTool.MeshExtension meshExt = new DuplicationTool.MeshExtension();
-            EbxAssetEntry meshEntry = meshExt.DuplicateAsset(templateMesh, meshName, false, null);
+            EbxAssetEntry meshEntry = existing;
             if (meshEntry == null)
-                throw new InvalidOperationException("duplication of " + templateMesh.Name + " failed");
+            {
+                DuplicationTool.MeshExtension meshExt = new DuplicationTool.MeshExtension();
+                meshEntry = meshExt.DuplicateAsset(templateMesh, meshName, false, null);
+                if (meshEntry == null)
+                    throw new InvalidOperationException("duplication of " + templateMesh.Name + " failed");
+            }
             EbxAsset meshAsset = App.AssetManager.GetEbx(meshEntry);
             if (bundles.Count > 0)
                 SetMeshBundles(meshEntry, bundles);
@@ -233,20 +237,35 @@ namespace DuplicationPlugin
             }
             if (meshRefs == 0)
                 throw new InvalidOperationException(templateBlueprint.Name + " has no StaticModelEntityData");
+            // the group member's MemberType is the blueprint's StaticModelEntityData, under a guid of its own
+            object bpEntity = BlueprintEntity(bpAsset);
+            Guid entityGuid = OwnEntityGuid(bpEntry, bpAsset, bpEntity, componentPrefix);
             bpAsset.AddDependency(meshEntry.Guid);
             App.AssetManager.ModifyEbx(bpEntry.Name, bpAsset);
             if (bundles.Count > 0)
                 SetBundles(bpEntry, bundles, true);
-            Log("  blueprint {0} -> {1}", bpEntry.Name, meshEntry.Name);
+            Log("  blueprint {0} -> {1} (StaticModelEntityData {2})", bpEntry.Name, meshEntry.Name, entityGuid);
 
-            // the group member that places it (identity transform)
-            AddGroupMember(levelEntry, templateMesh, templateBlueprint, meshEntry, meshAsset, bpEntry, bpAsset);
-            newMeshLevels[meshEntry.Guid] = levelEntry;
+            // the group member that places it (identity transform), unless a group of the stadium already does
+            EbxAssetEntry placedIn;
+            if (FindGroupMember(meshEntry.Guid, out placedIn) != null)
+            {
+                Log("  already placed by a group member in {0}", placedIn.Name);
+                newMeshLevels[meshEntry.Guid] = placedIn;
+                // a member written by b37/b38 points at the ObjectBlueprint: re-pointed at the entity
+                PointMembersAtEntity(meshEntry, bpEntry, entityGuid);
+            }
+            else
+            {
+                AddGroupMember(levelEntry, templateMesh, templateBlueprint, meshEntry, meshAsset, bpEntry, entityGuid);
+                newMeshLevels[meshEntry.Guid] = levelEntry;
+            }
 
-            // the variation database entry of the sublevel
+            // the variation database entry of the sublevel (kept when there is one)
             AddVariationDatabaseEntry(levelPrefix, sublevel, templateMesh, meshEntry, meshAsset);
 
-            report.Add(string.Format("New component mesh {0} created ({1}).", meshEntry.Name, sublevel == "" ? "always shown" : "shown by the " + sublevel + " sublevel"));
+            report.Add(string.Format(existing != null ? "Component mesh {0} of an earlier import completed and re-used ({1})." : "New component mesh {0} created ({1}).",
+                meshEntry.Name, sublevel == "" ? "always shown" : "shown by the " + sublevel + " sublevel"));
             return meshEntry;
         }
 
@@ -315,8 +334,13 @@ namespace DuplicationPlugin
         /// <summary>
         /// Adds a StaticModelGroupMemberData for the new mesh to the level's group: a copy of the member that places
         /// the template mesh (any group of the stadium), else of the group's first member; one identity instance.
+        /// Its MemberType is the blueprint's StaticModelEntityData (<paramref name="entityGuid"/>), as for all 18
+        /// resolvable members of FIFA's levels in three projects: FIFA17.exe reads the member type as that entity (its
+        /// part components at +0x60, one per PartComponentCount). b37/b38 pointed it at the ObjectBlueprint and the game
+        /// crashed at 0x1463c7448 reading the guid stored after the blueprint as the part array (Camp Nou into
+        /// allianz, 2026-10-25).
         /// </summary>
-        private void AddGroupMember(EbxAssetEntry levelEntry, EbxAssetEntry templateMesh, EbxAssetEntry templateBlueprint, EbxAssetEntry meshEntry, EbxAsset meshAsset, EbxAssetEntry bpEntry, EbxAsset bpAsset)
+        private void AddGroupMember(EbxAssetEntry levelEntry, EbxAssetEntry templateMesh, EbxAssetEntry templateBlueprint, EbxAssetEntry meshEntry, EbxAsset meshAsset, EbxAssetEntry bpEntry, Guid entityGuid)
         {
             EbxAsset levelAsset = App.AssetManager.GetEbx(levelEntry);
             if (levelAsset == null)
@@ -356,7 +380,7 @@ namespace DuplicationPlugin
             if (member == null)
                 throw new InvalidOperationException("StaticModelGroupMemberData could not be created");
 
-            member.MemberType = new PointerRef(new EbxImportReference { FileGuid = bpEntry.Guid, ClassGuid = bpAsset.RootInstanceGuid });
+            member.MemberType = new PointerRef(new EbxImportReference { FileGuid = bpEntry.Guid, ClassGuid = entityGuid });
             member.MeshAsset = new PointerRef(new EbxImportReference { FileGuid = meshEntry.Guid, ClassGuid = meshAsset.RootInstanceGuid });
             member.InstanceCount = (uint)1;
             dynamic transforms = member.InstanceTransforms;
@@ -396,9 +420,239 @@ namespace DuplicationPlugin
             catch (Exception) { return 1; }
         }
 
+        // ─── the member type: the blueprint's StaticModelEntityData ────────────
+
+        /// <summary>The StaticModelEntityData the blueprint's Object points at, else its first StaticModelEntityData.</summary>
+        private static object BlueprintEntity(EbxAsset bpAsset)
+        {
+            object entity = null;
+            try
+            {
+                PointerRef obj = ((dynamic)bpAsset.RootObject).Object;
+                if (obj.Type == PointerRefType.Internal)
+                    entity = obj.Internal;
+            }
+            catch (Exception) { }
+            if (entity == null || entity.GetType().Name != "StaticModelEntityData")
+                entity = bpAsset.Objects.FirstOrDefault(o => o != null && o.GetType().Name == "StaticModelEntityData");
+            return entity;
+        }
+
+        /// <summary>
+        /// The PartComponentData entries at the start of the entity's Components (the parts come first; components such
+        /// as RuntimeTextureOverrideComponentData follow them - pitch, scoreclock). FIFA's members have exactly this
+        /// many as their PartComponentCount; the only ones above it in three projects were roof 14/7 and standsupper
+        /// 43/30 of the 2026-10-24 test_499 import, the members of the crash at 0x1463c744f.
+        /// </summary>
+        private static int LeadingPartComponents(object entity)
+        {
+            dynamic components = ((dynamic)entity).Components;
+            int n = 0;
+            for (int i = 0; i < components.Count; i++)
+            {
+                PointerRef r = components[i];
+                object c = r.Type == PointerRefType.Internal ? r.Internal : null;
+                if (c == null || c.GetType().Name != "PartComponentData")
+                    break;
+                n++;
+            }
+            return n;
+        }
+
+        /// <summary>The exported object of the asset with this instance guid, null when there is none.</summary>
+        private static object ExportedObject(EbxAsset asset, Guid instanceGuid)
+        {
+            foreach (object obj in asset.Objects)
+            {
+                if (obj == null)
+                    continue;
+                AssetClassGuid g = ((dynamic)obj).GetInstanceGuid();
+                if (g.IsExported && g.ExportedGuid == instanceGuid)
+                    return obj;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The exported guid of the new blueprint's StaticModelEntityData. Frosty's duplication renews only the root
+        /// guid, so a copy still exports the template's entity guid (pes_night and pes_rain of the allianz import both
+        /// exported standslower's 2402b755-daac-a489-...); the copy gets a deterministic guid of its own, since the
+        /// template and the copy are loaded together. A guid no other blueprint of the folder exports is kept.
+        /// </summary>
+        private Guid OwnEntityGuid(EbxAssetEntry bpEntry, EbxAsset bpAsset, object entity, string folderPrefix)
+        {
+            AssetClassGuid current = ((dynamic)entity).GetInstanceGuid();
+            string sharedWith = current.IsExported ? BlueprintExportingEntity(current.ExportedGuid, bpEntry, folderPrefix) : null;
+            if (current.IsExported && sharedWith == null)
+                return current.ExportedGuid;
+            Guid fresh = FrostySdk.Utils.GenerateDeterministicGuid(bpAsset.Objects, entity.GetType(), bpEntry.Guid);
+            ((dynamic)entity).SetInstanceGuid(new AssetClassGuid(fresh, current.InternalId));
+            Log("  {0}: StaticModelEntityData guid {1} -> {2} ({3})", bpEntry.Name, current, fresh,
+                current.IsExported ? "the guid of " + sharedWith : "it was not exported");
+            return fresh;
+        }
+
+        /// <summary>The other ObjectBlueprint under the folder whose StaticModelEntityData exports this guid, null when none does.</summary>
+        private static string BlueprintExportingEntity(Guid guid, EbxAssetEntry self, string folderPrefix)
+        {
+            foreach (EbxAssetEntry bp in App.AssetManager.EnumerateEbx("ObjectBlueprint").ToList())
+            {
+                if (bp.Guid == self.Guid || !bp.Name.StartsWith(folderPrefix, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                EbxAsset asset;
+                try { asset = App.AssetManager.GetEbx(bp); } catch (Exception) { continue; }
+                if (asset == null)
+                    continue;
+                object obj = ExportedObject(asset, guid);
+                if (obj != null && obj.GetType().Name == "StaticModelEntityData")
+                    return bp.Name;
+            }
+            return null;
+        }
+
+        /// <summary>Every group member of the stadium's levels that places the mesh gets the blueprint's entity as its MemberType.</summary>
+        private void PointMembersAtEntity(EbxAssetEntry meshEntry, EbxAssetEntry bpEntry, Guid entityGuid)
+        {
+            string prefix = "content/worlds/stadiums/" + settings.StadiumFolder.ToLower() + "/";
+            foreach (EbxAssetEntry e in App.AssetManager.EnumerateEbx().ToList())
+            {
+                if (!e.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (e.Type != "SubWorldData" && e.Type != "DetachedSubWorldData" && e.Type != "WorldPartData" && e.Type != "LayerData")
+                    continue;
+                EbxAsset asset;
+                try { asset = App.AssetManager.GetEbx(e); } catch (Exception) { continue; }
+                if (asset == null)
+                    continue;
+                bool changed = false;
+                foreach (object obj in asset.Objects)
+                {
+                    if (obj == null || obj.GetType().Name != "StaticModelGroupEntityData")
+                        continue;
+                    dynamic members = ((dynamic)obj).MemberDatas;
+                    for (int i = 0; i < members.Count; i++)
+                    {
+                        dynamic member = members[i];
+                        PointerRef meshRef = member.MeshAsset;
+                        if (meshRef.Type != PointerRefType.External || meshRef.External.FileGuid != meshEntry.Guid)
+                            continue;
+                        PointerRef typeRef = member.MemberType;
+                        if (typeRef.Type == PointerRefType.External && typeRef.External.FileGuid == bpEntry.Guid && typeRef.External.ClassGuid == entityGuid)
+                            continue;
+                        member.MemberType = new PointerRef(new EbxImportReference { FileGuid = bpEntry.Guid, ClassGuid = entityGuid });
+                        members[i] = member;
+                        changed = true;
+                        Log("  {0}: member of {1}: MemberType {2} -> {3}/{4} (StaticModelEntityData)", e.Name, meshEntry.Filename,
+                            typeRef.Type == PointerRefType.External ? typeRef.External.FileGuid + "/" + typeRef.External.ClassGuid : typeRef.Type.ToString(), bpEntry.Guid, entityGuid);
+                    }
+                }
+                if (changed)
+                {
+                    asset.AddDependency(bpEntry.Guid);
+                    App.AssetManager.ModifyEbx(e.Name, asset);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Last check of every StaticModelGroupMemberData in the stadium's level assets for the two member errors that
+        /// crash FIFA17.exe in FUN_1463c7370 (it loops PartComponentCount entries of the part components at +0x60 of the
+        /// member type): a MemberType that is an ObjectBlueprint (re-pointed at the blueprint's StaticModelEntityData,
+        /// what every member of FIFA's levels points at) and a PartComponentCount above the entity's part components
+        /// (lowered to it). Both are written to the log; correct members are not touched.
+        /// </summary>
+        private void CheckGroupMembers()
+        {
+            string prefix = "content/worlds/stadiums/" + settings.StadiumFolder.ToLower() + "/";
+            int checkedMembers = 0, fixedTypes = 0, fixedCounts = 0, unread = 0;
+            Dictionary<Guid, EbxAsset> types = new Dictionary<Guid, EbxAsset>();
+            foreach (EbxAssetEntry levelEntry in App.AssetManager.EnumerateEbx().ToList())
+            {
+                if (!levelEntry.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (levelEntry.Type != "SubWorldData" && levelEntry.Type != "DetachedSubWorldData" && levelEntry.Type != "WorldPartData" && levelEntry.Type != "LayerData")
+                    continue;
+                EbxAsset levelAsset;
+                try { levelAsset = App.AssetManager.GetEbx(levelEntry); } catch (Exception) { continue; }
+                if (levelAsset == null)
+                    continue;
+                bool changed = false;
+                foreach (object obj in levelAsset.Objects)
+                {
+                    if (obj == null || obj.GetType().Name != "StaticModelGroupEntityData")
+                        continue;
+                    dynamic members = ((dynamic)obj).MemberDatas;
+                    for (int i = 0; i < members.Count; i++)
+                    {
+                        dynamic member = members[i];
+                        checkedMembers++;
+                        PointerRef typeRef = member.MemberType;
+                        if (typeRef.Type != PointerRefType.External)
+                            continue;
+                        EbxAssetEntry typeEntry = App.AssetManager.GetEbxEntry(typeRef.External.FileGuid);
+                        EbxAsset typeAsset = null;
+                        if (typeEntry != null && !types.TryGetValue(typeEntry.Guid, out typeAsset))
+                        {
+                            try { typeAsset = App.AssetManager.GetEbx(typeEntry); } catch (Exception) { typeAsset = null; }
+                            types[typeEntry.Guid] = typeAsset;
+                        }
+                        object target = typeAsset != null ? ExportedObject(typeAsset, typeRef.External.ClassGuid) : null;
+                        if (target == null)
+                        {
+                            unread++;
+                            Log("  WARNING: {0} member {1}: MemberType {2}/{3} not found", levelEntry.Name, i, typeRef.External.FileGuid, typeRef.External.ClassGuid);
+                            continue;
+                        }
+                        if (target.GetType().Name == "ObjectBlueprint")
+                        {
+                            object entity = BlueprintEntity(typeAsset);
+                            AssetClassGuid eg = entity != null ? (AssetClassGuid)((dynamic)entity).GetInstanceGuid() : new AssetClassGuid(-1);
+                            if (entity == null || !eg.IsExported)
+                            {
+                                unread++;
+                                Log("  WARNING: {0} member {1}: MemberType is the ObjectBlueprint {2}, whose StaticModelEntityData is not exported", levelEntry.Name, i, typeEntry.Name);
+                                continue;
+                            }
+                            member.MemberType = new PointerRef(new EbxImportReference { FileGuid = typeEntry.Guid, ClassGuid = eg.ExportedGuid });
+                            members[i] = member;
+                            changed = true;
+                            fixedTypes++;
+                            Log("  {0} member {1}: MemberType was the ObjectBlueprint {2}; now its StaticModelEntityData {3}", levelEntry.Name, i, typeEntry.Name, eg.ExportedGuid);
+                            target = entity;
+                        }
+                        if (target.GetType().Name != "StaticModelEntityData")
+                            continue;
+                        int parts = LeadingPartComponents(target);
+                        uint count = (uint)member.PartComponentCount;
+                        if (count > parts)
+                        {
+                            member.PartComponentCount = (uint)parts;
+                            members[i] = member;
+                            changed = true;
+                            fixedCounts++;
+                            Log("  {0} member {1} ({2}): PartComponentCount {3} -> {4} (the entity's part components)", levelEntry.Name, i, typeEntry.Name, count, parts);
+                        }
+                    }
+                }
+                if (changed)
+                    App.AssetManager.ModifyEbx(levelEntry.Name, levelAsset);
+            }
+            Log("--- group members: {0} checked in the stadium's levels; {1} member type(s) and {2} part count(s) corrected{3}", checkedMembers, fixedTypes, fixedCounts,
+                unread > 0 ? ", " + unread + " not readable (see the warnings)" : "");
+            if (fixedTypes + fixedCounts > 0)
+                report.Add(string.Format("Group members corrected: {0} member type(s), {1} part count(s) (see the log).", fixedTypes, fixedCounts));
+        }
+
         /// <summary>The StaticModelGroupMemberData that places the mesh in one of the stadium's level assets, null when none does.</summary>
         private object FindGroupMember(Guid meshGuid)
         {
+            EbxAssetEntry levelEntry;
+            return FindGroupMember(meshGuid, out levelEntry);
+        }
+
+        private object FindGroupMember(Guid meshGuid, out EbxAssetEntry levelEntry)
+        {
+            levelEntry = null;
             string prefix = "content/worlds/stadiums/" + settings.StadiumFolder.ToLower() + "/";
             foreach (EbxAssetEntry e in App.AssetManager.EnumerateEbx().ToList())
             {
@@ -421,14 +675,20 @@ namespace DuplicationPlugin
                         PointerRef meshRef;
                         try { meshRef = ((dynamic)m).MeshAsset; } catch (Exception) { continue; }
                         if (meshRef.Type == PointerRefType.External && meshRef.External.FileGuid == meshGuid)
+                        {
+                            levelEntry = e;
                             return m;
+                        }
                     }
                 }
             }
             return null;
         }
 
-        private static object IdentityTransform()
+        // dynamic return types: the binder then converts by the runtime type (EBX LinearTransform / Vec3). With
+        // `object` the assignment `lt.right = Vec3(...)` failed: "Cannot implicitly convert type 'object' to
+        // 'FrostySdk.Ebx.Vec3'" (allianz import, rain layer).
+        private static dynamic IdentityTransform()
         {
             dynamic lt = TypeLibrary.CreateObject("LinearTransform");
             lt.right = Vec3(1, 0, 0);
@@ -438,7 +698,7 @@ namespace DuplicationPlugin
             return lt;
         }
 
-        private static object Vec3(float x, float y, float z)
+        private static dynamic Vec3(float x, float y, float z)
         {
             dynamic v = TypeLibrary.CreateObject("Vec3");
             v.x = x; v.y = y; v.z = z;

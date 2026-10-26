@@ -65,6 +65,10 @@ namespace DuplicationPlugin
             public int Triangles;
             /// <summary>World bounds of the slot's geometry (min x y z, max x y z) from stadium.json; null when absent.</summary>
             public float[] Bounds;
+            /// <summary>Baked lighting of the slot (lighting/&lt;slot&gt;.fblight, FBLIGHT1); "" when the package has none for it.</summary>
+            public string LightingFile = "";
+            public int LightingWidth, LightingHeight;
+            public string LightingSystemGuid = "";
         }
 
         public class TextureInfo
@@ -138,6 +142,14 @@ namespace DuplicationPlugin
                                 slot.Bounds[3 + i] = Convert.ToSingle(bmax[i], CultureInfo.InvariantCulture);
                             }
                         }
+                    }
+                    Dictionary<string, object> lit = Get(so, "lighting") as Dictionary<string, object>;
+                    if (lit != null)
+                    {
+                        slot.LightingFile = Str(lit, "file");
+                        slot.LightingWidth = Int(lit, "width");
+                        slot.LightingHeight = Int(lit, "height");
+                        slot.LightingSystemGuid = Str(lit, "system_guid");
                     }
                     Dictionary<string, object> host = Get(so, "fifa_host") as Dictionary<string, object>;
                     if (host != null)
